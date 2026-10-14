@@ -1,9 +1,10 @@
 """TFDSEagerSource and ``from_tfds``: a split TFDS has prepared, read without TensorFlow.
 
 **TFDSEagerSource** reads a split that TFDS has prepared as ArrayRecord, whole, into host NumPy
-columns and per-record provenance. TFDS's random-access reader (``builder.as_data_source``) reads
-every record in one batched call and decodes it with NumPy and Pillow; the records then become
-columns once, through the path every eager source shares.
+columns and per-record provenance. It reads the split with the per-batch reader of the same split
+(:func:`_per_batch_split`, TFDS's decoder) and decodes it unit by unit into the columns through the
+one per-unit writer a decoded copy and a parallel build use
+(:func:`~datarax.sources.decoded_copy._units.write_unit`), so a split has one decode path.
 
 - Holds no iteration state; the pipeline owns the order and position
 - Strings a record carries (an ``id``, a caption) are kept as its provenance, never served
@@ -30,10 +31,12 @@ of a run.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Sequence, Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import tensorflow_datasets as tfds
@@ -44,6 +47,7 @@ from datarax.core.host_values import HostValue
 from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin
+from datarax.sources._tfds_identity import split_identity, SplitOrigin
 from datarax.sources._tfds_prepared import (
     kept_features,
     prepare_call,
@@ -52,7 +56,9 @@ from datarax.sources._tfds_prepared import (
     where,
 )
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
-from datarax.sources.eager_source import EagerSource, parts_of_records
+from datarax.sources.decoded_copy import open_decoded_copy
+from datarax.sources.decoded_copy._units import build_in_memory
+from datarax.sources.eager_source import EagerSource
 from datarax.sources.tfds_streaming_source import TFDSStreamingConfig, TFDSStreamingSource
 
 
@@ -101,18 +107,6 @@ class TFDSEagerConfig(SourceConfigBase):
     as_supervised: bool = False
 
 
-class PreparedRecords(Protocol):
-    """A prepared split's records, read by position: TFDS's random-access data source."""
-
-    def __len__(self) -> int:
-        """The number of records in the split."""
-        ...
-
-    def __getitems__(self, keys: Sequence[int]) -> Sequence[Any]:
-        """Read and decode the records at ``keys``, in one batched read."""
-        ...
-
-
 def _not_prepared(name: str, data_dir: str | None, found: str) -> FileNotFoundError:
     """The refusal of a copy the eager source cannot read, naming the call that prepares one."""
     return FileNotFoundError(
@@ -144,34 +138,6 @@ def _array_record_builder(name: str, data_dir: str | None) -> Any:  # noqa: DOC5
     )
 
 
-def open_prepared_split(  # noqa: DOC502 - prepared_builder raises the FileNotFoundError
-    name: str, split: str, data_dir: str | None
-) -> tuple[Any, PreparedRecords]:
-    """Open ``split`` of the TFDS dataset ``name`` as prepared in ArrayRecord, reading no record.
-
-    TFDS's own reader serves it (``builder.as_data_source``), and TensorFlow is not imported.
-
-    Args:
-        name: The TFDS dataset name, with its config when it has one (``"nsynth/full"``).
-        split: The split, slices included (``"train[:5000]"``).
-        data_dir: The data directory; TFDS's default when ``None``.
-
-    Returns:
-        The dataset's ``DatasetInfo`` and the split's records.
-
-    Raises:
-        FileNotFoundError: If the data directory holds no copy of the dataset prepared as
-            ArrayRecord: nothing prepared, or a copy in another format such as TFRecord.
-    """
-    builder = _array_record_builder(name, data_dir)
-    # tfds wraps as_data_source in a logging decorator whose type hides the parameters.
-    records = builder.as_data_source(
-        split=split,  # pyright: ignore[reportCallIssue]
-        file_format="array_record",
-    )
-    return builder.info, records
-
-
 @dataclass(frozen=True, slots=True)
 class _ExampleDecoder:
     """Decodes a batch of a prepared split's serialized examples as TFDS's reader decodes one.
@@ -186,6 +152,32 @@ class _ExampleDecoder:
     keys: tuple[str, ...] | None
     include_keys: AbstractSet[str] | None
     exclude_keys: AbstractSet[str] | None
+    origin: SplitOrigin
+
+    def source_identity(self) -> dict[str, Any]:  # noqa: DOC502 - split_identity raises
+        """What this decode keeps of which split, and the libraries and versions that decode it.
+
+        A decoder library of another version decodes to other bytes in general (JPEG is not
+        bit-stable across libjpeg builds), so its versions are part of a copy's identity.
+
+        Returns:
+            ``{"source": ..., "decoder": ...}``: the dataset, version, config, split,
+            ``features.json``'s digest and the kept features; the decoding libraries.
+
+        Raises:
+            ValueError: If a kept feature is a ``Video``, which decodes every frame, far beyond
+                its stored size, so no decoded copy of it is written.
+        """
+        kept = kept_features(dict(self.features), self.keys, self.include_keys, self.exclude_keys)
+        return split_identity(
+            self.origin,
+            kept,
+            {
+                "keys": self.keys,
+                "include_keys": self.include_keys,
+                "exclude_keys": self.exclude_keys,
+            },
+        )
 
     def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
         """One kept mapping of decoded features per record."""
@@ -231,12 +223,33 @@ def _per_batch_split(  # noqa: DOC502 - _array_record_builder and supervised_key
         FileNotFoundError: If the dataset is not prepared as ArrayRecord in the data directory.
         ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
     """
-    info = _array_record_builder(name, data_dir).info
-    keys = tuple(supervised_keys(info, name)) if as_supervised else None
+    builder = _array_record_builder(name, data_dir)
+    keys = tuple(supervised_keys(builder.info, name)) if as_supervised else None
+    return _split_read(builder, split, keys, include_keys, exclude_keys)
+
+
+def _split_read(
+    builder: Any,
+    split: str,
+    keys: tuple[str, ...] | None,
+    include_keys: AbstractSet[str] | None,
+    exclude_keys: AbstractSet[str] | None,
+) -> ArrayRecordSourceModule:
+    """``split`` of ``builder``'s ArrayRecord copy, decoded per batch keeping the given features."""
+    info = builder.info
+    origin = SplitOrigin(
+        dataset=str(info.name),
+        version=str(info.version),
+        config=info.config_name or None,
+        split=split,
+        features=hashlib.sha256(
+            (Path(builder.data_dir) / "features.json").read_bytes()
+        ).hexdigest(),
+    )
     return ArrayRecordSourceModule(
         ArrayRecordSourceConfig(),
         info.splits[split].file_instructions,
-        decode=_ExampleDecoder(info.features, keys, include_keys, exclude_keys),
+        decode=_ExampleDecoder(info.features, keys, include_keys, exclude_keys, origin=origin),
     )
 
 
@@ -316,9 +329,11 @@ def _refuse_over_budget(  # noqa: PLR0913 - what the decoded size is computed fr
 class TFDSEagerSource(DatasetSourceMixin, EagerSource):
     """Eager TFDS source: a split prepared as ArrayRecord, read whole into host columns.
 
-    At construction it opens the split with TFDS's random-access reader, reads every record in
-    one batched read and stores the numeric features as host NumPy columns and every other
-    feature (text, such as CIFAR-10's ``id``) as each record's provenance; it then serves them as
+    At construction it reads the split with the per-batch reader of the same split and filters
+    (:func:`_per_batch_split`, TFDS's decoder) and decodes it unit by unit, through the one
+    per-unit writer (:func:`~datarax.sources.decoded_copy._units.build_in_memory`), into host NumPy
+    columns of the numeric features, keeping every other feature (text, such as CIFAR-10's ``id``)
+    as each record's provenance; it then serves them as
     every eager source does (:class:`~datarax.sources.eager_source.EagerSource`): indexing,
     iteration in order and the stateless host read ``get_batch(indices, epochs=...)``. Values keep
     the dtype TFDS stores (a class label is int64 on the host; a device holds it as int32 while
@@ -342,7 +357,7 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
         ```
     """
 
-    def __init__(  # noqa: DOC503 - open_prepared_split raises the FileNotFoundError
+    def __init__(  # noqa: DOC503 - _array_record_builder raises the FileNotFoundError
         self,
         config: TFDSEagerConfig,
         *,
@@ -375,9 +390,16 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
         # name and split are validated non-None by the config's __post_init__
         dataset, split = config.name, config.split
         assert dataset is not None and split is not None  # noqa: S101 (invariant, not control flow)
-        info, records = open_prepared_split(dataset, split, config.data_dir)
+        builder = _array_record_builder(dataset, config.data_dir)
+        info = builder.info
         self._dataset_info = HostValue(info)
         keys = self.supervised_keys(dataset) if config.as_supervised else None
+        kept = kept_features(dict(info.features), keys, config.include_keys, config.exclude_keys)
+        if not kept or info.splits[split].num_examples == 0:
+            raise ValueError(
+                f"{dataset} {split} produced no records after loading and filtering; check the "
+                "split and the include/exclude key filters"
+            )
         if host_resources is not None:
             _refuse_over_budget(
                 info,
@@ -388,16 +410,9 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
                 config.exclude_keys,
                 host_resources,
             )
-        rows = [
-            kept_features(record, keys, config.include_keys, config.exclude_keys)
-            for record in records.__getitems__(list(range(len(records))))
-        ]
-        if not rows or not rows[0]:
-            raise ValueError(
-                f"{dataset} {split} produced no records after loading and filtering; check the "
-                "split and the include/exclude key filters"
-            )
-        self._store(*parts_of_records(rows))
+        kept_keys = None if keys is None else tuple(keys)
+        records = _split_read(builder, split, kept_keys, config.include_keys, config.exclude_keys)
+        self._store(*build_in_memory(records))
 
     def supervised_keys(self, dataset: str) -> list[str]:
         """The features ``as_supervised`` keeps: those the dataset declares supervised."""
@@ -411,6 +426,7 @@ def from_tfds(
     data_dir: str | None = None,
     in_memory: bool = True,
     host_resources: HostResources | None = None,
+    decoded_dir: str | None = None,
     as_supervised: bool = False,
     include_keys: AbstractSet[str] | None = None,
     exclude_keys: AbstractSet[str] | None = None,
@@ -423,12 +439,19 @@ def from_tfds(
       them, for a split larger than RAM, at the cost of decoding every record every epoch.
     - A copy prepared as TFRecord (TFDS's default format) is streamed by
       ``TFDSStreamingSource``, which holds no split in memory, whatever ``in_memory`` says.
+    - With ``in_memory=False`` and ``decoded_dir``, the split's decoded copy there (written by
+      ``datarax.pipeline.materialize``) is opened instead, checked against the split it was
+      written from (its files, filters, ``features.json`` and decoder versions), and read
+      through memory maps: no record is decoded again.
 
     Both read without TensorFlow.
 
     With ``host_resources`` the in-memory build refuses a split whose decoded size is above the
-    RAM budget, before reading a record. A source read per batch takes its budget from the
-    pipeline that reads it, ``Pipeline(host_resources=...)``, and refuses one here.
+    RAM budget, before reading a record; it builds on the calling thread and checks the decoded
+    size only. The parallel build, through the budget's worker processes, is
+    ``datarax.pipeline.materialize``, which also counts the training process's own memory, so a
+    budget can admit this build and be refused there. A source read per batch takes its budget
+    from the pipeline that reads it, ``Pipeline(host_resources=...)``, and refuses one here.
 
     Neither prepares a dataset; a split that is not prepared is refused, naming the call that
     prepares it as ArrayRecord. The order records are served in belongs to the pipeline
@@ -441,17 +464,20 @@ def from_tfds(
         in_memory: Whether an ArrayRecord copy is decoded into memory at init (True) or read
             per batch (False)
         host_resources: The RAM budget the in-memory build is checked against, or ``None``
+        decoded_dir: The directory of the split's decoded copy, read instead of the split
+            (with ``in_memory=False``), or ``None``
         as_supervised: If True, keeps only the supervised features, under their own names
         include_keys: Optional set of keys to include
         exclude_keys: Optional set of keys to exclude
 
     Returns:
         TFDSEagerSource or ArrayRecordSourceModule for an ArrayRecord copy, TFDSStreamingSource
-        for a TFRecord copy.
+        for a TFRecord copy, StreamingDiskSource for a decoded copy.
 
     Raises:
-        ValueError: If ``host_resources`` is given for a source read per batch, or the in-memory
-            build is over its budget.
+        ValueError: If ``host_resources`` is given for a source read per batch, the in-memory
+            build is over its budget, ``decoded_dir`` is given for an in-memory or streamed
+            split, or the decoded copy is of another split.
 
     Example:
         ```python
@@ -461,6 +487,12 @@ def from_tfds(
         ```
     """
     stream = _tfrecord_only(name, data_dir)
+    if decoded_dir is not None and (stream or in_memory):
+        raise ValueError(
+            f"decoded_dir is a decoded copy of {name} {split} read in place of the split per "
+            "batch: pass in_memory=False with it, and a split prepared as ArrayRecord (the copy "
+            "is of that read); an in-memory build decodes the split itself"
+        )
     if host_resources is not None and (stream or not in_memory):
         raise ValueError(
             f"{name} {split} is read per batch, so its RAM budget is the pipeline's that reads "
@@ -478,7 +510,7 @@ def from_tfds(
             )
         )
     if not in_memory:
-        return _per_batch_split(
+        per_batch = _per_batch_split(
             name,
             split,
             data_dir=data_dir,
@@ -486,6 +518,9 @@ def from_tfds(
             include_keys=include_keys,
             exclude_keys=exclude_keys,
         )
+        if decoded_dir is None:
+            return per_batch
+        return open_decoded_copy(decoded_dir, identity=per_batch.source_identity())
     return TFDSEagerSource(
         TFDSEagerConfig(
             name=name,

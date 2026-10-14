@@ -2,12 +2,14 @@
 
 __all__: list[str]
 
+from ._disk_provenance import DiskProvenance as DiskProvenance
 from ._source_base import StreamingSourceBase as StreamingSourceBase
 from ._tfrecord import DamagedRecordError as DamagedRecordError
 from .array_record_source import (
     ArrayRecordSourceConfig as ArrayRecordSourceConfig,
     ArrayRecordSourceModule as ArrayRecordSourceModule,
 )
+from .decoded_copy import open_decoded_copy as open_decoded_copy
 from .eager_source import EagerSource as EagerSource
 from .hf_source import (
     from_hf as from_hf,

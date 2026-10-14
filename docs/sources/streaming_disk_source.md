@@ -18,6 +18,11 @@ Two reads serve it:
 - `get_records(indices)` reads inside a compiled program through `io_callback`, for
   `pipeline.step()`, `scan` and `pipeline.session()`; its output is wrapped in `stop_gradient`.
 
+With `StreamingDiskSourceConfig(provenance=DiskProvenance(file, records))` the source also serves
+its records' provenance (their strings and objects) by index from one ArrayRecord file, as a
+[decoded copy](decoded_copy.md) holds it; `source_identity()` declares its columns (and the copy
+they are), which a copy written from it is checked against.
+
 ```python
 import numpy as np
 from datarax.core.index_words import to_words
@@ -36,6 +41,7 @@ batch = source.get_batch(to_words(np.arange(256, 512, dtype=np.uint64)), contigu
 
 - [Sources Overview](index.md) - All data sources
 - [eager_source](eager_source.md) - The host read the in-memory sources share
+- [decoded_copy](decoded_copy.md) - A source's records decoded once into these columns
 
 ---
 

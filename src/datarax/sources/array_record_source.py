@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, cast, Self
 
 import jax
 import numpy as np
@@ -72,6 +72,20 @@ def _path_of(path: Any) -> str:
     return str(getattr(path, "filename", path))
 
 
+def _listed(paths: Any) -> list[Any]:
+    """``paths`` as a list: one path or ``FileInstruction``, or a sequence of them."""
+    return [paths] if isinstance(paths, str) or not isinstance(paths, Sequence) else list(paths)
+
+
+def _file_identity(path: Any) -> dict[str, Any]:
+    """A file's base name and size, and the records a ``FileInstruction`` reads of it."""
+    name = _path_of(path)
+    found: dict[str, Any] = {"name": Path(name).name, "bytes": Path(name).stat().st_size}
+    if hasattr(path, "skip"):
+        found.update(skip=int(path.skip), take=int(path.take))
+    return found
+
+
 class ArrayRecordSourceModule(DataSourceModule):
     """An indexed source over ArrayRecord files: a record's index is its position in the files.
 
@@ -124,8 +138,7 @@ class ArrayRecordSourceModule(DataSourceModule):
         """
         super().__init__(config, name=name)
         if config.local_files_only:
-            listed = [paths] if isinstance(paths, str) or not isinstance(paths, Sequence) else paths
-            missing = [_path_of(p) for p in listed if not Path(_path_of(p)).exists()]
+            missing = [_path_of(p) for p in _listed(paths) if not Path(_path_of(p)).exists()]
             if missing:
                 raise FileNotFoundError(
                     f"ArrayRecordSourceModule: local_files_only=True but the following path(s) "
@@ -146,6 +159,36 @@ class ArrayRecordSourceModule(DataSourceModule):
     def host_read(self) -> HostRead:
         """What ``decode`` was declared as: it decodes every batch read."""
         return self._decode_read
+
+    def source_identity(self) -> dict[str, Any]:
+        """What the source reads, never where: its files, its record count and its decode.
+
+        The decode's own ``source_identity()`` names what it keeps and the libraries that decode
+        it; a decode without one is named by its qualified name, and its libraries are unknown.
+
+        Returns:
+            ``{"source": ..., "decoder": ...}``: each file's base name and size (and the records
+            a ``FileInstruction`` reads), the record count and the decode; the decode's
+            libraries and versions.
+        """
+        declared = getattr(self._decode, "source_identity", None)
+        decode: dict[str, Any]
+        if callable(declared):
+            decode = cast(dict[str, Any], declared())
+        else:
+            kind = type(self._decode)
+            named = getattr(self._decode, "__qualname__", kind.__qualname__)
+            module = getattr(self._decode, "__module__", kind.__module__)
+            decode = {"source": {"callable": f"{module}.{named}"}, "decoder": {}}
+        return {
+            "source": {
+                "kind": "array_record",
+                "files": [_file_identity(path) for path in _listed(self._records.paths)],
+                "records": len(self),
+                "decode": decode["source"],
+            },
+            "decoder": decode["decoder"],
+        }
 
     def __repr__(self) -> str:
         """The files and the record count, which identify the records a checkpoint names."""

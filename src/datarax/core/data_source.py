@@ -235,6 +235,24 @@ class IndexedHostReadWithProvenance(Protocol):
         ...
 
 
+@runtime_checkable
+class SourceIdentified(Protocol):
+    """A source that declares what it is, so a decoded copy of it can be checked against it.
+
+    ``ArrayRecordSourceModule`` (and so a TFDS split read per batch) and ``StreamingDiskSource``
+    implement it. An in-memory source does not: it has no origin a copy could be checked against.
+    """
+
+    def source_identity(self) -> dict[str, Any]:
+        """What the source declares, as JSON values, never where its files are.
+
+        Returns:
+            ``{"source": ..., "decoder": ...}``: what is read (files' base names and sizes,
+            record count, what the decode keeps) and the libraries and versions that decode it.
+        """
+        ...
+
+
 class BatchSchedule(Protocol):
     """The batches a run serves, unit by unit: what a reader of the run is handed.
 

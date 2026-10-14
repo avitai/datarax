@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from datarax.sources import _field_paths
-from datarax.sources._field_paths import field_name, field_names, LEVEL, nested
+from datarax.sources._field_paths import by_field, field_name, field_names, LEVEL, nested
 
 
 def _record() -> dict:
@@ -58,6 +58,29 @@ class TestNested:
     def test_one_separator_names_and_nests(self) -> None:
         assert LEVEL == "/"
         assert nested({f"a{LEVEL}b": 1}) == {"a": {"b": 1}}
+
+
+class TestByField:
+    def test_each_leaf_keyed_by_its_field_name(self) -> None:
+        record = {"image": 1, "meta": {"label": 2}}
+        assert by_field(record) == {"image": 1, "meta/label": 2}
+
+    def test_nesting_inverts_it(self) -> None:
+        record = {"image": 1, "meta": {"label": 2, "box": 3}}
+        assert nested(by_field(record)) == record
+
+    def test_a_leaf_rule_keeps_lists_whole(self) -> None:
+        """A JSON document's fields: mappings are levels; a list is one value."""
+        document = {"source": {"name": "mnist", "splits": ["train", "test"]}, "version": 1}
+        leaves = by_field(document, is_leaf=lambda value: not isinstance(value, dict))
+        assert leaves == {"source/name": "mnist", "source/splits": ["train", "test"], "version": 1}
+
+    def test_an_empty_mapping_has_no_field(self) -> None:
+        """So ``{}`` differs from a mapping holding fields, field by field."""
+        assert by_field({"a": {}}, is_leaf=lambda value: not isinstance(value, dict)) == {}
+
+    def test_a_leaf_at_the_root_has_the_empty_name(self) -> None:
+        assert by_field(7, is_leaf=lambda value: not isinstance(value, dict)) == {"": 7}
 
 
 @pytest.mark.parametrize("name", ["field_name", "field_names"])
