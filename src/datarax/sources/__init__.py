@@ -18,6 +18,9 @@ architectural separation between **eager** and **streaming** sources:
       arrival ordinals (HuggingFace); strings and objects beside the batch, never in it
     - Ideal for: ImageNet, The Pile, large-scale datasets
 
+A stream read that meets a damaged TFRecord frame raises ``DamagedRecordError``, naming the file
+and the record.
+
 **Factory Functions**:
     - from_tfds(): the eager source for a copy prepared as ArrayRecord, the stream for TFRecord
     - from_hf(): the eager source, or the stream with ``streaming=True``

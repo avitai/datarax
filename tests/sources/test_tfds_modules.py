@@ -215,6 +215,32 @@ def test_the_positive_control_the_streaming_source_imports_tensorflow_datasets()
     assert _imported("datarax.sources.tfds_streaming_source") == {"tfds": True}
 
 
+def test_the_damaged_record_error_is_caught_from_the_package() -> None:
+    """Users meet one TFDS error, raised by a stream read: they import it where every source is."""
+    import datarax.sources  # noqa: PLC0415 - the package's own lazy export is under test
+
+    assert datarax.sources.DamagedRecordError is _tfrecord.DamagedRecordError
+    assert "DamagedRecordError" in datarax.sources.__all__
+
+
+_ERROR_ONLY = """
+import json, sys
+import datarax.sources
+datarax.sources.DamagedRecordError
+print(json.dumps({"tfds": "tensorflow_datasets" in sys.modules}))
+"""
+
+
+def test_catching_the_error_imports_no_tensorflow_datasets() -> None:
+    child = run_python(
+        _ERROR_ONLY,
+        timeout=_CHILD_SECONDS,
+        env=forwarded_jax_environment(os.environ),
+        cwd=_REPO_ROOT,
+    )
+    assert json.loads(child.check().stdout.strip().splitlines()[-1]) == {"tfds": False}
+
+
 @pytest.mark.parametrize("first", _MODULES)
 def test_the_modules_import_whichever_comes_first(first: str) -> None:
     """A cycle between two modules fails when one of them is imported first."""
