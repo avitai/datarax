@@ -171,7 +171,7 @@ class _KeptFeatures:
 
 
 @dataclass(frozen=True, slots=True)
-class StreamRead:
+class _StreamRead:
     """What a run of a TFDS stream reads, as plain values that pickle to a worker process.
 
     Attributes:
@@ -199,7 +199,7 @@ class StreamRead:
     kept: _KeptFeatures
 
 
-def _ordered_ids(read: StreamRead, pass_index: int) -> Iterator[RecordId]:
+def _ordered_ids(read: _StreamRead, pass_index: int) -> Iterator[RecordId]:
     """Pass ``pass_index``'s records in its order, as ids: file order, or TFDS's training read's.
 
     The same order every worker of the run computes, from the read alone, with no file read.
@@ -268,8 +268,11 @@ class TFDSStreamDataset(grain.IterDataset):
     (:class:`~datarax.core.host_resources.WorkerFootprint`).
     """
 
-    def __init__(self, read: StreamRead) -> None:
+    def __init__(self, read: _StreamRead) -> None:
         """Hold the run's read; nothing is opened until iteration.
+
+        The source builds the dataset (:meth:`TFDSStreamingSource.pass_dataset`,
+        :meth:`TFDSStreamingSource.run_dataset`); its read is the source's own.
 
         Args:
             read: What the run reads.
@@ -321,7 +324,7 @@ run."""
 class _TFDSStreamIterator(grain.DatasetIterator):
     """Units of a run of a TFDS stream, those of its slice read and decoded."""
 
-    def __init__(self, read: StreamRead, sl: slice) -> None:
+    def __init__(self, read: _StreamRead, sl: slice) -> None:
         super().__init__()
         self._read = read
         self._features = _features(read.name, read.data_dir)
@@ -550,7 +553,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
 
     def _stream_read(
         self, schedule: BatchSchedule, key: np.ndarray | None, *, for_workers: bool = False
-    ) -> StreamRead:
+    ) -> _StreamRead:
         """What a run reads, as plain values, the shards' record index included."""
         config = self.config
         index = (
@@ -558,7 +561,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             if for_workers
             else tuple(self._shard_index(shard.shard) for shard in self._shards.value)
         )
-        return StreamRead(
+        return _StreamRead(
             name=self._dataset,
             data_dir=config.data_dir,
             shards=self._shards.value,

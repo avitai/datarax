@@ -252,8 +252,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** the TFDS sources' module is split by responsibility.
-  - `datarax.sources.tfds_streaming_source` holds `TFDSStreamingConfig`, `TFDSStreamingSource`,
-    `StreamRead` and `TFDSStreamDataset`.
+  - `datarax.sources.tfds_streaming_source` holds `TFDSStreamingConfig`, `TFDSStreamingSource` and
+    `TFDSStreamDataset`, the Grain dataset `pass_dataset` and `run_dataset` return; what a run reads
+    is the source's own (`_StreamRead`).
   - `datarax.sources.tfds_source` keeps `TFDSEagerConfig`, `TFDSEagerSource`, `PreparedRecords`,
     `open_prepared_split` and `from_tfds`.
   - Three internal modules hold what both sources build on: `_tfrecord` (reading TFRecord shard files
