@@ -100,7 +100,9 @@ def share_index(indexes: Sequence[ShardIndex]) -> tuple[str, tuple[ShardIndex, .
     The offsets and lengths are written once, as one ``(2, records)`` int64 ``.npy`` file in
     ``/dev/shm`` (memory every process maps once) or the temporary directory where there is none,
     and read back as a memory map of it, which replaces the indexes this process held. The map
-    is read through once, so the copy is resident in this process, as its own copy was.
+    is read through once, so the copy is resident in this process, as its own copy was. A worker
+    process then maps the same copy instead of unpickling one of its own, so the host holds the
+    index (16 bytes a record) once however many workers read the run.
 
     Args:
         indexes: The split's shard indexes, in shard order.
@@ -183,7 +185,8 @@ def record_index(path: str) -> ShardIndex:
     """The payload offset and length of every record in a TFRecord file, from its frame headers.
 
     Neither TFDS, Grain nor ArrayRecord indexes a TFRecord file (searched: ``tfds.core.reader``,
-    ``grain.experimental.TFRecordIterDataset``, ``array_record``), so the 12-byte frame headers
+    ``grain.experimental.TFRecordIterDataset``, ``array_record``), and the ``tfrecord`` package
+    (1.14.6, May 2025) reads frames without checking their CRCs, so the 12-byte frame headers
     are read here, each with one unbuffered positioned read, the payloads skipped. Each length is
     checked against its masked CRC32C and each frame against the file's size, as tf.data's
     TFRecord reader checks them.
