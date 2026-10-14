@@ -41,11 +41,11 @@ from datarax.core.host_values import HostValue
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin
 from datarax.sources._tfds_prepared import (
-    _kept_features,
-    _prepare_call,
-    _prepared_builder,
-    _supervised_keys,
-    _where,
+    kept_features,
+    prepare_call,
+    prepared_builder,
+    supervised_keys,
+    where,
 )
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 from datarax.sources.eager_source import EagerSource, parts_of_records
@@ -112,11 +112,11 @@ class PreparedRecords(Protocol):
 def _not_prepared(name: str, data_dir: str | None, found: str) -> FileNotFoundError:
     """The refusal of a copy the eager source cannot read, naming the call that prepares one."""
     return FileNotFoundError(
-        f"TFDS dataset {name!r} is not prepared as ArrayRecord in {_where(data_dir)}: {found}. "
+        f"TFDS dataset {name!r} is not prepared as ArrayRecord in {where(data_dir)}: {found}. "
         "TFDSEagerSource reads a copy prepared as ArrayRecord and never prepares one, since "
         "preparing imports TensorFlow; a copy prepared as TFRecord is streamed by "
         "TFDSStreamingSource. Prepare it once, in a process of its own with the tfds extra "
-        f"installed: {_prepare_call(name, data_dir, 'array_record')}. A data directory holds one "
+        f"installed: {prepare_call(name, data_dir, 'array_record')}. A data directory holds one "
         "format per dataset version, so prepare it where no copy of that version in another "
         "format is."
     )
@@ -135,12 +135,12 @@ def _array_record_builder(name: str, data_dir: str | None) -> Any:  # noqa: DOC5
     Raises:
         FileNotFoundError: If the data directory holds no copy prepared as ArrayRecord.
     """
-    return _prepared_builder(
+    return prepared_builder(
         name, data_dir, "array_record", lambda found: _not_prepared(name, data_dir, found)
     )
 
 
-def open_prepared_split(  # noqa: DOC502 - _prepared_builder raises the FileNotFoundError
+def open_prepared_split(  # noqa: DOC502 - prepared_builder raises the FileNotFoundError
     name: str, split: str, data_dir: str | None
 ) -> tuple[Any, PreparedRecords]:
     """Open ``split`` of the TFDS dataset ``name`` as prepared in ArrayRecord, reading no record.
@@ -174,7 +174,7 @@ class _ExampleDecoder:
 
     Each record goes through the dataset's ``features.deserialize_example_np``, as
     ``builder.as_data_source`` does, then keeps the features the source keeps
-    (:func:`_kept_features`), so a per-batch read holds what the eager source holds. It pickles
+    (:func:`kept_features`), so a per-batch read holds what the eager source holds. It pickles
     with the features, for a worker process.
     """
 
@@ -186,7 +186,7 @@ class _ExampleDecoder:
     def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
         """One kept mapping of decoded features per record."""
         return [
-            _kept_features(
+            kept_features(
                 self.features.deserialize_example_np(record),
                 self.keys,
                 self.include_keys,
@@ -196,7 +196,7 @@ class _ExampleDecoder:
         ]
 
 
-def _per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_keys raise
+def _per_batch_split(  # noqa: DOC502 - _array_record_builder and supervised_keys raise
     name: str,
     split: str,
     *,
@@ -228,7 +228,7 @@ def _per_batch_split(  # noqa: DOC502 - _array_record_builder and _supervised_ke
         ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
     """
     info = _array_record_builder(name, data_dir).info
-    keys = tuple(_supervised_keys(info, name)) if as_supervised else None
+    keys = tuple(supervised_keys(info, name)) if as_supervised else None
     return ArrayRecordSourceModule(
         ArrayRecordSourceConfig(),
         info.splits[split].file_instructions,
@@ -296,9 +296,9 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
         assert dataset is not None and split is not None  # noqa: S101 (invariant, not control flow)
         info, records = open_prepared_split(dataset, split, config.data_dir)
         self._dataset_info = HostValue(info)
-        keys = self._supervised_keys(dataset) if config.as_supervised else None
+        keys = self.supervised_keys(dataset) if config.as_supervised else None
         rows = [
-            _kept_features(record, keys, config.include_keys, config.exclude_keys)
+            kept_features(record, keys, config.include_keys, config.exclude_keys)
             for record in records.__getitems__(list(range(len(records))))
         ]
         if not rows or not rows[0]:
@@ -308,9 +308,9 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
             )
         self._store(*parts_of_records(rows))
 
-    def _supervised_keys(self, dataset: str) -> list[str]:
+    def supervised_keys(self, dataset: str) -> list[str]:
         """The features ``as_supervised`` keeps: those the dataset declares supervised."""
-        return _supervised_keys(self.get_dataset_info(), dataset)
+        return supervised_keys(self.get_dataset_info(), dataset)
 
 
 def from_tfds(

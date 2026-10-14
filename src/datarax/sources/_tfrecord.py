@@ -2,11 +2,11 @@
 
 A TFRecord file is a sequence of frames, each a payload's length, the length's masked CRC32C, the
 payload and the payload's masked CRC32C. :class:`ShardIndex` holds where each record's payload sits
-in its file, built once from the frame headers (:func:`_record_index`); a payload is read at its
-offset and checked against its CRC (:func:`_payload`), as tf.data's TFRecord reader checks it, and
+in its file, built once from the frame headers (:func:`record_index`); a payload is read at its
+offset and checked against its CRC (:func:`payload`), as tf.data's TFRecord reader checks it, and
 a damaged frame raises :class:`DamagedRecordError`. A run read by worker processes shares one
-read-only copy of its indexes (:func:`_share_index`). A record's id holds its shard's number in the
-high word and its offset in the shard in the low word (:func:`_split_shard`).
+read-only copy of its indexes (:func:`share_index`). A record's id holds its shard's number in the
+high word and its offset in the shard in the low word (:func:`split_shard`).
 
 Imports no TensorFlow Datasets; ``google_crc32c`` comes with the ``data`` extra.
 """
@@ -27,24 +27,24 @@ import google_crc32c
 import numpy as np
 
 
-_LARGEST_OFFSET = 2**32 - 1
+LARGEST_OFFSET = 2**32 - 1
 """The largest record offset in a shard file: an id keeps the offset in its low word."""
 
-_LARGEST_SHARD = 2**31 - 1
+LARGEST_SHARD = 2**31 - 1
 """The largest shard number: an id keeps it in its high word, whose top bit marks no record."""
 
-_TFRECORD_HEADER = struct.Struct("<QI")
+TFRECORD_HEADER = struct.Struct("<QI")
 """A TFRecord frame's header: the payload's length (uint64) and its masked CRC (uint32)."""
 
-_TFRECORD_CRC = struct.Struct("<I")
+TFRECORD_CRC = struct.Struct("<I")
 """A TFRecord frame's trailer, after the payload: the payload's masked CRC (uint32)."""
 
-_CRC_MASK_DELTA = 0xA282EAD8
+CRC_MASK_DELTA = 0xA282EAD8
 """The constant TFRecord adds to a rotated CRC32C to mask it (TensorFlow's ``crc32c::Mask``)."""
 
 
 @dataclass(frozen=True, slots=True)
-class _Shard:
+class Shard:
     """The records of one shard file a split reads: offsets ``skip .. skip + take``."""
 
     path: str
@@ -57,7 +57,7 @@ class _Shard:
 class ShardIndex:
     """Where each record of a TFRecord shard file sits: its payload's byte offset and length.
 
-    An index read from the copy shared with worker processes (:func:`_share_index`) pickles as
+    An index read from the copy shared with worker processes (:func:`share_index`) pickles as
     its place in that copy, so a worker maps the one copy instead of receiving its own.
 
     Attributes:
@@ -76,7 +76,7 @@ class ShardIndex:
         if self.shared is None:
             return ShardIndex, (self.payloads, self.lengths)
         path, first = self.shared
-        return _shared_shard_index, (path, first, len(self.lengths))
+        return shared_shard_index, (path, first, len(self.lengths))
 
     @property
     def nbytes(self) -> int:
@@ -85,10 +85,10 @@ class ShardIndex:
 
 
 # Memory every process maps; mkstemp makes each copy's file unique and its owner's only.
-_SHARED_DIRECTORY = Path("/dev/shm")  # nosec B108
+SHARED_DIRECTORY = Path("/dev/shm")  # nosec B108
 
 
-def _share_index(indexes: Sequence[ShardIndex]) -> tuple[str, tuple[ShardIndex, ...]]:
+def share_index(indexes: Sequence[ShardIndex]) -> tuple[str, tuple[ShardIndex, ...]]:
     """One read-only copy of ``indexes`` for every worker of a run: a file in shared memory.
 
     The offsets and lengths are written once, as one ``(2, records)`` int64 ``.npy`` file in
@@ -103,7 +103,7 @@ def _share_index(indexes: Sequence[ShardIndex]) -> tuple[str, tuple[ShardIndex, 
         The file's path, and each index as a view of the one copy.
     """
     total = sum(len(index.lengths) for index in indexes)
-    directory = _SHARED_DIRECTORY if _SHARED_DIRECTORY.is_dir() else Path(tempfile.gettempdir())
+    directory = SHARED_DIRECTORY if SHARED_DIRECTORY.is_dir() else Path(tempfile.gettempdir())
     descriptor, path = tempfile.mkstemp(prefix="datarax-tfds-index-", suffix=".npy", dir=directory)
     os.close(descriptor)
     table = np.lib.format.open_memmap(path, mode="w+", dtype=np.int64, shape=(2, total))
@@ -130,33 +130,33 @@ def _share_index(indexes: Sequence[ShardIndex]) -> tuple[str, tuple[ShardIndex, 
 
 
 @functools.cache
-def _mapped_index(path: str) -> np.ndarray:
+def mapped_index(path: str) -> np.ndarray:
     """A worker's one memory map of a shared index copy, however many shards read from it."""
     return np.load(path, mmap_mode="r")
 
 
-def _shared_shard_index(path: str, first: int, count: int) -> ShardIndex:
+def shared_shard_index(path: str, first: int, count: int) -> ShardIndex:
     """A shard's index read from the shared copy at ``path``: what a worker unpickles."""
-    table = _mapped_index(path)
+    table = mapped_index(path)
     payloads, lengths = table[0, first : first + count], table[1, first : first + count]
     return ShardIndex(payloads, lengths, (path, first))
 
 
-def _remove(path: str) -> None:
+def remove(path: str) -> None:
     """Remove a shared index copy once its source is gone."""
     with contextlib.suppress(FileNotFoundError):
         Path(path).unlink()
 
 
-def _pread(file: Any, size: int, position: int) -> bytes:
+def pread(file: Any, size: int, position: int) -> bytes:
     """Read ``size`` bytes of an open file from ``position``, with no buffering around it."""
     return os.pread(file.fileno(), size, position)
 
 
-def _masked_crc(data: bytes) -> int:
+def masked_crc(data: bytes) -> int:
     """TFRecord's masked CRC32C of ``data``: rotated right by 15 bits, plus a constant."""
     crc = google_crc32c.value(data)
-    return (((crc >> 15) | (crc << 17)) + _CRC_MASK_DELTA) & 0xFFFFFFFF
+    return (((crc >> 15) | (crc << 17)) + CRC_MASK_DELTA) & 0xFFFFFFFF
 
 
 class DamagedRecordError(ValueError):
@@ -173,7 +173,7 @@ class DamagedRecordError(ValueError):
         super().__init__(f"shard file {path}: record {record} {damage}; the file is damaged")
 
 
-def _record_index(path: str) -> ShardIndex:
+def record_index(path: str) -> ShardIndex:
     """The payload offset and length of every record in a TFRecord file, from its frame headers.
 
     Neither TFDS, Grain nor ArrayRecord indexes a TFRecord file (searched: ``tfds.core.reader``,
@@ -194,27 +194,27 @@ def _record_index(path: str) -> ShardIndex:
     payloads, lengths, position = [], [], 0
     with Path(path).open("rb", buffering=0) as file:
         size = os.fstat(file.fileno()).st_size
-        while header := _pread(file, _TFRECORD_HEADER.size, position):
+        while header := pread(file, TFRECORD_HEADER.size, position):
             record = len(lengths)
-            if len(header) < _TFRECORD_HEADER.size:
+            if len(header) < TFRECORD_HEADER.size:
                 raise DamagedRecordError(
                     path, record, f"is cut short: the file ends at byte {size}"
                 )
-            length, length_crc = _TFRECORD_HEADER.unpack(header)
-            if _masked_crc(header[:8]) != length_crc:
+            length, length_crc = TFRECORD_HEADER.unpack(header)
+            if masked_crc(header[:8]) != length_crc:
                 raise DamagedRecordError(path, record, "has a length that fails its CRC check")
-            end = position + _TFRECORD_HEADER.size + length + _TFRECORD_CRC.size
+            end = position + TFRECORD_HEADER.size + length + TFRECORD_CRC.size
             if end > size:
                 raise DamagedRecordError(
                     path, record, f"is cut short: the file ends at byte {size}"
                 )
-            payloads.append(position + _TFRECORD_HEADER.size)
+            payloads.append(position + TFRECORD_HEADER.size)
             lengths.append(length)
             position = end
     return ShardIndex(np.asarray(payloads, np.int64), np.asarray(lengths, np.int64))
 
 
-def _payload(file: Any, path: str, index: ShardIndex, offset: int) -> bytes:
+def payload(file: Any, path: str, index: ShardIndex, offset: int) -> bytes:
     """The payload of record ``offset`` of an open shard file, checked against its CRC.
 
     One positioned read takes the payload and the CRC after it.
@@ -232,18 +232,18 @@ def _payload(file: Any, path: str, index: ShardIndex, offset: int) -> bytes:
         DamagedRecordError: If the payload fails its CRC check.
     """
     length = int(index.lengths[offset])
-    frame = _pread(file, length + _TFRECORD_CRC.size, int(index.payloads[offset]))
-    payload = frame[:length]
+    frame = pread(file, length + TFRECORD_CRC.size, int(index.payloads[offset]))
+    data = frame[:length]
     if (
-        len(frame) != length + _TFRECORD_CRC.size
-        or _masked_crc(payload) != (_TFRECORD_CRC.unpack_from(frame, length)[0])
+        len(frame) != length + TFRECORD_CRC.size
+        or masked_crc(data) != (TFRECORD_CRC.unpack_from(frame, length)[0])
     ):
         raise DamagedRecordError(path, offset, "has a payload that fails its CRC check")
-    return payload
+    return data
 
 
-def _split_shard(path: str, shard: int, skip: int, take: int) -> _Shard:
-    """The records ``skip .. skip + take`` a split reads of a shard file, as a :class:`_Shard`.
+def split_shard(path: str, shard: int, skip: int, take: int) -> Shard:
+    """The records ``skip .. skip + take`` a split reads of a shard file, as a :class:`Shard`.
 
     Args:
         path: The shard file.
@@ -258,15 +258,15 @@ def _split_shard(path: str, shard: int, skip: int, take: int) -> _Shard:
         ValueError: If the split's last offset does not fit an id's low word, or the shard's
             number its high word.
     """
-    if shard > _LARGEST_SHARD:
+    if shard > LARGEST_SHARD:
         raise ValueError(
             f"shard file {path} is number {shard}, but an id's high word holds a shard's number "
-            f"below 2**31 ({_LARGEST_SHARD} at most): its top bit marks no record"
+            f"below 2**31 ({LARGEST_SHARD} at most): its top bit marks no record"
         )
     last = skip + take - 1
-    if last > _LARGEST_OFFSET:
+    if last > LARGEST_OFFSET:
         raise ValueError(
             f"shard file {path}: the record at offset {last} does not fit an id, whose low "
-            f"word holds a record's offset in its shard, at most {_LARGEST_OFFSET}"
+            f"word holds a record's offset in its shard, at most {LARGEST_OFFSET}"
         )
-    return _Shard(path, shard, skip, take)
+    return Shard(path, shard, skip, take)

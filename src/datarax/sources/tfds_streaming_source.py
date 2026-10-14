@@ -51,22 +51,22 @@ from datarax.core.host_values import HostValue
 from datarax.core.prng import pass_generator
 from datarax.sources._config_base import StreamingSourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
-from datarax.sources._stream_order import _buffer_shuffled, _interleaved, _RecordId, _shard_ids
+from datarax.sources._stream_order import buffer_shuffled, interleaved, RecordId, shard_ids
 from datarax.sources._tfds_prepared import (
-    _kept_features,
-    _prepare_call,
-    _prepared_builder,
-    _supervised_keys,
-    _where,
+    kept_features,
+    prepare_call,
+    prepared_builder,
+    supervised_keys,
+    where,
 )
 from datarax.sources._tfrecord import (
-    _payload,
-    _record_index,
-    _remove,
-    _Shard,
-    _share_index,
-    _split_shard,
+    payload,
+    record_index,
+    remove,
+    Shard,
     ShardIndex,
+    share_index,
+    split_shard,
 )
 from datarax.sources.eager_source import parts_of_records
 from datarax.sources.stream_iterator import StreamChunk
@@ -107,13 +107,13 @@ class _Frame(NamedTuple):
 def _not_streamable(name: str, data_dir: str | None, found: str) -> FileNotFoundError:
     """The refusal of a copy the stream cannot read, naming what reads it or prepares one."""
     return FileNotFoundError(
-        f"TFDS dataset {name!r} is not prepared as TFRecord in {_where(data_dir)}: {found}. "
+        f"TFDS dataset {name!r} is not prepared as TFRecord in {where(data_dir)}: {found}. "
         "TFDSStreamingSource streams a copy prepared as TFRecord, TFDS's default format, and "
         "never prepares one, since preparing imports TensorFlow. A copy prepared as ArrayRecord "
         "(array_record) has random access: TFDSEagerSource reads it into host memory, and a copy "
         "larger than host memory is read by index once the pipeline's host stage serves indexed "
         "sources. To stream, prepare a TFRecord copy once, in a process of its own with the tfds "
-        f"extra installed: {_prepare_call(name, data_dir, 'tfrecord')}."
+        f"extra installed: {prepare_call(name, data_dir, 'tfrecord')}."
     )
 
 
@@ -137,7 +137,7 @@ class _KeptFeatures:
     exclude_keys: frozenset[str] | None
 
     @classmethod
-    def of_config(  # noqa: DOC502 - _supervised_keys raises
+    def of_config(  # noqa: DOC502 - supervised_keys raises
         cls, config: TFDSStreamingConfig, info: Any, dataset: str
     ) -> _KeptFeatures:
         """The features ``config`` keeps of ``dataset``'s records.
@@ -155,14 +155,14 @@ class _KeptFeatures:
         """
         include, exclude = config.include_keys, config.exclude_keys
         return cls(
-            keys=tuple(_supervised_keys(info, dataset)) if config.as_supervised else None,
+            keys=tuple(supervised_keys(info, dataset)) if config.as_supervised else None,
             include_keys=None if include is None else frozenset(include),
             exclude_keys=None if exclude is None else frozenset(exclude),
         )
 
     def of(self, record: dict[str, Any]) -> dict[str, Any]:
         """The features of ``record`` kept."""
-        return _kept_features(
+        return kept_features(
             record,
             self.keys,
             None if self.include_keys is None else set(self.include_keys),
@@ -190,7 +190,7 @@ class StreamRead:
 
     name: str
     data_dir: str | None
-    shards: tuple[_Shard, ...]
+    shards: tuple[Shard, ...]
     index: tuple[ShardIndex, ...]
     length: int
     key: np.ndarray | None
@@ -199,17 +199,17 @@ class StreamRead:
     kept: _KeptFeatures
 
 
-def _ordered_ids(read: StreamRead, pass_index: int) -> Iterator[_RecordId]:
+def _ordered_ids(read: StreamRead, pass_index: int) -> Iterator[RecordId]:
     """Pass ``pass_index``'s records in its order, as ids: file order, or TFDS's training read's.
 
     The same order every worker of the run computes, from the read alone, with no file read.
     """
-    streams = [_shard_ids(position, shard) for position, shard in enumerate(read.shards)]
+    streams = [shard_ids(position, shard) for position, shard in enumerate(read.shards)]
     if read.key is None:
         return itertools.chain.from_iterable(streams)
     generator = pass_generator(read.key, pass_index)
     order = generator.permutation(len(streams))
-    return _buffer_shuffled(_interleaved([streams[i] for i in order]), read.buffer_size, generator)
+    return buffer_shuffled(interleaved([streams[i] for i in order]), read.buffer_size, generator)
 
 
 def _decoded_batch(
@@ -309,7 +309,7 @@ class TFDSStreamDataset(grain.IterDataset):
         """A worker's shuffle buffer of record ids, when the run is shuffled."""
         if self._read.key is None:
             return 0
-        held = _RecordId(1 << 20, 1 << 20)
+        held = RecordId(1 << 20, 1 << 20)
         return self._read.buffer_size * (sys.getsizeof(held) + 2 * sys.getsizeof(1 << 20) + 8)
 
 
@@ -328,7 +328,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
         self._start, self._step = sl.start or 0, sl.step or 1
         self._unit = 0
         self._pass: int | None = None
-        self._ids: Iterator[_RecordId] = iter(())
+        self._ids: Iterator[RecordId] = iter(())
         self._at = 0  # ids of the current pass taken
         self._files = contextlib.ExitStack()
         self._open: dict[int, Any] = {}
@@ -348,9 +348,9 @@ class _TFDSStreamIterator(grain.DatasetIterator):
                 epochs = np.asarray([pass_index for _, pass_index in records], dtype=np.int32)
                 return columns, provenance, ids, epochs, unit
 
-    def _take(self, start: int, pass_index: int, size: int) -> list[tuple[_RecordId, int]]:
+    def _take(self, start: int, pass_index: int, size: int) -> list[tuple[RecordId, int]]:
         """The ids of ``size`` positions from ``start`` of pass ``pass_index`` on, across passes."""
-        taken: list[tuple[_RecordId, int]] = []
+        taken: list[tuple[RecordId, int]] = []
         while len(taken) < size:
             self._seek(pass_index, start)
             count = min(size - len(taken), self._read.length - start)
@@ -367,7 +367,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
             pass
         self._at = position
 
-    def _frame(self, record: _RecordId) -> _Frame:
+    def _frame(self, record: RecordId) -> _Frame:
         """The record's payload, read at its offset, and its id."""
         shard = self._read.shards[record.position]
         file = self._open.get(record.position)
@@ -375,7 +375,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
             opened = Path(shard.path).open("rb", buffering=0)  # noqa: SIM115 - the ExitStack closes it
             file = self._files.enter_context(opened)
             self._open[record.position] = file
-        raw = _payload(file, shard.path, self._read.index[record.position], record.offset)
+        raw = payload(file, shard.path, self._read.index[record.position], record.offset)
         return _Frame(shard.shard, record.offset, raw)
 
     def get_state(self) -> dict[str, Any]:
@@ -443,7 +443,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         """TFDS's NumPy decode holds the GIL: under a budget, worker processes read the run."""
         return HostRead.GIL_BOUND
 
-    def __init__(  # noqa: DOC502 - _prepared_builder, _supervised_keys and _split_shard raise
+    def __init__(  # noqa: DOC502 - prepared_builder, supervised_keys and split_shard raise
         self, config: TFDSStreamingConfig, *, name: str | None = None
     ) -> None:
         """Open the prepared TFRecord split, reading no record.
@@ -462,7 +462,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         super().__init__(config, name=name)
         dataset, split = config.name, config.split
         assert dataset is not None and split is not None  # noqa: S101 (invariant, not control flow)
-        builder = _prepared_builder(
+        builder = prepared_builder(
             dataset,
             config.data_dir,
             "tfrecord",
@@ -483,7 +483,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         shard_of = {basename: shard for shard, (basename, _) in enumerate(self._files.value)}
         self._shards = HostValue(
             tuple(
-                _split_shard(
+                split_shard(
                     instruction.filename,
                     shard_of[Path(instruction.filename).name],
                     instruction.skip,
@@ -627,11 +627,11 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         shared = self._shared_index.value
         if shared is None:
             indexes = [self._shard_index(shard.shard) for shard in self._shards.value]
-            path, shared = _share_index(indexes)
+            path, shared = share_index(indexes)
             for shard, index in zip(self._shards.value, shared, strict=True):
                 self._index.value[shard.shard] = index
             self._shared_index.value = shared
-            weakref.finalize(self, _remove, path)
+            weakref.finalize(self, remove, path)
         return shared
 
     def _shard_index(self, shard: int) -> ShardIndex:
@@ -639,11 +639,11 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         index = self._index.value.get(shard)
         if index is None:
             index = self._index.value.setdefault(
-                shard, _record_index(self._files.value[shard][1].filename)
+                shard, record_index(self._files.value[shard][1].filename)
             )
         return index
 
-    def _frame_at(self, shard: int, offset: int) -> _Frame:  # noqa: DOC503 - _payload raises
+    def _frame_at(self, shard: int, offset: int) -> _Frame:  # noqa: DOC503 - payload raises
         """The serialized record at ``offset`` of shard ``shard``.
 
         Args:
@@ -668,5 +668,5 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
                 f"{len(index.lengths)}"
             )
         with Path(instruction.filename).open("rb", buffering=0) as file:
-            raw = _payload(file, instruction.filename, index, offset)
+            raw = payload(file, instruction.filename, index, offset)
         return _Frame(shard, offset, raw)
