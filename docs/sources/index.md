@@ -42,7 +42,8 @@ batch = source.get_batch(to_words(np.arange(32)))
 - [eager_source](eager_source.md) - The in-memory base: host columns, provenance and the host read
 - [hf_source](hf_source.md) - HuggingFace Datasets integration (recommended)
 - [source_ops](source_ops.md) - The helpers a source is built from: wrapped index resolution, worker shares, key filters and the named-dataset repr
-- [tfds_source](tfds_source.md) - TensorFlow Datasets integration
+- [tfds_source](tfds_source.md) - TensorFlow Datasets integration: the eager source and `from_tfds`
+- [tfds_streaming_source](tfds_streaming_source.md) - A TFDS split prepared as TFRecord, streamed without TensorFlow
 - [memory_source](memory_source.md) - In-memory data for testing
 - [stream_iterator](stream_iterator.md) - How a stream is read: one resumable iterator over its passes, `iter_batches`
 - [streaming_disk_source](streaming_disk_source.md) - A `.npy` array larger than RAM, read through a memory map

@@ -30,3 +30,12 @@ layers =
     datarax.pipeline.run_configuration | datarax.pipeline.run_units
     datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan
     datarax.pipeline.host_workers
+
+[importlinter:contract:tfds-sources]
+name = TFDS sources build on the stream order and the TFRecord reader, which know nothing of them
+type = layers
+layers =
+    datarax.sources.tfds_source
+    datarax.sources.tfds_streaming_source
+    datarax.sources._stream_order | datarax.sources._tfds_prepared
+    datarax.sources._tfrecord

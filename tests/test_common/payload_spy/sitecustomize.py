@@ -14,15 +14,15 @@ from pathlib import Path
 _LOG = os.environ.get("DATARAX_TEST_PAYLOAD_LOG")
 
 if _LOG:
-    from datarax.sources import tfds_source
+    from datarax.sources import tfds_streaming_source
 
     _PATH = Path(_LOG)
 
-    _read = tfds_source._payload  # noqa: SLF001 - the function the spy wraps
+    _read = tfds_streaming_source._payload  # noqa: SLF001 - the function the spy wraps
 
     def _logged(file, path, index, offset):  # noqa: ANN001, ANN202 - the wrapped signature
         with _PATH.open("a") as log:
             log.write(f"{Path(path).name} {offset}\n")
         return _read(file, path, index, offset)
 
-    tfds_source._payload = _logged  # noqa: SLF001
+    tfds_streaming_source._payload = _logged  # noqa: SLF001

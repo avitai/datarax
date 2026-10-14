@@ -36,8 +36,9 @@ from datarax.pipeline import Pipeline
 from datarax.pipeline.epochs import EpochPlan, Run
 from datarax.pipeline.run_units import RunUnits
 from datarax.sources import (
+    _tfrecord,
     from_tfds,
-    tfds_source,
+    tfds_streaming_source,
     TFDSEagerConfig,
     TFDSEagerSource,
     TFDSStreamingConfig,
@@ -175,16 +176,16 @@ class TestNamesAndRecords:
     def test_an_offset_past_the_word_is_refused_naming_the_shard(
         self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(tfds_source, "_LARGEST_OFFSET", 3)
+        monkeypatch.setattr(_tfrecord, "_LARGEST_OFFSET", 3)
 
         with pytest.raises(ValueError, match=r"train.tfrecord-00000-of-00001.*offset 19"):
             _stream(tfds_fixture)  # refused when built, before any record is read
 
     def test_a_shard_number_past_the_high_word_s_records_is_refused(self) -> None:
         """An id's high word holds its shard's number, below ``2**31``: its top bit is no record."""
-        tfds_source._split_shard("f.tfrecord", (1 << 31) - 1, 0, 1)  # the last shard named
+        _tfrecord._split_shard("f.tfrecord", (1 << 31) - 1, 0, 1)  # the last shard named
         with pytest.raises(ValueError, match=r"shard file f.tfrecord.*2\*\*31"):
-            tfds_source._split_shard("f.tfrecord", 1 << 31, 0, 1)
+            _tfrecord._split_shard("f.tfrecord", 1 << 31, 0, 1)
 
     def test_supervised_keys_and_key_filters(self, tfds_fixture: TFDSFixture) -> None:
         supervised = next(_stream(tfds_fixture, as_supervised=True).iter_batches(2))
@@ -268,13 +269,13 @@ class TestProvenanceByIdentity:
         self, tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         indexed: list[str] = []
-        build = tfds_source._record_index
+        build = tfds_streaming_source._record_index
 
         def counting(path: str) -> Any:
             indexed.append(Path(path).name)
             return build(path)
 
-        monkeypatch.setattr(tfds_source, "_record_index", counting)
+        monkeypatch.setattr(tfds_streaming_source, "_record_index", counting)
         source = _stream(tfds_fixture)  # the train split
         test_shard = next(i for i, f in enumerate(source.shard_files) if "-test.tfrecord" in f)
 
@@ -303,13 +304,13 @@ def test_every_pass_decodes_in_the_pipeline_s_batch_size(
     tfds_fixture: TFDSFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     decoded: list[int] = []
-    decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+    decode = tfds_streaming_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
 
     def watched(features: Any, frames: list[Any], kept: Any) -> Any:
         decoded.append(len(frames))
         return decode(features, frames, kept)
 
-    monkeypatch.setattr(tfds_source, "_decoded_batch", watched)
+    monkeypatch.setattr(tfds_streaming_source, "_decoded_batch", watched)
     pipeline = Pipeline(
         source=_stream(tfds_fixture), stages=[], batch_size=6, rngs=nnx.Rngs(0), num_epochs=3
     )
@@ -355,7 +356,7 @@ class TestNnxHygiene:
             np.testing.assert_array_equal(ours, theirs)
 
 
-_DAMAGED = tfds_source.DamagedRecordError
+_DAMAGED = _tfrecord.DamagedRecordError
 _TRAIN_SHARD = r"train\.tfrecord-00000-of-00001"
 
 
@@ -510,13 +511,13 @@ class _CountingReads:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.calls: list[tuple[str, int, int]] = []
-        read = tfds_source._pread
+        read = _tfrecord._pread
 
         def counting(file: Any, size: int, position: int) -> bytes:
             self.calls.append((Path(file.name).name, size, position))
             return read(file, size, position)
 
-        monkeypatch.setattr(tfds_source, "_pread", counting)
+        monkeypatch.setattr(_tfrecord, "_pread", counting)
 
 
 def _train_shard(data_dir: Path) -> Path:
@@ -573,13 +574,13 @@ class TestThePassDatasetForWorkers:
         key = key_words(jax.random.key(4))
         whole = self._batches(source.pass_dataset(1, key, 2))
         decoded: list[int] = []
-        decode = tfds_source._decoded_batch
+        decode = tfds_streaming_source._decoded_batch
 
         def counting(features: Any, frames: Any, read: Any) -> Any:
             decoded.append(len(frames))
             return decode(features, frames, read)
 
-        monkeypatch.setattr(tfds_source, "_decoded_batch", counting)
+        monkeypatch.setattr(tfds_streaming_source, "_decoded_batch", counting)
         parts = []
         for i in range(slices):
             dataset = source.pass_dataset(1, key, 2)
@@ -736,13 +737,13 @@ class TestRunDataset:
         key = key_words(jax.random.key(4))
         whole = self._rows(source.run_dataset(_run_units(TRAIN_RECORDS, 4), key))
         decoded: list[int] = []
-        decode = tfds_source._decoded_batch
+        decode = tfds_streaming_source._decoded_batch
 
         def counting(features: Any, frames: Any, read: Any) -> Any:
             decoded.append(len(frames))
             return decode(features, frames, read)
 
-        monkeypatch.setattr(tfds_source, "_decoded_batch", counting)
+        monkeypatch.setattr(tfds_streaming_source, "_decoded_batch", counting)
         parts = []
         for i in range(slices):
             dataset = source.run_dataset(_run_units(TRAIN_RECORDS, 4), key)
@@ -823,7 +824,7 @@ class TestThroughTheHostStage:
         At run creation the consumer reads one record for the declared spec; every unit is then
         decoded on the read thread, which fills the read buffer while the consumer holds a batch.
         """
-        decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+        decode = tfds_streaming_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
         threads: list[str] = []
         decoded = threading.Condition()
 
@@ -834,7 +835,7 @@ class TestThroughTheHostStage:
                 decoded.notify_all()
             return batch
 
-        monkeypatch.setattr(tfds_source, "_decoded_batch", watched)
+        monkeypatch.setattr(tfds_streaming_source, "_decoded_batch", watched)
         pipe = Pipeline(
             source=_stream(tfds_fixture), stages=[], batch_size=4, rngs=nnx.Rngs(0), num_epochs=None
         )
@@ -880,13 +881,13 @@ class TestThroughTheHostStage:
         whole = [rows(b) for b in build().raw_batches()]
         assert len(whole) == (9 if drop_last else 10)  # 3 passes of 20 records, 6 a batch
         payloads: list[int] = []
-        payload = tfds_source._payload  # noqa: SLF001 - a record's payload read
+        payload = tfds_streaming_source._payload  # noqa: SLF001 - a record's payload read
 
         def counted(file: Any, path: str, index: Any, offset: int) -> bytes:
             payloads.append(offset)
             return payload(file, path, index, offset)
 
-        monkeypatch.setattr(tfds_source, "_payload", counted)
+        monkeypatch.setattr(tfds_streaming_source, "_payload", counted)
         for done in range(len(whole) + 1):
             pipe = build()
             batches = iter(pipe.raw_batches())
@@ -947,7 +948,7 @@ class TestThroughTheHostStage:
             return [(int(hi) << 32) | int(lo) for hi, lo in np.asarray(batch.indices)]
 
         whole = [names(b) for b in build().raw_batches()]
-        decode = tfds_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
+        decode = tfds_streaming_source._decoded_batch  # noqa: SLF001 - the one decode of a TFDS stream
         calls: list[int] = []
 
         class DecodeFailed(Exception):
@@ -959,7 +960,7 @@ class TestThroughTheHostStage:
                 raise DecodeFailed("decode 4 failed")
             return decode(features, frames, kept)
 
-        monkeypatch.setattr(tfds_source, "_decoded_batch", flaky)
+        monkeypatch.setattr(tfds_streaming_source, "_decoded_batch", flaky)
         pipe = build()
         served: list[list[int]] = []
         with pytest.raises(DecodeFailed, match="decode 4 failed"):

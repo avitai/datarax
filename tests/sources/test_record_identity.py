@@ -44,7 +44,8 @@ def test_the_kinds_are_exactly_three() -> None:
 def test_every_exported_source_declares_its_kind() -> None:
     from datarax.sources.array_record_source import ArrayRecordSourceModule
     from datarax.sources.hf_source import HFEagerSource, HFStreamingSource
-    from datarax.sources.tfds_source import TFDSEagerSource, TFDSStreamingSource
+    from datarax.sources.tfds_source import TFDSEagerSource
+    from datarax.sources.tfds_streaming_source import TFDSStreamingSource
 
     expected = {
         EagerSource: RecordIdentity.INDEXED,
