@@ -180,6 +180,12 @@ class TestNamesAndRecords:
         with pytest.raises(ValueError, match=r"train.tfrecord-00000-of-00001.*offset 19"):
             _stream(tfds_fixture)  # refused when built, before any record is read
 
+    def test_a_shard_number_past_the_high_word_s_records_is_refused(self) -> None:
+        """An id's high word holds its shard's number, below ``2**31``: its top bit is no record."""
+        tfds_source._split_shard("f.tfrecord", (1 << 31) - 1, 0, 1)  # the last shard named
+        with pytest.raises(ValueError, match=r"shard file f.tfrecord.*2\*\*31"):
+            tfds_source._split_shard("f.tfrecord", 1 << 31, 0, 1)
+
     def test_supervised_keys_and_key_filters(self, tfds_fixture: TFDSFixture) -> None:
         supervised = next(_stream(tfds_fixture, as_supervised=True).iter_batches(2))
         included = next(_stream(tfds_fixture, include_keys={"label"}).iter_batches(2))

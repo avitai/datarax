@@ -310,6 +310,37 @@ class TestArrivalNames:
         )
 
 
+class TestNamesKeepTheTopBitClear:
+    """A stream's names are record indices: below ``2**63``, the top bit marking no record."""
+
+    def test_ordinals_up_to_the_last_record_index_are_served(self) -> None:
+        batches = _stream(RecordIdentity.ARRIVAL).iter_batches(2)
+        batches.set_state({"pass": 0, "records": 0, "arrived": (1 << 63) - 2, "passes_left": 1})
+
+        assert _names([next(batches)]) == [(1 << 63) - 2, (1 << 63) - 1]
+
+    def test_an_ordinal_past_the_last_record_index_is_refused(self) -> None:
+        batches = _stream(RecordIdentity.ARRIVAL).iter_batches(4)
+        batches.set_state({"pass": 0, "records": 0, "arrived": (1 << 63) - 2, "passes_left": 1})
+
+        with pytest.raises(ValueError, match=r"2\*\*63"):
+            next(batches)
+
+    def test_an_id_with_the_top_bit_set_is_refused(self) -> None:
+        class _HighIds(RecordStream):
+            def _open_pass(
+                self, pass_index: int, key: np.ndarray | None, read_size: int
+            ) -> Iterator[StreamChunk]:
+                for chunk in super()._open_pass(pass_index, key, read_size):
+                    assert chunk.ids is not None  # a STREAM_IDS stream reports ids
+                    yield chunk._replace(ids=chunk.ids + np.uint64(1 << 63))
+
+        stream = _HighIds({"x": np.arange(_N, dtype=np.float32)})
+
+        with pytest.raises(ValueError, match=r"2\*\*63"):
+            next(stream.iter_batches(4))
+
+
 class TestState:
     """The iterator's state is where it is: the pass, the records served in it, the ordinals
     served, and the passes left; an iterator set to it serves exactly what the original would."""

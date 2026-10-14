@@ -37,7 +37,7 @@ from jaxtyping import PyTree
 from datarax.core import batch_ops
 from datarax.core.data_source import Provenance, RecordIdentity
 from datarax.core.element_batch import Batch
-from datarax.core.index_words import to_words
+from datarax.core.index_words import MAX_RECORDS, to_words
 from datarax.core.prng import key_words
 
 
@@ -368,6 +368,12 @@ class StreamBatches[T](Iterator[T]):
                 "provenance"
             )
         if self._source.record_identity is RecordIdentity.ARRIVAL:
+            if cursor.arrived + size > MAX_RECORDS:
+                raise ValueError(
+                    f"{type(self._source).__name__} would name a record by ordinal "
+                    f"{cursor.arrived + size - 1}, past the 2**63 records a stream can name: a "
+                    "record's index keeps the top bit clear"
+                )
             ordinals = np.arange(cursor.arrived, cursor.arrived + size, dtype=np.uint64)
             cursor.arrived += size
             words = to_words(ordinals)
@@ -376,6 +382,13 @@ class StreamBatches[T](Iterator[T]):
                 raise TypeError(
                     f"{type(self._source).__name__} is a STREAM_IDS stream, so each record it "
                     "reads carries the id it is named by"
+                )
+            past = np.asarray(chunk.ids, np.uint64) >= np.uint64(MAX_RECORDS)
+            if past.any():
+                raise ValueError(
+                    f"{type(self._source).__name__} reported the id {int(chunk.ids[past][0])}, "
+                    "past the 2**63 records a stream can name: a record's index keeps the top "
+                    "bit clear"
                 )
             words = to_words(chunk.ids)
         return batch_ops.from_arrays(

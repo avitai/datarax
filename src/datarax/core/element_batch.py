@@ -9,8 +9,9 @@ source; a record is named by its index.
 
 A record's identity is a 64-bit index held as two uint32 words ``(hi, lo)``, the epoch it is
 served in and its draw within that epoch. Together with an operator's base key they decide the
-record's randomness (``datarax.core.prng.per_record_keys``). The all-ones index,
-``PADDING_INDEX``, marks a row that is not a record.
+record's randomness (``datarax.core.prng.per_record_keys``). A record's index has the top bit
+clear; one with it set names no record: the all-ones ``PADDING_INDEX`` marks padding, and
+``(2**31, row)`` names a row of a batch built without identities.
 
 A field whose value a record may lack is a ``datarax.core.Maybe`` in ``data``, at any depth: a
 pytree node of the values and a ``present`` flag per record, which every batch operation and

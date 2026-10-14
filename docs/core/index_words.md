@@ -16,8 +16,10 @@ words = to_words([5, 2**32 + 5])  # uint32 (2, 2): [[0, 5], [1, 5]]
 from_words(words)  # uint64 [5, 4294967301]
 ```
 
-A source holds at most `2**64 - 1` records (`MAX_RECORDS`): the all-ones
-index, `PADDING_INDEX`, marks a row that is not a record. A gather traced on
+A source holds at most `2**63` records (`MAX_RECORDS`): a record's index has
+the top bit clear. An index with the top bit set names no record: the all-ones
+index, `PADDING_INDEX`, marks padding, and `(2**31, row)` names a row of a
+batch built without record identities (`batch_ops.from_arrays`). A gather traced on
 the device addresses rows with the low word, so an in-memory source holds at
 most `2**32` rows; `StreamingDiskSource` reads on the host and takes every
 64-bit index.

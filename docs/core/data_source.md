@@ -17,8 +17,11 @@ them depends on what its record index means (`record_identity`):
 `provenance` returns one immutable mapping per index, in the order named (an empty one for a record
 carrying nothing but arrays), and refuses the padding index and indices outside the source.
 `record_keys` gives the identities a per-record table is keyed by; it reads only the source's
-static kind, so under `jit` the batch's indices pass straight through. A `Batch` has no source and
-so no record keys.
+static kind, so under `jit` the batch's indices pass straight through. A record's index has the top
+bit clear, and a batch built without identities names its rows `(2**31, row)`, so a device table
+that reads row `lo` only where `hi == 0 and lo < N` (filling the read and dropping the update
+elsewhere, or refusing with `checkify`) never touches a row for them or for padding, under every
+transform. `provenance` and the host reads refuse such rows, naming why.
 
 ```python
 import numpy as np

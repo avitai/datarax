@@ -61,8 +61,8 @@ for batch in pipeline:
 ### From pre-built arrays (direct construction)
 
 When you need an explicit `Batch` -- for example to call an operator directly -- build one
-from arrays with `batch_ops.from_arrays`. Row `i` is named record `(0, i)`, so each row draws
-its own randomness:
+from arrays with `batch_ops.from_arrays`. Row `i` is named `(2**31, i)`, so each row draws its
+own randomness, and the name's top bit marks it as no source's record:
 
 ```python
 import jax.numpy as jnp

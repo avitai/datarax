@@ -29,6 +29,7 @@ from datarax.core.index_words import (
     split_constant,
     subtract,
     to_words,
+    wrapped_positions,
 )
 from datarax.core.prng import per_record_keys
 from tests.test_common.compiles import expect_first_call_compiles
@@ -77,9 +78,21 @@ class TestConversion:
         with pytest.raises((ValueError, OverflowError)):
             to_words(values)
 
-    def test_the_padding_index_is_the_one_index_past_the_records(self) -> None:
-        assert int(from_words(PADDING_INDEX)) == MAX_RECORDS
-        np.testing.assert_array_equal(to_words(MAX_RECORDS), PADDING_INDEX)
+    def test_a_record_s_index_has_the_top_bit_clear(self) -> None:
+        """A source holds at most 2**63 records: indices ``[0, 2**63)``."""
+        assert MAX_RECORDS == 1 << 63
+        np.testing.assert_array_equal(to_words(MAX_RECORDS - 1), [0x7FFFFFFF, 0xFFFFFFFF])
+
+    def test_the_padding_index_names_no_record(self) -> None:
+        assert int(from_words(PADDING_INDEX)) == (1 << 64) - 1
+        assert int(from_words(PADDING_INDEX)) >= MAX_RECORDS
+
+    def test_unbounded_positions_wrap_at_two_to_the_64(self) -> None:
+        """Positions that never wrap at a length are 64-bit: past 2**63 they keep counting."""
+        np.testing.assert_array_equal(
+            wrapped_positions((1 << 63) + 5, 2, None), [[1 << 31, 5], [1 << 31, 6]]
+        )
+        np.testing.assert_array_equal(wrapped_positions((1 << 64) + 5, 1, None), [[0, 5]])
 
     def test_split_constant_gives_the_words_of_a_python_integer(self) -> None:
         assert split_constant((5 << 32) + 7) == (5, 7)
