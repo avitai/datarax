@@ -163,8 +163,8 @@ print(len(sampler))  # 1000
 
 ### `ModuleNotFoundError: No module named 'tensorflow_datasets'`
 
-**Cause**: `datarax.sources.tfds_source` imports `tensorflow_datasets` at its top, so the error is
-raised by the line that imports a TFDS source (`from datarax.sources import TFDSEagerSource`,
+**Cause**: the TFDS sources' modules (`datarax.sources.tfds_source`, `tfds_streaming_source`)
+import `tensorflow_datasets` at their top, so the error is raised by the line that imports a TFDS source (`from datarax.sources import TFDSEagerSource`,
 `TFDSStreamingSource` or `from_tfds`), not when the source is built. `import datarax.sources`
 alone does not need it. The `data` extra installs it:
 

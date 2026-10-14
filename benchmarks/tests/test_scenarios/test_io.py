@@ -78,12 +78,12 @@ class TestIO1Scenario:
     ):
         from flax import nnx
 
-        from datarax.sources import tfds_source
+        import datarax.sources
 
         opened: list[Any] = []
-        for name in ("TFDSEagerSource", "TFDSStreamingSource"):
+        for name in ("TFDSEagerSource", "TFDSStreamingSource"):  # the adapter reads them here
             monkeypatch.setattr(
-                tfds_source, name, lambda config, **kwargs: opened.append(config) or config
+                datarax.sources, name, lambda config, **kwargs: opened.append(config) or config
             )
         config = self.mod.VARIANTS[variant].config
 

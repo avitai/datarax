@@ -7,14 +7,13 @@ left in a reference cycle (google/grain#1420) holds named semaphores, and each o
 fails with ``ValueError: Relative import statements not supported``, so the semaphore stays
 linked in ``/dev/shm`` and the error is reported as unraisable.
 
-``datarax.sources.tfds_source`` is TFDS's integration module and imports it at its top, so the
-window opens on the line that imports a TFDS source, never inside a constructor or ``from_tfds``
-in the middle of a run. ``import datarax.sources`` still imports no TFDS: those names are
-exported lazily. Each check runs in a fresh interpreter, since the test process has imported
-TFDS long before. The window is made to matter: a full collection is forced on the first import
-made under etils' swap, as the automatic collection in the suite did by chance. The positive
-control runs the same program with a first TFDS import of its own mid-run, and sees the window
-and the leak.
+The TFDS sources' modules (``tfds_source``, ``tfds_streaming_source``) import it at their top, so
+the window opens on the line that imports a TFDS source, never inside a constructor or ``from_tfds``
+in the middle of a run. ``import datarax.sources`` still imports no TFDS: those names are exported
+lazily. Each check runs in a fresh interpreter, since the test process has imported TFDS long
+before. The window is made to matter: a full collection is forced on the first import made under
+etils' swap, as the automatic collection in the suite did by chance. The positive control runs the
+same program with a first TFDS import of its own mid-run, and sees the window and the leak.
 """
 
 from __future__ import annotations

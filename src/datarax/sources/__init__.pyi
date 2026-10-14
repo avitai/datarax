@@ -33,6 +33,8 @@ from .tfds_source import (
     from_tfds as from_tfds,
     TFDSEagerConfig as TFDSEagerConfig,
     TFDSEagerSource as TFDSEagerSource,
+)
+from .tfds_streaming_source import (
     TFDSStreamingConfig as TFDSStreamingConfig,
     TFDSStreamingSource as TFDSStreamingSource,
 )

@@ -29,7 +29,7 @@ from datarax.core.data_source import (
 )
 from datarax.core.element_batch import Batch
 from datarax.sources import MemorySource, MemorySourceConfig
-from datarax.sources.tfds_source import TFDSStreamingSource
+from datarax.sources.tfds_streaming_source import TFDSStreamingSource
 from tests.test_common.streams import RecordStream
 
 
