@@ -241,6 +241,39 @@ def test_catching_the_error_imports_no_tensorflow_datasets() -> None:
     assert json.loads(child.check().stdout.strip().splitlines()[-1]) == {"tfds": False}
 
 
+_WITHOUT_CRC = """
+import sys
+sys.modules["google_crc32c"] = None  # hides the installed package
+try:
+    exec(sys.argv[1])
+except ImportError as error:
+    print(type(error).__name__ + ": " + str(error))
+else:
+    print("imported")
+"""
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "import datarax.sources._tfrecord",
+        "from datarax.sources import DamagedRecordError",
+        "from datarax.sources import TFDSStreamingSource",
+    ],
+)
+def test_reading_records_without_google_crc32c_names_the_extra(statement: str) -> None:
+    child = run_python(
+        _WITHOUT_CRC,
+        statement,
+        timeout=_CHILD_SECONDS,
+        env=forwarded_jax_environment(os.environ),
+        cwd=_REPO_ROOT,
+    )
+    printed = child.check().stdout.strip().splitlines()[-1]
+    assert printed.startswith("ImportError: ")
+    assert "google_crc32c" in printed and "datarax[data]" in printed
+
+
 @pytest.mark.parametrize("first", _MODULES)
 def test_the_modules_import_whichever_comes_first(first: str) -> None:
     """A cycle between two modules fails when one of them is imported first."""
