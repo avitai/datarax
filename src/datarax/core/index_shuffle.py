@@ -2,8 +2,8 @@
 
 A shuffled order is a bijection of ``[0, length)`` keyed by a PRNG key, computed per position,
 so serving a batch costs O(batch) at every dataset size and nothing is stored between batches.
-``length`` reaches ``2**64 - 1``: every 64-bit record index but the all-ones one, which marks
-padding (:data:`~datarax.core.index_words.MAX_RECORDS`).
+``length`` reaches ``2**63``, the records a source can hold: a record's index keeps the top bit
+clear (:data:`~datarax.core.index_words.MAX_RECORDS`).
 
 The bijection is CCCL's ``cuda::__feistel_bijection``
 (``libcudacxx/include/cuda/__random/feistel_bijection.h``, also ``thrust::shuffle``'s
@@ -154,7 +154,9 @@ def _encrypt[A: (jax.Array, np.ndarray)](high: A, low: A, bits: int, round_keys:
 
 def _check_length(length: int) -> None:
     if not 1 <= length <= MAX_RECORDS:
-        raise ValueError(f"length must be in [1, 2**64 - 1], got {length}")
+        raise ValueError(
+            f"length must be in [1, 2**63], the records a source can hold, got {length}"
+        )
 
 
 def shuffle_positions(positions: jax.Array, length: int, key: jax.Array) -> jax.Array:  # noqa: DOC502

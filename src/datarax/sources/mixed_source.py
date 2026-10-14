@@ -42,7 +42,7 @@ from datarax.core.data_source import (
     known_length,
     record_words,
     RecordIdentity,
-    refuse_padding,
+    refuse_unnamed,
 )
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import (
@@ -603,8 +603,8 @@ class MixDataSourcesNode(DataSourceModule):
             The layout.
 
         Raises:
-            ValueError: If a child holds no records, the index space reaches the padding index,
-                or the epoch is longer than ``len()`` can report.
+            ValueError: If a child holds no records, the index space is past the records a
+                source can hold, or the epoch is longer than ``len()`` can report.
         """
         lengths = self._child_lengths()
         for position, length in enumerate(lengths):
@@ -613,10 +613,10 @@ class MixDataSourcesNode(DataSourceModule):
         spaces = tuple(source.index_space() for source in self._sources)
         offsets = tuple(sum(spaces[:position]) for position in range(len(spaces)))
         space = sum(spaces)
-        if space >= MAX_RECORDS:
+        if space > MAX_RECORDS:
             raise ValueError(
-                f"the children hold {space} records, whose indices reach the padding index "
-                f"(2**64 - 1); a mix indexes at most {MAX_RECORDS - 1}"
+                f"the children hold {space} records, past the 2**63 a source can hold: a "
+                "record's index keeps the top bit clear"
             )
         period = sum(self._proportions)
         epoch_length = min(
@@ -788,7 +788,7 @@ class MixDataSourcesNode(DataSourceModule):
         Raises:
             IndexError: If an index is the padding index or outside the mix's index space.
         """
-        refuse_padding(words)
+        refuse_unnamed(words)
         index = (words[:, 0], words[:, 1])
         space = to_words(layout.space)
         outside = ~greater((space[0:1], space[1:2]), index)

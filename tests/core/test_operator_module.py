@@ -477,13 +477,19 @@ class TestOperatorKeys:
         assert jax.tree.leaves(nnx.state(operator, nnx.RngState)) == []
 
     def test_a_call_without_records_repeats_and_keys_on_positions(self):
-        """No record identity: row ``i`` is record ``(0, i)`` of epoch 0, draw 0."""
+        """No record identity: row ``i`` is named ``(2**31, i)``, of epoch 0, draw 0."""
         operator = self._stochastic()
         batch = self._batch()
 
         first = operator(batch_ops.from_arrays(batch, states={})).data
         second = operator(batch_ops.from_arrays(batch, states={})).data
-        positional = operator(self._identified(batch, jnp.arange(4)))
+        positional = operator(
+            batch_ops.from_arrays(batch).replace(
+                indices=jnp.stack(
+                    [jnp.full(4, 1 << 31, jnp.uint32), jnp.arange(4, dtype=jnp.uint32)], -1
+                )
+            )
+        )
 
         assert jnp.array_equal(first["image"], second["image"])
         assert jnp.array_equal(first["image"], positional["image"])

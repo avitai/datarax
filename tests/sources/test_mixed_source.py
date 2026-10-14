@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import inspect
 import math
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -26,7 +25,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import PADDING_INDEX
-from datarax.core.index_words import from_words, MAX_RECORDS, to_words
+from datarax.core.index_words import from_words, to_words
 from datarax.core.prng import per_record_keys
 from datarax.pipeline import Pipeline
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
@@ -316,11 +315,11 @@ class TestOneIndexSpace:
         )
         assert len({tuple(row) for row in np.asarray(keys).tolist()}) == 3
 
-    def test_a_space_reaching_the_padding_index_is_refused(self) -> None:
-        third = sys.maxsize
-        assert 3 * third >= MAX_RECORDS
-        with pytest.raises(ValueError, match="padding index"):
-            _sized([third, third, third], (1 / 3, 1 / 3, 1 / 3))
+    def test_a_space_past_the_records_a_source_holds_is_refused(self) -> None:
+        """The mix's indices keep the top bit clear: its children hold at most ``2**63`` records."""
+        half = 1 << 62
+        with pytest.raises(ValueError, match=r"2\*\*63"):
+            _sized([half, half + 1], (0.5, 0.5))
 
     def test_an_epoch_past_python_s_length_is_refused(self) -> None:
         with pytest.raises(ValueError, match="sys.maxsize"):

@@ -7,8 +7,10 @@ works on the two words with the operators NumPy and JAX uint32 arrays share, bot
 ``2**32``, so the host and the device run the same code and neither needs x64. The high word of a
 32-bit product is built from 16-bit limbs, whose products fit in 32 bits.
 
-The all-ones index, :data:`~datarax.core.element_batch.PADDING_INDEX`, marks a row that is not a
-record, so a source holds at most :data:`MAX_RECORDS` records, indices ``[0, 2**64 - 1)``.
+A record's index has the top bit clear, so a source holds at most :data:`MAX_RECORDS` records,
+indices ``[0, 2**63)``. An index with the top bit set names no record: the all-ones index,
+:data:`~datarax.core.element_batch.PADDING_INDEX`, marks padding, and ``(2**31, row)`` names a row
+of a batch built without record identities (``batch_ops.from_arrays``).
 """
 
 from __future__ import annotations
@@ -25,8 +27,8 @@ from jax.typing import ArrayLike
 WORD_BITS = 32
 """Bits per word."""
 
-MAX_RECORDS = (1 << 64) - 1
-"""Records a source can hold: every 64-bit index but the all-ones one, which marks padding."""
+MAX_RECORDS = 1 << 63
+"""Records a source can hold: every index with the top bit clear, which marks no record."""
 
 _LOW_MASK = (1 << WORD_BITS) - 1
 _LIMB_MASK = np.uint32(0xFFFF)
@@ -266,7 +268,8 @@ def wrapped_positions(start: int | ArrayLike, size: int, length: int | None) -> 
     if length is not None:
         offsets %= np.uint64(length)
     if isinstance(start, int | np.integer):
-        first_high, first_low = split_constant(int(start) % (length or MAX_RECORDS + 1))
+        # Unbounded positions are 64-bit: they wrap at 2**64, not at the records a source holds.
+        first_high, first_low = split_constant(int(start) % (length or 1 << 64))
         first = (jnp.asarray(first_high), jnp.asarray(first_low))
     elif is_word_start(start):
         words = jnp.asarray(start, jnp.uint32)

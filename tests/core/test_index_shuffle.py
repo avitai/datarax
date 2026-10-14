@@ -276,19 +276,20 @@ class TestBijection:
         inverses = [_reference_inverse(int(record), length, keys) for record in records]
         assert inverses == positions
 
-    @pytest.mark.parametrize("length", [0, MAX_RECORDS + 1])
-    def test_a_length_outside_the_64_bit_indices_is_refused(self, length: int) -> None:
+    @pytest.mark.parametrize("length", [0, (1 << 63) + 1, (1 << 64) - 1])
+    def test_a_length_past_the_records_a_source_holds_is_refused(self, length: int) -> None:
+        """A record's index has the top bit clear: at most ``2**63`` records."""
         with pytest.raises(ValueError, match="length"):
             shuffle_positions(_words([0]), length, jax.random.key(0))
         with pytest.raises(ValueError, match="length"):
             shuffle_positions_host(np.zeros(1, np.uint64), length, 0)
 
-    def test_the_largest_order_never_names_the_padding_index(self) -> None:
-        """At ``2**64 - 1`` records the indices are ``[0, 2**64 - 1)``: all-ones marks padding."""
+    def test_the_largest_order_names_records_only(self) -> None:
+        """At ``2**63`` records the indices are ``[0, 2**63)``: the top bit stays clear."""
         length = MAX_RECORDS
-        positions = [0, 1, 1 << 32, (1 << 63) + 5, length - 2]
+        positions = [0, 1, 1 << 32, (1 << 62) + 5, length - 2]
         records = from_words(shuffle_positions(_words(positions), length, jax.random.key(1)))
-        assert (records < np.uint64(MAX_RECORDS)).all()
+        assert (records < np.uint64(1 << 63)).all()
         assert np.unique(records).size == len(positions)
 
     @pytest.mark.parametrize(
@@ -479,7 +480,9 @@ class TestFixedPasses:
                 np.testing.assert_array_equal(np.asarray(walk(positions, length, key, fixed)), loop)
             np.testing.assert_array_equal(np.asarray(shuffle(positions, length, key)), loop)
 
-    @pytest.mark.parametrize("length", [*_SIZES, *_WIDE, (1 << 63) + 1, MAX_RECORDS])
+    @pytest.mark.parametrize(
+        "length", [*_SIZES, *_WIDE, (1 << 62) + 1, MAX_RECORDS - 1, MAX_RECORDS]
+    )
     @pytest.mark.parametrize("count", [1, 256, 4096])
     def test_the_pass_count_is_the_fewest_meeting_the_fallback_bound(
         self, length: int, count: int
@@ -497,13 +500,13 @@ class TestFixedPasses:
         assert passes == 1 or count * out_of_range ** (passes - 1) > _FALLBACK_CHANCE
 
     def test_a_domain_one_short_of_full_takes_one_pass(self) -> None:
-        """At ``2**64 - 1`` records one value of the 64-bit domain is out of range, 2**-64 of
-        them; a subtraction ``1 - length / 2**64`` in floating point would round that to 0."""
-        assert _fixed_passes(MAX_RECORDS, 4096) == 1
-        assert _fixed_passes((1 << 63) + 1, 4096) > 1
+        """At ``2**63 - 1`` records one value of the 63-bit domain is out of range, 2**-63 of
+        them; a subtraction ``1 - length / 2**63`` in floating point would round that to 0."""
+        assert _fixed_passes(MAX_RECORDS - 1, 4096) == 1
+        assert _fixed_passes((1 << 62) + 1, 4096) > 1
 
     @pytest.mark.parametrize(
-        "length", [1 << 7, (1 << 7) + 1, 255, 1000, 65537, 1_000_003, *_WIDE, (1 << 63) + 1]
+        "length", [1 << 7, (1 << 7) + 1, 255, 1000, 65537, 1_000_003, *_WIDE, (1 << 62) + 1]
     )
     def test_the_cap_does_not_bind_from_half_the_smallest_domain(self, length: int) -> None:
         """From 2**7 records a value leaves the range with probability at most 1/2, so even

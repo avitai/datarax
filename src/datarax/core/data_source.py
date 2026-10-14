@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 
 from datarax.core.element_batch import Batch, PADDING_INDEX
 from datarax.core.index_shuffle import shuffle_positions
-from datarax.core.index_words import from_words, low_words, wrapped_positions
+from datarax.core.index_words import from_words, low_words, MAX_RECORDS, wrapped_positions
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
 
@@ -83,14 +83,17 @@ def record_words(indices: ArrayLike) -> np.ndarray:
     return words
 
 
-def refuse_padding(words: np.ndarray) -> None:
-    """Refuse the padding index, which names no record.
+def refuse_unnamed(words: np.ndarray) -> None:
+    """Refuse an index naming no record: one at or past :data:`MAX_RECORDS`, the top bit set.
+
+    Two kinds of rows carry one: padding (all ones) and the rows of a batch built without record
+    identities (``(2**31, row)``, ``batch_ops.from_arrays`` and ``from_stacked``).
 
     Args:
         words: uint32 ``(n, 2)`` record indices.
 
     Raises:
-        IndexError: If an index is the padding index (all ones).
+        IndexError: If an index is the padding index or names a row built without an identity.
     """
     padding = np.all(words == PADDING_INDEX, axis=1)
     if padding.any():
@@ -98,13 +101,21 @@ def refuse_padding(words: np.ndarray) -> None:
             f"index {int(np.argmax(padding))} is the padding index (all ones), which names "
             "no record"
         )
+    unnamed = from_words(words) >= np.uint64(MAX_RECORDS)
+    if unnamed.any():
+        row = int(np.argmax(unnamed))
+        raise IndexError(
+            f"index {row} ({int(words[row, 0])}, {int(words[row, 1])}) names a row of a batch "
+            "built without record identities (batch_ops.from_arrays or from_stacked), not a "
+            "record: look records up by the indices of a batch a source served"
+        )
 
 
 def host_rows(words: np.ndarray, length: int) -> np.ndarray:
     """The rows ``words`` name in a source of ``length`` records, refusing words naming none.
 
-    The one row check of the host reads and provenance lookups: the padding index and records
-    outside the source are refused.
+    The one row check of the host reads and provenance lookups: an index naming no record
+    (:func:`refuse_unnamed`) and records outside the source are refused.
 
     Args:
         words: uint32 ``(n, 2)`` record indices.
@@ -114,9 +125,9 @@ def host_rows(words: np.ndarray, length: int) -> np.ndarray:
         uint32 ``(n,)`` row numbers.
 
     Raises:
-        IndexError: If an index is the padding index or outside the source.
+        IndexError: If an index names no record or is outside the source.
     """
-    refuse_padding(words)
+    refuse_unnamed(words)
     outside = (words[:, 0] != 0) | (words[:, 1] >= length)
     if outside.any():
         raise IndexError(
@@ -387,13 +398,13 @@ class DataSourceModule(StructuralModule):
         Raises:
             TypeError: If the source names its records by arrival.
             ValueError: If ``indices`` are not uint32 ``(n, 2)`` words.
-            IndexError: If an index is the padding index or outside the source.
+            IndexError: If an index names no record or is outside the source.
         """
         self._refuse_arrival("look a record's provenance up by its index")
         words = record_words(indices)
         length = known_length(self)
         if length is None:
-            refuse_padding(words)
+            refuse_unnamed(words)
         else:
             host_rows(words, length)
         return (NO_PROVENANCE,) * len(words)
@@ -404,9 +415,10 @@ class DataSourceModule(StructuralModule):
         A table keyed by record (D7) needs identities that are stable and unique across passes,
         which a source naming records by position (``INDEXED``) or by the ids its stream reports
         (``STREAM_IDS``) gives. Only the static ``record_identity`` is read, so under ``jit`` the
-        batch's indices pass through and the call adds nothing to the program. A ``Batch`` has no
-        source and so no record keys: key a table with this method on a batch this source's
-        pipeline served.
+        batch's indices pass through and the call adds nothing to the program. A record's index
+        has the top bit clear; a batch built without identities names its rows ``(2**31, row)``,
+        so a table reading row ``lo`` only where ``hi == 0 and lo < N`` never touches a row for
+        them, as for padding, under every transform.
 
         Args:
             batch: A batch this source's records were served in.

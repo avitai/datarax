@@ -369,7 +369,7 @@ class TestBatchMixOperatorStochastic:
         values = {"value": jnp.arange(8.0).reshape(4, 2)}
         rows = jnp.arange(4, dtype=jnp.uint32)
         named = batch_ops.from_arrays(values).replace(
-            indices=jnp.stack([jnp.zeros_like(rows), rows], -1)
+            indices=jnp.stack([jnp.full_like(rows, 1 << 31), rows], -1)
         )
 
         direct = operator(batch_ops.from_arrays(values))

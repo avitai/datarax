@@ -23,6 +23,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core.element_batch import ArrayValue, Batch, Element, PADDING_INDEX
+from datarax.core.index_words import MAX_RECORDS, WORD_BITS
 from datarax.core.state_keys import WEIGHT
 
 
@@ -60,8 +61,13 @@ def _record_axis(tree: PyTree, what: str) -> int:
 
 
 def _row_indices(size: int, xp: ModuleType) -> ArrayValue:
-    """Row ``i`` named as record ``(0, i)``: the identity of a row built without one."""
-    return xp.stack([xp.zeros(size, xp.uint32), xp.arange(size, dtype=xp.uint32)], axis=1)
+    """Row ``i`` named ``(2**31, i)``: its own key, and past every record any source holds.
+
+    The high word, ``MAX_RECORDS >> 32``, sets the top bit, so every lookup by record refuses
+    the name as it refuses padding (:data:`~datarax.core.index_words.MAX_RECORDS`).
+    """
+    high = xp.full(size, MAX_RECORDS >> WORD_BITS, xp.uint32)
+    return xp.stack([high, xp.arange(size, dtype=xp.uint32)], axis=1)
 
 
 def _map_rows(batch: Batch, fn: Callable[[ArrayValue], ArrayValue]) -> Batch:
@@ -92,8 +98,9 @@ def from_arrays(  # noqa: DOC502 - _record_axis raises the ValueError
 ) -> Batch:
     """Build a batch from arrays with a leading record axis.
 
-    Without ``indices``, row ``i`` is record ``(0, i)``, so each row keys its randomness on its
-    position: the same arrays draw the same values on every call, and no two rows share a key.
+    Without ``indices``, row ``i`` is named ``(2**31, i)``, so each row keys its randomness on its
+    position: the same arrays draw the same values on every call, and no two rows share a key. The
+    name's top bit is set, so it is no source's record: a lookup by record refuses it.
     Without ``epochs``, every row is of epoch 0. Every row is draw 0.
 
     Args:
@@ -127,7 +134,7 @@ def from_stacked(records: Element) -> Batch:
 
     That is what batching ``Element`` records produces: Grain's ``batch``, a stack of the
     records' leaves, or a ``vmap`` returning ``Element``. The identities are the records' own;
-    records built without an index are named by their rows, as ``from_arrays`` names them.
+    records built without an index are named ``(2**31, row)``, as ``from_arrays`` names them.
 
     Args:
         records: The stacked records.

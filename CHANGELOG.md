@@ -251,6 +251,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** a row of a batch built without record identities (`batch_ops.from_arrays`,
+  `from_stacked` over records without an index) is named `(2**31, row)` instead of `(0, row)`, and
+  a source holds at most `2**63` records (`MAX_RECORDS`): a record's index has the top bit clear,
+  and an index with it set names no record (the all-ones padding index, or such a row). Each row
+  still keys its randomness on its position, so the draws of a batch built without identities
+  change while every served batch's identities, draws and orders stay as they were. Lookups by
+  record refuse these rows naming why: `provenance` and the host reads raise `IndexError`
+  (`refuse_unnamed`, replacing `refuse_padding`), and a device table reading row `lo` only where
+  `hi == 0 and lo < N` touches none of them under every transform. Orders, mixes and streams
+  refuse a length, an index space, an arrival ordinal or a reported id past `2**63`; a TFDS stream
+  refuses a shard numbered past `2**31 - 1`.
 - **Breaking:** an in-memory source's columns (`MemorySource`, `TFDSEagerSource`,
   `HFEagerSource`, any `EagerSource`) are host NumPy data held in a `HostColumns` holder, not NNX
   state. A split or checkpoint of a pipeline carries no dataset-sized array, and sources that

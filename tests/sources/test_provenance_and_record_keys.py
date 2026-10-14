@@ -3,8 +3,11 @@
 A source that names records stably (``INDEXED``, ``STREAM_IDS``) serves each record's provenance by
 its index, ``source.provenance(indices)``, and hands out the keys a per-record table is keyed by,
 ``source.record_keys(batch)``: the batch's indices. A source that names records by arrival cannot
-look a past record up, so both are refused, naming the kind. A bare ``Batch`` has no source and so
-no record keys. Provenance never enters a ``Batch`` or a trace.
+look a past record up, so both are refused, naming the kind. A ``Batch`` built without identities
+names its rows ``(2**31, row)``, outside every source, so every lookup refuses them: the host reads
+and provenance by their bounds check, a device table by ``hi == 0 and lo < N``, under every
+transform.
+Provenance never enters a ``Batch`` or a trace.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
+from jax.sharding import Mesh, PartitionSpec as P
 from substrax.testing.compiles import expect_compiles
 
+from datarax.core import batch_ops
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch, PADDING_INDEX
@@ -172,9 +177,94 @@ class TestRecordKeys:
                     np.asarray(nnx_keyed(source, batch)), np.asarray(batch.indices)
                 )
 
-    def test_a_bare_batch_has_no_record_keys(self) -> None:
-        assert not hasattr(Batch, "record_keys")
-        assert not hasattr(_memory().get_batch(_words([0])), "record_keys")
+    def test_a_bare_batch_s_keys_name_no_record(self) -> None:
+        """The keys pass through, and their set top bit puts them outside every source."""
+        bare = batch_ops.from_arrays({"x": np.zeros((4, 1), np.float32)})
+
+        keys = np.asarray(_memory().record_keys(bare))
+
+        assert ((keys[:, 0] & np.uint32(1 << 31)) != 0).all()
+
+
+def _bare_words(size: int) -> np.ndarray:
+    return np.asarray(batch_ops.from_arrays({"x": np.zeros((size, 1), np.float32)}).indices)
+
+
+def _transformed(step: Any, transform: str) -> Any:
+    """``step(table, indices)`` under ``transform``, returning the updated table and the reads."""
+    if transform == "jit":
+        return jax.jit(step)
+    if transform == "vmap":
+
+        def mapped(table: jax.Array, indices: jax.Array) -> tuple[jax.Array, jax.Array]:
+            updated, read = jax.vmap(step, in_axes=(None, 0))(table, indices[None])
+            return updated[0], read[0]
+
+        return mapped
+    if transform == "scan":
+
+        @jax.jit
+        def scanned(table: jax.Array, indices: jax.Array) -> tuple[jax.Array, jax.Array]:
+            updated, read = jax.lax.scan(step, table, indices[None])
+            return updated, read[0]
+
+        return scanned
+    if transform == "shard_map":
+
+        def local(table: jax.Array, indices: jax.Array) -> tuple[jax.Array, jax.Array]:
+            updated, read = step(table, indices)
+            return table + jax.lax.psum(updated - table, "data"), read
+
+        mesh = Mesh(np.array(jax.devices()), ("data",))
+        return jax.jit(
+            jax.shard_map(local, mesh=mesh, in_specs=(P(), P("data")), out_specs=(P(), P("data")))
+        )
+    return nnx.jit(step, graph=transform == "nnx_jit_graph")
+
+
+class TestABareBatchNamesNoRecord:
+    """Rows built without identities are refused by every lookup, naming why (OWN-1014)."""
+
+    def test_provenance_refuses_them(self, tmp_path: Path) -> None:
+        path = tmp_path / "rows.npy"
+        np.save(path, np.zeros((5, 2), np.float32))
+        mix = MixDataSourcesNode(
+            MixDataSourcesConfig(weights=(0.5, 0.5)), [_memory("a", 3), _memory("b", 4)]
+        )
+        disk = StreamingDiskSource(StreamingDiskSourceConfig(path=str(path)))
+        for source in (_memory(), mix, disk):
+            with pytest.raises(IndexError, match="built without record identities"):
+                source.provenance(_bare_words(2))
+
+    def test_a_host_read_refuses_them(self) -> None:
+        with pytest.raises(IndexError, match="built without record identities"):
+            _memory().get_batch(_bare_words(2))
+
+    @staticmethod
+    def _table_step(table: jax.Array, indices: jax.Array) -> tuple[jax.Array, jax.Array]:
+        """The device-table rule: a row reads and updates only where ``hi == 0 and lo < N``."""
+        hi, lo = indices[:, 0], indices[:, 1]
+        named = (hi == 0) & (lo < table.shape[0])
+        rows = jnp.where(named, lo, table.shape[0]).astype(jnp.int32)
+        read = jnp.where(named, table.at[rows].get(mode="fill", fill_value=jnp.nan), jnp.nan)
+        return table.at[rows].add(1.0, mode="drop"), read
+
+    @pytest.mark.parametrize(
+        "transform", ["jit", "vmap", "scan", "shard_map", "nnx_jit_graph", "nnx_jit_tree"]
+    )
+    def test_a_device_table_updates_served_rows_and_none_of_a_bare_batch(
+        self, transform: str
+    ) -> None:
+        size = len(jax.devices())
+        table = jnp.zeros(8 * size)
+        served = jnp.asarray(_memory(count=8 * size).get_batch(_words(list(range(size)))).indices)
+        bare = jnp.asarray(_bare_words(size))
+        run = _transformed(self._table_step, transform)
+
+        updated, read = run(table, served)
+        assert float(updated.sum()) == size and not np.isnan(np.asarray(read)).any()
+        updated, read = run(table, bare)
+        assert float(updated.sum()) == 0.0 and np.isnan(np.asarray(read)).all()
 
 
 class TestAnArrivalSourceRefusesTables:

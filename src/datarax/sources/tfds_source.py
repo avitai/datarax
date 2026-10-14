@@ -65,7 +65,7 @@ from datarax.core.data_source import (
     Provenance,
     record_words,
     RecordIdentity,
-    refuse_padding,
+    refuse_unnamed,
 )
 from datarax.core.host_values import HostValue
 from datarax.core.prng import pass_generator
@@ -457,6 +457,9 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
 _LARGEST_OFFSET = 2**32 - 1
 """The largest record offset in a shard file: an id keeps the offset in its low word."""
 
+_LARGEST_SHARD = 2**31 - 1
+"""The largest shard number: an id keeps it in its high word, whose top bit marks no record."""
+
 _CYCLE_LENGTH = 16
 """Shard files read at once when a pass is shuffled: TFDS's ``interleave_cycle_length``."""
 
@@ -713,8 +716,14 @@ def _split_shard(path: str, shard: int, skip: int, take: int) -> _Shard:
         The shard.
 
     Raises:
-        ValueError: If the split's last offset does not fit an id's low word.
+        ValueError: If the split's last offset does not fit an id's low word, or the shard's
+            number its high word.
     """
+    if shard > _LARGEST_SHARD:
+        raise ValueError(
+            f"shard file {path} is number {shard}, but an id's high word holds a shard's number "
+            f"below 2**31 ({_LARGEST_SHARD} at most): its top bit marks no record"
+        )
     last = skip + take - 1
     if last > _LARGEST_OFFSET:
         raise ValueError(
@@ -1242,7 +1251,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
         for columns, provenance, ids, _, _ in self.pass_dataset(pass_index, key, read_size):
             yield StreamChunk(columns, tuple(MappingProxyType(p) for p in provenance), ids)
 
-    def provenance(  # noqa: DOC502 - record_words, refuse_padding and _frame_at raise
+    def provenance(  # noqa: DOC502 - record_words, refuse_unnamed and _frame_at raise
         self, indices: ArrayLike
     ) -> Provenance:
         """The provenance of the records ``indices`` names, read again by their ids.
@@ -1262,7 +1271,7 @@ class TFDSStreamingSource(DatasetSourceMixin, StreamingSourceBase):
             IndexError: If an index is the padding index, or names no shard or no record in it.
         """
         words = record_words(indices)
-        refuse_padding(words)
+        refuse_unnamed(words)
         frames = [self._frame_at(int(shard), int(offset)) for shard, offset in words]
         features = self._dataset_info.value.features
         return tuple(

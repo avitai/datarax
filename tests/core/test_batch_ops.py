@@ -5,6 +5,8 @@ NumPy arrays the construction operations stay on the host, as NumPy views, until
 Padding rows carry ``PADDING_INDEX`` and weight 0, so a filtered batch keeps its static shape.
 """
 
+from typing import Any
+
 import grain
 import jax
 import jax.numpy as jnp
@@ -16,6 +18,7 @@ from substrax.testing.compiles import expect_compiles
 
 from datarax.core import batch_ops, Maybe
 from datarax.core.element_batch import Batch, Element, PADDING_INDEX
+from datarax.core.index_words import from_words, MAX_RECORDS
 from datarax.core.state_keys import WEIGHT
 
 
@@ -52,9 +55,12 @@ class TestConstruction:
     """The two ways a batch is built: from stacked records, and from arrays without identities."""
 
     def test_from_arrays_keys_rows_on_their_positions(self) -> None:
+        """Row i is named ``(2**31, i)``: its own key, and the record of no source."""
         batch = batch_ops.from_arrays({"x": np.ones((5, 3), np.float32)})
 
-        np.testing.assert_array_equal(batch.indices, np.stack([np.zeros(5), np.arange(5)], 1))
+        np.testing.assert_array_equal(
+            batch.indices, np.stack([np.full(5, 1 << 31), np.arange(5)], 1)
+        )
         assert batch.indices.dtype == np.uint32
         np.testing.assert_array_equal(batch.epochs, np.zeros(5, np.int32))
         np.testing.assert_array_equal(batch.draws, np.zeros(5, np.int32))
@@ -126,14 +132,25 @@ class TestConstruction:
         assert batch.batch_state == {}
 
     def test_records_without_an_index_are_named_by_their_rows(self) -> None:
-        """Stacked records built without identities never share a key: row i is (0, i)."""
+        """Stacked records built without identities never share a key: row i is (2**31, i)."""
         records = [Element({"x": np.full(2, i, np.float32)}) for i in range(4)]
 
         batch = batch_ops.from_stacked(batch_ops.stack(records))
 
-        np.testing.assert_array_equal(batch.indices, [[0, i] for i in range(4)])
+        np.testing.assert_array_equal(batch.indices, [[1 << 31, i] for i in range(4)])
         np.testing.assert_array_equal(batch.epochs, np.zeros(4))
         np.testing.assert_array_equal(batch.draws, np.zeros(4))
+
+    @pytest.mark.parametrize("xp", [np, jnp])
+    def test_a_row_built_without_an_identity_names_no_record(self, xp: Any) -> None:
+        """Every row name lies past the records a source can hold and is not padding."""
+        size = 1 << 12
+        batch = batch_ops.from_arrays({"x": xp.zeros((size, 1), xp.float32)})
+
+        indices = from_words(np.asarray(batch.indices))
+        assert (indices >= np.uint64(MAX_RECORDS)).all()
+        assert not (np.asarray(batch.indices) == PADDING_INDEX).all(axis=1).any()
+        assert len(set(indices.tolist())) == size
 
     def test_records_with_and_without_an_index_do_not_stack(self) -> None:
         records = [
