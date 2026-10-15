@@ -330,6 +330,12 @@ jobs:
           uv run python -m tests.test_common.tfds_fixture "$RUNNER_TEMP/tfds_fixture"
           echo "DATARAX_TFDS_FIXTURE_DIR=$RUNNER_TEMP/tfds_fixture" >> "$GITHUB_ENV"
 
+      # The decoded copy's reservation test fills a real 1 MiB tmpfs mounted in a user namespace,
+      # without root. Ubuntu 24.04 refuses unprivileged user namespaces through AppArmor, which
+      # would skip it here.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run long-running tests
         run: |
           # Each example has a 300 s budget, and running past it fails the test.
