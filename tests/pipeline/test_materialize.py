@@ -28,6 +28,7 @@ from datarax.pipeline.read_plan import WORKER_BUFFER
 from datarax.sources import from_tfds, MemorySource, MemorySourceConfig, open_decoded_copy
 from datarax.sources.decoded_copy._units import source_layout
 from tests.test_common.decoded_copies import every_record, write_copy
+from tests.test_common.host_plans import STILL_RESIDENT
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.tfds_golden import digests, EAGER_BUILD
 from tests.test_common.worker_reads import (
@@ -226,6 +227,23 @@ class TestWorkersByReadKind:
                 source, host_resources=resources(cap) if budget else None, unit_records=_UNIT
             )
             _same(every_record(result)[0], every_record(source)[0])
+        assert started.counts == []
+
+    @pytest.mark.usefixtures("still_resident")
+    def test_a_gil_free_build_reads_nothing_ahead_so_its_budget_holds_no_read_buffer(
+        self, started: _Workers
+    ) -> None:
+        """On the calling thread a build holds its unit, not a pipeline's 16-unit read buffer."""
+        rows = np.zeros((4 * _UNIT, 1 << 16), np.float32)
+        unit = _UNIT * rows[0].nbytes
+        source = MemorySource(MemorySourceConfig(), {"x": rows})
+        budget = HostResources(
+            ram_budget_bytes=STILL_RESIDENT + rows.nbytes + 4 * unit, max_workers=1
+        )
+
+        result = materialize(source, host_resources=budget, unit_records=_UNIT)
+
+        _same(every_record(result)[0], every_record(source)[0])
         assert started.counts == []
 
     @pytest.mark.parametrize("workers", PROCESS_COUNTS)

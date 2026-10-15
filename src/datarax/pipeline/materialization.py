@@ -58,6 +58,7 @@ from datarax.pipeline.read_plan import (
     HostReadPath,
     HostTerms,
     measure_terms,
+    refuse_below_fixed,
     warn_one_thread,
     WORKER_BUFFER,
 )
@@ -291,8 +292,13 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
         first_unit=_FirstUnitOfBuild,
         settings=settings,
     )
+    sunk = dataclasses.replace(terms, sink_bytes=sink_bytes)
+    admitted = 0
     try:
-        plan = budget_plan(resources, path, dataclasses.replace(terms, sink_bytes=sink_bytes))
+        if in_processes:
+            admitted = budget_plan(resources, path, sunk).workers
+        else:  # decoded on the calling thread, which reads nothing ahead
+            refuse_below_fixed(resources, sunk)
     except ValueError as error:
         ways = (
             "read the source per batch instead (a Pipeline over it), or write a decoded copy "
@@ -301,12 +307,12 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
             else "or omit host_resources to decode on the calling thread"
         )
         raise ValueError(f"{error}; for this build: {ways}") from error
-    workers = min(plan.workers, remaining)
+    workers = min(admitted, remaining)
     if in_processes and workers < _FEWEST_WORKERS:
         logger.info(
             "the budget admits %d worker process(es) for %d unit(s) of %s; fewer than %d decode "
             "slower than the calling thread, which decodes them",
-            plan.workers,
+            admitted,
             remaining,
             type(source).__name__,
             _FEWEST_WORKERS,

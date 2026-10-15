@@ -28,10 +28,6 @@ from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNod
 from tests.test_common.host_plans import reading_with
 
 
-pytestmark = pytest.mark.usefixtures("still_resident")
-"""Plans read with chosen threads and buffers (:func:`reading_with`): ``M_main`` held still."""
-
-
 def _memory(length: int) -> MemorySource:
     return MemorySource(
         MemorySourceConfig(), {"x": np.arange(length * 2, dtype=np.float32).reshape(length, 2)}
@@ -62,9 +58,7 @@ def _pipeline(
         shuffle=shuffle,
         drop_last=drop_last,
         num_epochs=num_epochs,
-        host_resources=None
-        if threads == 1
-        else reading_with(source, batch_size, threads=threads, read_buffer=threads),
+        host_resources=None if threads == 1 else reading_with(threads),
     )
 
 
@@ -123,7 +117,7 @@ def test_a_batch_named_in_a_block_is_named_as_alone(
     assert [_named(batch) for batch in pipe.raw_batches()] == expected
 
 
-@pytest.mark.parametrize("threads", [1, 4, 8])
+@pytest.mark.parametrize("threads", [1, 2, 4])
 @pytest.mark.parametrize("drop_last", [False, True])
 @pytest.mark.parametrize("shuffle", [False, True])
 def test_resumed_at_every_position_the_rest_is_named_as_alone(
