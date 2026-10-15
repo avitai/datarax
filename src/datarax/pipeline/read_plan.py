@@ -27,12 +27,15 @@ Workers ``k`` for a GIL-bound read is the largest count with::
     k (2o + 2) E + (d + 1) E                                          <=  free bytes of /dev/shm
     k  <=  max_workers  <=  the CPUs available
 
-A GIL-free read runs on threads (fewer than the CPUs, Grain's advice for a GIL-free bottleneck,
-and at most the cap) reading ``b`` units ahead, the largest ``M_main + O + C + (b + 1 + d + 1) E``
-admits, at least two and at most Grain's 1,000. A budget below ``M_main + O + C + (d + 1) E`` is
-refused on either path, and one admitting no worker, naming the terms; nothing is rounded up to
-one worker. The terms are measured from a source's values (:func:`measure_terms`), so a pipeline's
-host stage and a build plan alike.
+A GIL-free read runs on ``min(4, max_workers, CPUs - 1)`` threads reading
+``b = max(16, 2 x threads)`` units ahead, whatever the budget: read threads that outrun the
+consumer fill a deep buffer, and taking batches written long ago doubles the consumer's cost per
+batch (:data:`THREAD_READ_BUFFER`, :data:`MAX_READ_THREADS`). A budget below
+``M_main + O + C + (d + 1) E`` is refused on either path, one below
+``M_main + O + C + (b + 1 + d + 1) E`` on threads, and one admitting no worker, naming the terms;
+nothing is rounded up to one worker or down to a smaller buffer. Without a budget a run reads on
+one thread two units ahead (:data:`READ_THREADS`, :data:`READ_BUFFER`). The terms are measured from
+a source's values (:func:`measure_terms`), so a pipeline's host stage and a build plan alike.
 """
 
 from __future__ import annotations
@@ -57,12 +60,21 @@ from datarax.pipeline.host_workers import JaxSettings
 logger = logging.getLogger(__name__)
 
 READ_THREADS = 1
-"""Read threads without a budget: one host thread gathers millions of in-memory records a second;
-a budget sets more (:func:`budget_plan`)."""
+"""Read threads without a budget. One host thread gathers millions of in-memory records a second,
+but it can leave a fast train step waiting (a quarter to two thirds of an H100's step on the 8.2 GB
+set): pass ``host_resources`` to read on up to :data:`MAX_READ_THREADS` (:func:`budget_plan`)."""
 READ_BUFFER = 2
-"""Units read ahead without a budget, and the fewest a budget sets."""
-MAX_READ_BUFFER = 1000
-"""The most units read ahead: Grain's ``pick_performance_config`` buffer bound."""
+"""Units read ahead without a budget."""
+MAX_READ_THREADS = 4
+"""The most read threads a budget gives a GIL-free read. Their calls serialise on the GIL, so more
+threads add contention, not supply: on an H100 train step over an 8.2 GB in-memory set, four fed
+the step best (0.569 of the pre-placed floor against 0.524 at two and 0.484 at eight, each with a
+``2 x threads`` buffer)."""
+THREAD_READ_BUFFER = 16
+"""The fewest units a budget's thread path reads ahead; ``max(16, 2 x threads)`` keeps the buffer at
+least the thread count, below which Grain limits the threads it runs. Not sized from the budget:
+eight threads filling a 1,000-unit buffer read 0.397 of an H100's floor against 0.484 with 16
+(Mann-Whitney p = 0.008, five runs each) and held 27.7 against 10.4 GiB."""
 WORKER_BUFFER = 2
 """A worker's output buffer ``o``: units it puts in its queue ahead of the training process."""
 IDENTITY_BYTES = 2 * 4 + 4 + 4
@@ -221,7 +233,9 @@ def default_plan(path: HostReadPath, *, device_buffer: int) -> HostPlan:
     )
 
 
-def budget_plan(resources: HostResources, path: HostReadPath, terms: HostTerms) -> HostPlan:
+def budget_plan(  # noqa: DOC502 - refuse_below_fixed and the plans raise
+    resources: HostResources, path: HostReadPath, terms: HostTerms
+) -> HostPlan:
     """The plan a budget gives: worker processes, or threads and their read buffer.
 
     Args:
@@ -234,7 +248,26 @@ def budget_plan(resources: HostResources, path: HostReadPath, terms: HostTerms) 
 
     Raises:
         ValueError: If the budget is below what the run holds before reading ahead,
-            ``M_main + O + C + (d + 1) E``, naming the terms.
+            ``M_main + O + C + (d + 1) E``, below that and a thread plan's read buffer, or
+            admits no worker, naming the terms.
+    """
+    refuse_below_fixed(resources, terms)
+    if path is HostReadPath.PROCESSES:
+        return _worker_plan(resources, terms)
+    return _thread_plan(resources, path, terms)
+
+
+def refuse_below_fixed(resources: HostResources, terms: HostTerms) -> None:
+    """Refuse a budget below what the run holds before reading ahead, naming the terms.
+
+    A build decoding on the calling thread reads nothing ahead, so this is its whole check.
+
+    Args:
+        resources: The caller's budget and cap.
+        terms: What the reads cost.
+
+    Raises:
+        ValueError: If the budget is below ``M_main + O + C + (d + 1) E``.
     """
     fixed = _fixed_bytes(terms)
     budget = resources.ram_budget_bytes
@@ -246,9 +279,6 @@ def budget_plan(resources: HostResources, path: HostReadPath, terms: HostTerms) 
             f"build holds) + d={terms.device_buffer} + 1 units of E={terms.unit_bytes} bytes at "
             "the device: raise ram_budget_bytes"
         )
-    if path is HostReadPath.PROCESSES:
-        return _worker_plan(resources, terms)
-    return _thread_plan(resources, path, terms)
 
 
 def _fixed_bytes(terms: HostTerms) -> int:
@@ -258,13 +288,33 @@ def _fixed_bytes(terms: HostTerms) -> int:
 
 
 def _thread_plan(resources: HostResources, path: HostReadPath, terms: HostTerms) -> HostPlan:
-    """Threads below the CPUs and within the cap; the read buffer the budget holds."""
+    """At most four threads, below the CPUs and within the cap, reading ``max(16, 2T)`` ahead.
+
+    Args:
+        resources: The caller's budget and cap.
+        path: Where the run is read: threads, or a stream's one producer thread.
+        terms: What the reads cost.
+
+    Returns:
+        The plan.
+
+    Raises:
+        ValueError: If the budget is below the run and its read buffer, naming them.
+    """
     e, d = terms.unit_bytes, terms.device_buffer
-    held = (resources.ram_budget_bytes - _fixed_bytes(terms)) // max(e, 1)
-    read_buffer = min(MAX_READ_BUFFER, max(READ_BUFFER, held - 1))
     threads = 1
     if path is HostReadPath.THREADS:
-        threads = max(1, min(resources.max_workers, terms.cpus - 1))
+        threads = max(1, min(MAX_READ_THREADS, resources.max_workers, terms.cpus - 1))
+    read_buffer = max(THREAD_READ_BUFFER, 2 * threads)
+    fixed = _fixed_bytes(terms)
+    needed = fixed + (read_buffer + 1) * e
+    if resources.ram_budget_bytes < needed:
+        raise ValueError(
+            f"a RAM budget of {resources.ram_budget_bytes} bytes is below the {needed} bytes a run "
+            f"on {threads} read thread(s) holds: the {fixed} bytes it holds before reading ahead "
+            f"+ b={read_buffer} + 1 units read ahead of E={e} bytes: raise ram_budget_bytes, or "
+            f"omit host_resources to read on {READ_THREADS} thread {READ_BUFFER} units ahead"
+        )
     return HostPlan(
         path=path,
         threads=threads,
@@ -274,7 +324,7 @@ def _thread_plan(resources: HostResources, path: HostReadPath, terms: HostTerms)
         worker_read_buffer=0,
         device_buffer=d,
         terms=terms,
-        accounted_bytes=_fixed_bytes(terms) + (read_buffer + 1) * e,
+        accounted_bytes=needed,
     )
 
 
@@ -421,9 +471,10 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
 
 __all__ = [
     "IDENTITY_BYTES",
-    "MAX_READ_BUFFER",
+    "MAX_READ_THREADS",
     "READ_BUFFER",
     "READ_THREADS",
+    "THREAD_READ_BUFFER",
     "WORKER_BUFFER",
     "HostPlan",
     "HostReadPath",
@@ -434,6 +485,7 @@ __all__ = [
     "host_batch_bytes",
     "host_read_path",
     "measure_terms",
+    "refuse_below_fixed",
     "spec_bytes",
     "warn_one_thread",
 ]

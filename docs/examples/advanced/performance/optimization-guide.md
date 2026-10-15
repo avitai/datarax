@@ -29,7 +29,7 @@ thorough benchmarking methodology.
 | `num_workers` in DataLoader | `Pipeline(host_resources=HostResources(ram_budget_bytes, max_workers))`: Grain worker processes for a read that decodes in Python, sized from the RAM budget |
 | `pin_memory=True` | JAX device placement |
 | `torch.utils.benchmark` | Custom timing with `time.time()` |
-| `prefetch_factor` | Units read ahead, from the same budget (`pipe.host_plan`) |
+| `prefetch_factor` | Units read ahead (`pipe.host_plan`): 16 on a budget's threads, 2 without a budget |
 
 **Key difference:** the host stage only reads; everything after the read runs in JAX on the
 device. Worker processes read and decode, and the number of them comes from a RAM budget you
@@ -39,7 +39,7 @@ give, never from the CPU count alone (see Strategy 4).
 
 | TensorFlow | Datarax |
 |------------|---------|
-| `dataset.prefetch(AUTOTUNE)` | Units read ahead, sized from `host_resources` |
+| `dataset.prefetch(AUTOTUNE)` | Units read ahead: 16 on a budget's threads, 2 without a budget |
 | `num_parallel_calls` | Grain worker processes, sized from `host_resources` |
 | `dataset.interleave()` | Explicit interleaving |
 | `tf.profiler` | Custom profiling |
@@ -376,10 +376,16 @@ print(pipeline.host_plan)  # threads or worker processes, buffers, and what they
 ```
 
 - **Without `host_resources`** a run reads on one Grain thread, two batches ahead. There is no
-  default budget: the training process knows its share of the host.
+  default budget: the training process knows its share of the host. One thread can leave a fast
+  step waiting: on an H100 training an MLP over 8.2 GB of in-memory data it fed a quarter to two
+  thirds of what the step could take. Pass `host_resources` to read on more threads.
 - **A GIL-free read** (in-memory columns, memory-mapped files, a decoder that releases the GIL)
-  reads on more threads, fewer than the CPUs and at most `max_workers`, as many batches ahead as
-  the budget holds (2 to 1,000).
+  reads on up to four threads, fewer than the CPUs and at most `max_workers`, `max(16, 2 x
+  threads)` batches ahead whatever the budget. The threads' reads take turns holding Python's
+  GIL, so more threads add contention rather than supply (four fed that H100 step best), and a
+  deeper buffer that the threads fill hands the consumer batches read long ago, which costs it
+  about twice as much per batch. A budget that cannot hold the run and its read buffer is
+  refused, naming both.
 - **A read that decodes in Python** (an `ArrayRecordSourceModule` with a `decode` callable, which
   is the default it declares; `from_tfds(..., in_memory=False)`; `TFDSStreamingSource`; a mix with
   such a child) is read in Grain worker processes. Their number is the largest the budget holds

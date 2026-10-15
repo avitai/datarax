@@ -307,8 +307,8 @@ _TFDS_FIXTURE_PREPARE_SECONDS = 600.0
 def still_resident(monkeypatch: pytest.MonkeyPatch) -> int:
     """Hold a host plan's ``M_main`` still, at :data:`~tests.test_common.host_plans.STILL_RESIDENT`.
 
-    The process's resident size moves between two plans, so a test reading with a chosen thread
-    count and read buffer (:func:`~tests.test_common.host_plans.reading_with`) pins it.
+    The process's resident size moves between two plans, so a test whose budget is computed from
+    ``M_main`` (one holding a build but not a read buffer) pins it.
 
     Args:
         monkeypatch: Pins ``host_workers.resident_bytes`` for the test.

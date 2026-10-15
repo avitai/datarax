@@ -146,8 +146,9 @@ class Pipeline(nnx.Module):
             (:class:`~datarax.core.host_resources.HostResources`): a RAM budget and a cap
             on read threads or worker processes. With it, a source whose host read holds
             the GIL is read in Grain worker processes, as many as the budget admits, and a
-            GIL-free read on more threads; without it, one read thread (see
-            :attr:`host_plan`). No default budget: the training process knows its share.
+            GIL-free read on up to four threads, 16 units ahead; without it, one read thread
+            two units ahead, which can leave a fast train step waiting (see :attr:`host_plan`).
+            No default budget: the training process knows its share.
 
     Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
     ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so

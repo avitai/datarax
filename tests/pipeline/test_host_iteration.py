@@ -312,12 +312,11 @@ class TestState:
         assert state["stream"] == {"pass": 1, "records": 6, "arrived": 16, "passes_left": None}
         assert state["epoch"] is None and state["position"] is None
 
-    @pytest.mark.usefixtures("still_resident")
     @pytest.mark.parametrize("drop_last", [False, True])
     def test_resume_after_any_batch_with_threads_ahead_is_exact(
         self, drop_last: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """1, 4 and 8 read threads with 8 units read ahead: Grain caps the threads at the buffer.
+        """1, 2 and 4 read threads with the plan's read buffer ahead of the batch taken.
 
         After every batch of a 3-epoch run the state is taken while reads are ahead of it, and
         a rebuilt pipeline resumes it: the rest, the stochastic draws included, equals the
@@ -338,7 +337,7 @@ class TestState:
 
         def build(threads: int) -> Pipeline:
             source = _memory()
-            resources = reading_with(source, 4, threads=threads, read_buffer=8)
+            resources = reading_with(threads)
             return _pipeline(
                 source,
                 stages=[_Jitter()],
@@ -349,7 +348,7 @@ class TestState:
 
         whole = [(_rows(b), np.asarray(b["image"])) for b in build(1)]
         states: dict[int, list[Any]] = {}
-        for threads in (1, 4, 8):
+        for threads in (1, 2, 4):
             states[threads] = []
             ahead = 0
             for done in range(len(whole)):
@@ -374,7 +373,7 @@ class TestState:
                     assert rows == expected_rows
                     np.testing.assert_array_equal(image, expected_image)
             assert ahead > 0, threads
-        assert states[1] == states[4] == states[8]
+        assert states[1] == states[2] == states[4]
 
     def test_a_stream_resumes_exactly(self) -> None:
         def build() -> Pipeline:

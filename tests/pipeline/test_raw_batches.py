@@ -39,6 +39,7 @@ from datarax.core.prng import key_words
 from datarax.operators import ElementOperator
 from datarax.pipeline import Pipeline
 from datarax.pipeline.host_stage import default_device_buffer
+from datarax.pipeline.read_plan import MAX_READ_THREADS
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
 from datarax.sources.streaming_disk_source import (
@@ -174,12 +175,11 @@ class TestOrder:
         for raw, session in zip(served, reference, strict=True):
             np.testing.assert_array_equal(raw["x"], session["x"])
 
-    @pytest.mark.usefixtures("still_resident")
-    @pytest.mark.parametrize("threads", [1, 4, 8])
+    @pytest.mark.parametrize("threads", [1, 2, 4])
     def test_any_number_of_read_threads_serves_the_same_batches(self, threads: int) -> None:
         reference = [_names(b) for b in _pipeline(_memory()).raw_batches()]
         source = _memory()
-        resources = reading_with(source, 8, threads=threads, read_buffer=2)
+        resources = reading_with(threads)
         pipe = _pipeline(source, host_resources=resources)
         assert [_names(b) for b in pipe.raw_batches()] == reference
 
@@ -188,12 +188,14 @@ class TestOrder:
         public = {name for name in dir(_pipeline(_memory()).host_stage) if not name.startswith("_")}
         assert not public & {"read_threads", "read_buffer"}
 
-    @pytest.mark.usefixtures("still_resident")
-    @pytest.mark.parametrize("read_buffer", [2, 4])
+    @pytest.mark.parametrize(("threads", "read_buffer"), [(0, 2), (1, 16), (4, 16)])
     def test_reads_run_ahead_by_the_read_buffer(
-        self, monkeypatch: pytest.MonkeyPatch, read_buffer: int
+        self, monkeypatch: pytest.MonkeyPatch, threads: int, read_buffer: int
     ) -> None:
-        """Beyond the batch taken: the read buffer, and the batches staged on the device ahead."""
+        """Beyond the batch taken: the read buffer, and the batches staged on the device ahead.
+
+        No budget reads 2 units ahead on one thread; a budget, ``max(16, 2 x threads)``.
+        """
         calls: list[int] = []
         original = MemorySource.get_batch
 
@@ -202,7 +204,7 @@ class TestOrder:
             return original(self, indices, **kwargs)
 
         source = _memory()
-        resources = reading_with(source, 8, threads=1, read_buffer=read_buffer)
+        resources = reading_with(threads) if threads else None
         monkeypatch.setattr(MemorySource, "get_batch", counted)
         pipe = _pipeline(source, num_epochs=None, host_resources=resources)
         assert pipe.host_plan.read_buffer == read_buffer
@@ -802,11 +804,12 @@ class TestReadsPickle:
         source = _disk(tmp_path, length=100_000)
         assert len(cloudpickle.dumps(source)) < 32 * 1024
 
-    @pytest.mark.usefixtures("still_resident")
-    def test_eight_threads_on_a_fresh_disk_source_read_what_one_reads(self, tmp_path: Path) -> None:
+    def test_the_most_read_threads_on_a_fresh_disk_source_read_what_one_reads(
+        self, tmp_path: Path
+    ) -> None:
         reference = [_names(b) for b in _pipeline(_disk(tmp_path)).raw_batches()]
         source = cloudpickle.loads(cloudpickle.dumps(_disk(tmp_path)))  # opens lazily
-        resources = reading_with(source, 8, threads=8, read_buffer=8)
+        resources = reading_with(MAX_READ_THREADS)
         pipe = _pipeline(source, host_resources=resources)
         served = list(pipe.raw_batches())
         assert [_names(b) for b in served] == reference

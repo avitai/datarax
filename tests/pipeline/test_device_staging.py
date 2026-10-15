@@ -38,10 +38,6 @@ from tests.test_common.transfers import implicit_upload_raises
 from tests.thread_check import grain_thread_names
 
 
-pytestmark = pytest.mark.usefixtures("still_resident")
-"""Plans read with chosen threads and buffers (:func:`reading_with`): ``M_main`` held still."""
-
-
 _DEPTHS = [0, 1, 2, 3]
 _IMAGE = (5, 5, 3)  # a shape no other array of these tests has, to find placed batches
 
@@ -67,11 +63,7 @@ def _pipeline(
     num_epochs: int | None = 2,
     threads: int = 1,
 ) -> Pipeline:
-    resources = (
-        None
-        if threads == 1
-        else reading_with(source, batch_size, threads=threads, read_buffer=threads, depth=depth)
-    )
+    resources = None if threads == 1 else reading_with(threads)
     pipe = Pipeline(
         source=source,
         stages=[],
@@ -188,7 +180,7 @@ def test_every_batch_lands_on_the_caller_s_default_device(depth: int) -> None:
     assert devices == {other}
 
 
-@pytest.mark.parametrize("threads", [1, 4, 8])
+@pytest.mark.parametrize("threads", [1, 2, 4])
 @pytest.mark.parametrize("depth", _DEPTHS)
 def test_resume_after_any_batch_is_exact_whatever_is_placed_ahead(depth: int, threads: int) -> None:
     def build() -> Pipeline:

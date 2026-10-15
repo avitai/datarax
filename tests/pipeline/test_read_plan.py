@@ -39,12 +39,13 @@ from datarax.pipeline.read_plan import (
     HostReadPath,
     HostTerms,
     IDENTITY_BYTES,
-    MAX_READ_BUFFER,
+    MAX_READ_THREADS,
     measure_terms,
     READ_BUFFER,
     READ_THREADS,
     ReadAccess,
     spec_bytes,
+    THREAD_READ_BUFFER,
     WORKER_BUFFER,
 )
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -141,8 +142,10 @@ class TestDefaultPlan:
         with pytest.raises(ValueError, match="HostResources"):
             default_plan(HostReadPath.PROCESSES, device_buffer=0)
 
-    def test_c5a4_s_constants(self) -> None:
-        assert (READ_THREADS, READ_BUFFER, MAX_READ_BUFFER, WORKER_BUFFER) == (1, 2, 1000, 2)
+    def test_the_plan_s_constants(self) -> None:
+        """No budget: one thread two units ahead; with one, at most four threads, 16 ahead."""
+        assert (READ_THREADS, READ_BUFFER, WORKER_BUFFER) == (1, 2, 2)
+        assert (MAX_READ_THREADS, THREAD_READ_BUFFER) == (4, 16)
 
 
 class TestWorkerPlan:
@@ -233,55 +236,84 @@ class TestWorkerPlan:
 
 
 class TestThreadPlan:
-    """GIL-free reads: threads below the CPUs and the cap, the read buffer from the budget."""
+    """GIL-free reads: at most four threads, below the CPUs and within the cap; a fixed buffer.
 
-    def test_the_read_buffer_is_the_largest_the_budget_holds(self) -> None:
-        terms = _terms(unit_bytes=_MiB, main_bytes=10 * _MiB, device_buffer=1)
-        budget = 10 * _MiB + (8 + 1 + 1 + 1) * _MiB  # M_main + (b + 1 + d + 1) E with b = 8
-        plan = budget_plan(
-            HostResources(ram_budget_bytes=budget, max_workers=1), HostReadPath.THREADS, terms
-        )
-        assert plan.read_buffer == 8
-        assert plan.accounted_bytes == budget
+    The budget no longer sizes the read buffer: a deep buffer that read threads fill hands the
+    consumer batches written long ago and doubles its per-batch cost (OWN-1015-READ-THREADS).
+    """
+
+    @staticmethod
+    def _plan(
+        monkeypatch: pytest.MonkeyPatch, cap: int, cpus: int, path: HostReadPath, **terms: int
+    ) -> HostPlan:
+        """The plan of a cap on a machine of ``cpus`` CPUs, whatever this machine has."""
+        monkeypatch.setattr(core_resources, "available_cpus", lambda: max(cap, cpus))
+        resources = HostResources(ram_budget_bytes=1 << 40, max_workers=cap)
+        return budget_plan(resources, path, _terms(cpus=cpus, **terms))
+
+    @pytest.mark.parametrize("cap", [1, 2, 3, 4, 5, 8, 16])
+    @pytest.mark.parametrize("cpus", [1, 2, 3, 4, 5, 16, 64])
+    def test_threads_are_at_most_four_below_the_cpus_and_within_the_cap(
+        self, monkeypatch: pytest.MonkeyPatch, cap: int, cpus: int
+    ) -> None:
+        plan = self._plan(monkeypatch, cap, cpus, HostReadPath.THREADS)
+        assert plan.threads == max(1, min(MAX_READ_THREADS, cap, cpus - 1))
+
+    @pytest.mark.parametrize(("cap", "buffer"), [(1, 16), (2, 16), (4, 16), (8, 16)])
+    def test_the_read_buffer_is_sixteen_or_twice_the_threads(
+        self, monkeypatch: pytest.MonkeyPatch, cap: int, buffer: int
+    ) -> None:
+        plan = self._plan(monkeypatch, cap, 64, HostReadPath.THREADS)
+        assert plan.read_buffer == max(THREAD_READ_BUFFER, 2 * plan.threads) == buffer
         assert (plan.workers, plan.worker_buffer, plan.shm_bytes) == (0, 0, None)
 
-    def test_the_read_buffer_is_never_below_c5a4_s_two(self) -> None:
-        """A budget holding the fixed part and no unit more still reads two units ahead."""
-        terms = _terms()
-        fixed = terms.main_bytes + (terms.device_buffer + 1) * terms.unit_bytes
-        plan = budget_plan(
-            HostResources(ram_budget_bytes=fixed, max_workers=1), HostReadPath.THREADS, terms
-        )
-        assert plan.read_buffer == READ_BUFFER
-
-    def test_the_read_buffer_is_capped_at_grain_s_thousand(self) -> None:
-        plan = budget_plan(
-            HostResources(ram_budget_bytes=1 << 40, max_workers=1),
-            HostReadPath.THREADS,
-            _terms(unit_bytes=1),
-        )
-        assert plan.read_buffer == MAX_READ_BUFFER
-
-    @pytest.mark.parametrize("cap", [1, 2, 4])
-    def test_threads_stay_below_the_cpus_and_within_the_cap(self, cap: int) -> None:
-        if cap > available_cpus():
-            pytest.skip("needs more CPUs")
-        for cpus in (1, 2, 3, 16):
-            plan = budget_plan(
-                HostResources(ram_budget_bytes=1 << 30, max_workers=cap),
+    def test_a_larger_budget_reads_no_further_ahead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(core_resources, "available_cpus", lambda: 16)
+        plans = [
+            budget_plan(
+                HostResources(ram_budget_bytes=budget, max_workers=4),
                 HostReadPath.THREADS,
-                _terms(cpus=cpus),
+                _terms(unit_bytes=1),
             )
-            assert plan.threads == max(1, min(cap, cpus - 1))
+            for budget in (1 << 30, 1 << 40)
+        ]
+        assert plans[0].read_buffer == plans[1].read_buffer == THREAD_READ_BUFFER
 
-    def test_a_stream_keeps_one_producer_thread(self) -> None:
-        plan = budget_plan(
-            HostResources(ram_budget_bytes=1 << 30, max_workers=min(4, available_cpus())),
-            HostReadPath.ONE_THREAD,
-            _terms(),
+    def test_the_accounted_bytes_are_the_fixed_part_and_the_buffer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan = self._plan(monkeypatch, 2, 16, HostReadPath.THREADS)
+        terms = _terms(cpus=16)
+        fixed = terms.main_bytes + (terms.device_buffer + 1) * terms.unit_bytes
+        assert plan.accounted_bytes == fixed + (plan.read_buffer + 1) * terms.unit_bytes
+
+    @pytest.mark.parametrize("path", [HostReadPath.THREADS, HostReadPath.ONE_THREAD])
+    def test_a_budget_that_cannot_hold_the_buffer_is_refused_naming_it(
+        self, monkeypatch: pytest.MonkeyPatch, path: HostReadPath
+    ) -> None:
+        """The fixed part fits and the buffer does not: refused, not read with a smaller one."""
+        monkeypatch.setattr(core_resources, "available_cpus", lambda: 16)
+        terms = _terms(cpus=16)
+        fixed = terms.main_bytes + (terms.device_buffer + 1) * terms.unit_bytes
+        needed = fixed + (THREAD_READ_BUFFER + 1) * terms.unit_bytes
+        resources = HostResources(ram_budget_bytes=needed - 1, max_workers=1)
+        with pytest.raises(ValueError) as refused:
+            budget_plan(resources, path, terms)
+        message = str(refused.value)
+        for part in (str(needed - 1), str(needed), f"b={THREAD_READ_BUFFER}", f"E={_MiB}"):
+            assert part in message, message
+        assert (
+            budget_plan(
+                HostResources(ram_budget_bytes=needed, max_workers=1), path, terms
+            ).read_buffer
+            == THREAD_READ_BUFFER
         )
-        assert plan.threads == 1
-        assert plan.read_buffer >= READ_BUFFER
+
+    def test_a_stream_keeps_one_producer_thread_and_the_fixed_buffer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan = self._plan(monkeypatch, 4, 16, HostReadPath.ONE_THREAD)
+        assert (plan.threads, plan.read_buffer) == (1, THREAD_READ_BUFFER)
 
 
 def test_a_plan_is_static_and_hashable() -> None:
@@ -352,14 +384,15 @@ class TestTheSinkTerm:
         plan = budget_plan(resources, HostReadPath.PROCESSES, sunk)
         assert plan.workers == _workers_by_hand(budget, sunk, cap) == cap - 1
 
-    def test_the_sink_lowers_the_read_buffer(self) -> None:
+    def test_a_sink_that_leaves_no_room_for_the_buffer_is_refused(self) -> None:
+        """The sink is charged before the buffer, which it can no longer shrink."""
         terms = _terms(device_buffer=1, sink_bytes=4 * _MiB)
-        budget = terms.main_bytes + terms.sink_bytes + (8 + 1 + 1 + 1) * terms.unit_bytes
-        plan = budget_plan(
-            HostResources(ram_budget_bytes=budget, max_workers=1), HostReadPath.THREADS, terms
-        )
-        assert plan.read_buffer == 8
-        assert plan.accounted_bytes == budget
+        held = terms.main_bytes + (THREAD_READ_BUFFER + 1 + 1 + 1) * terms.unit_bytes
+        resources = HostResources(ram_budget_bytes=held, max_workers=1)
+        plain = budget_plan(resources, HostReadPath.THREADS, _terms(device_buffer=1))
+        assert plain.read_buffer == THREAD_READ_BUFFER
+        with pytest.raises(ValueError, match=f"b={THREAD_READ_BUFFER}"):
+            budget_plan(resources, HostReadPath.THREADS, terms)
 
     @pytest.mark.parametrize("path", _PLANNED_PATHS)
     def test_a_budget_below_the_fixed_part_is_refused_naming_c(self, path: HostReadPath) -> None:

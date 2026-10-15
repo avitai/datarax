@@ -18,10 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in its queues (`2o + 2`) are counted beside the training process's resident memory when the run
   is planned (`psutil`, after JAX's runtime and compiler start) and the units at the device;
   `/dev/shm` bounds it too. Only the process path pickles the read, to measure what each worker
-  is sent. A GIL-free read reads on threads, fewer than the CPUs and at
-  most the cap, as many units ahead as the budget holds (2 to 1,000). A budget below what a run
-  holds before reading ahead (the training process's resident memory and the units at the device)
-  is refused on either path, and a budget holding no worker, or a `/dev/shm` too small for one,
+  is sent. A GIL-free read reads on at most four threads, fewer than the
+  CPUs and at most the cap, `max(16, 2 x threads)` units ahead whatever the budget: on an H100
+  train step four threads fed the step best, and eight threads filling a 1,000-unit buffer fed it
+  less than with 16 while holding 2.7 times the memory. A budget below what a run holds before
+  reading ahead (the training process's resident memory and the units at the device) is refused
+  on either path, and on threads one below that and the units read ahead, and a budget holding no worker, or a `/dev/shm` too small for one,
   is refused too, each naming the terms. Without it the host stage reads as before, on one thread
   two units ahead, and a GIL-bound read logs one line naming `HostResources`. The arithmetic is
   `datarax.pipeline.read_plan` (`host_read_path`, `default_plan`, `budget_plan`, `HostPlan`,
