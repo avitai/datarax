@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.block_order import BlockOrder
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 from datarax.core.element_batch import Batch
@@ -114,9 +115,11 @@ _NAMED: list[int] = []
 class _Counted(_IndexedOnly):
     """Counts, outside the module, how often the step computes record indices."""
 
-    def record_indices_at(self, start: Any, size: int, key: Any = None) -> jax.Array:
+    def record_indices_at(
+        self, start: Any, size: int, key: Any = None, *, block: BlockOrder | None = None
+    ) -> jax.Array:
         _NAMED.append(size)
-        return super().record_indices_at(start, size, key)
+        return super().record_indices_at(start, size, key, block=block)
 
 
 @pytest.mark.parametrize("stochastic_stage", [False, True])

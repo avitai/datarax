@@ -16,8 +16,8 @@ import jax
 import numpy as np
 from jax.typing import ArrayLike
 
+from datarax.core.block_order import BlockOrder, order_positions
 from datarax.core.element_batch import Batch, PADDING_INDEX
-from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import from_words, low_words, MAX_RECORDS, wrapped_positions
 from datarax.core.structural import StructuralModule
 from datarax.typing import DataDict
@@ -527,19 +527,21 @@ class DataSourceModule(StructuralModule):
         start: int | ArrayLike,
         size: int,
         key: Any | None = None,
+        *,
+        block: BlockOrder | None = None,
     ) -> Any:
         """Return the stable index of each record at positions ``start .. start + size``.
 
         These are the indices :meth:`get_records` gathers. Stochastic operators key each
         record's randomness on them, so within an epoch a record keeps its augmentation however
-        records are batched, ordered or split across workers. The order is the one ``key``
-        selects, or the sequential order when ``key`` is ``None``: the pipeline owns the shuffle
-        and passes its epoch key exactly when it was built with ``shuffle=True``. The default
-        names records by their wrapped position ``(start + arange(size)) % len(self)``, and with
-        a key by the keyed permutation of those positions
-        (:func:`~datarax.core.index_shuffle.shuffle_positions`). A source that partitions
-        or mixes records overrides it. Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the
-        layout of ``Batch.indices``.
+        records are batched, ordered or split across workers. The order is the one ``key`` and
+        ``block`` select (:func:`~datarax.core.block_order.order_positions`): the sequential
+        order when ``key`` is ``None``, the keyed permutation with a key, and with a block order
+        too, that block order. The pipeline owns the order and passes its epoch key exactly
+        when it was built with ``shuffle=True``. The default names records by their wrapped
+        position ``(start + arange(size)) % len(self)`` in that order. A source that partitions
+        or mixes records overrides it, applying ``key`` and ``block`` where the default does.
+        Indices are 64-bit, each a uint32 ``(hi, lo)`` pair, the layout of ``Batch.indices``.
 
         Args:
             start: Starting position: a Python int of any size, its two uint32 words ``(hi, lo)``
@@ -547,23 +549,24 @@ class DataSourceModule(StructuralModule):
                 int32 ``jax.Array``.
             size: Number of records (Python int).
             key: The key selecting the order, or ``None`` for the sequential order.
+            block: The block order, or ``None`` for the global order a key selects.
 
         Returns:
             uint32 array of shape ``(size, 2)``.
 
         Raises:
-            ValueError: If a key is given to a source without a length, which has no order to
-                shuffle.
+            ValueError: If a key or a block order is given to a source without a length, which
+                has no order to shuffle, or a block order without a key.
         """
         length = known_length(self)
-        if key is None:
+        if key is None and block is None:
             return wrapped_positions(start, size, length)
         if length is None:
             raise ValueError(
                 f"{type(self).__name__} has no length, so it has no order to shuffle; build its "
                 "pipeline with shuffle=False"
             )
-        return shuffle_positions(wrapped_positions(start, size, length), length, key)
+        return order_positions(wrapped_positions(start, size, length), length, key, block)
 
     def element_spec(self) -> Any:
         """Return a PyTree of ``jax.ShapeDtypeStruct`` describing per-element output.
