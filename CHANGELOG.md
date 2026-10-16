@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Pipeline(..., sharding=NamedSharding(mesh, P("data")))` (and `Pipeline.from_dag`,
+  `Pipeline.from_arrays`): iteration places each batch on the data mesh, rows on the sharding and
+  `batch_state` replicated, through substrax `place_batch_on_shards` with the
+  `batch_ops.shardings` prefix; a `raw_batches(chunk=K)` chunk has its rows on `P(None, ...)`;
+  a bounded run's short final batch is placed replicated, so an evaluation covers every record
+  once without padding, its step compiling once more, once per process. Refused when the pipeline
+  is built: a `batch_size` the sharding cannot split (JAX's `NamedSharding.shard_shape`), a spec
+  naming more than the rows, a mesh with Explicit axes (MixUp and CutMix gather across records
+  without naming an output sharding), an `AbstractMesh`, and a mesh spanning other processes'
+  devices; `step()`, `scan` and `session()` refuse a pipeline holding a sharding. The staged depth
+  follows the mesh's platform.
 - `datarax.core.block_order`: `BlockOrder(block_size, blocks_per_buffer)`, a block order of the
   records (CorgiPile's buffer order, arXiv 2206.05830) for data read from storage larger than the
   page cache, and `order_positions(positions, length, key, block)`, the one function applying an

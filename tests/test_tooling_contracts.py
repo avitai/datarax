@@ -164,7 +164,8 @@ _PIPELINE_INTERNAL_LAYERS = (
     "datarax.pipeline.pipeline",
     "datarax.pipeline.host_stage | datarax.pipeline.iteration | datarax.pipeline.materialization",
     "datarax.pipeline.run_configuration | datarax.pipeline.run_units",
-    "datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan",
+    "datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan"
+    " | datarax.pipeline.placement",
     "datarax.pipeline.host_workers",
 )
 """The pipeline's internal layers, top first; ``|`` joins independent siblings."""
