@@ -46,6 +46,7 @@ from datarax.core.data_source import (
     refuse_unnamed,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.host_resources import order_working_bytes
 from datarax.core.index_words import (
     add,
     divmod_word,
@@ -653,6 +654,17 @@ class MixDataSourcesNode(DataSourceModule):
     def __len__(self) -> int:
         """Positions in an epoch: Grain's length over the children as long as they are now."""
         return self._layout().epoch_length
+
+    def order_working_bytes(self, order: BlockOrder) -> int:
+        """Every child's working set: the mix reads its children at once, each in ``order``.
+
+        Args:
+            order: The block order each child names its records in.
+
+        Returns:
+            The sum of the children's bytes.
+        """
+        return sum(order_working_bytes(source, order) for source in self._sources)
 
     def index_space(self) -> int:
         """Every record of every child has an index: the sum of the children's index spaces."""

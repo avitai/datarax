@@ -93,6 +93,31 @@ class BlockOrder:
         return self.block_size * self.blocks_per_buffer
 
 
+def buffer_bytes(order: BlockOrder, length: int, record_bytes: int) -> int:
+    """The page cache a run read from storage in ``order`` keeps resident: one buffer's records.
+
+    A buffer's records are read while its blocks are resident, so a run holds about
+    ``min(block_size * blocks_per_buffer, length)`` records' stored bytes: a buffer, or every
+    record of a source smaller than one.
+
+    Args:
+        order: The block order.
+        length: Records the source holds, at least 1.
+        record_bytes: Stored bytes per record, at least 0.
+
+    Returns:
+        The bytes.
+
+    Raises:
+        ValueError: If ``length`` is below 1 or ``record_bytes`` is negative.
+    """
+    if length < 1:
+        raise ValueError(f"length must be at least 1, got {length}")
+    if record_bytes < 0:
+        raise ValueError(f"record_bytes must be at least 0, got {record_bytes}")
+    return min(order.buffer_size, length) * record_bytes
+
+
 def order_positions(
     positions: jax.Array, length: int, key: jax.Array | None, block: BlockOrder | None
 ) -> jax.Array:
@@ -215,4 +240,4 @@ def _permute_words(offset: jax.Array, length: int, keys: jax.Array) -> jax.Array
     return permuted[:, 1]
 
 
-__all__ = ["BlockOrder", "order_positions"]
+__all__ = ["BlockOrder", "buffer_bytes", "order_positions"]

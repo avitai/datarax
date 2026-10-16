@@ -4,15 +4,18 @@ A training process says what it may spend on its host stage, :class:`HostResourc
 budget and a cap on read threads or worker processes, at most the CPUs it may run on
 (:func:`available_cpus`). The plan a budget gives, Grain's arithmetic with every term a worker
 costs, is the pipeline's (:mod:`datarax.pipeline.read_plan`); a source states here what a run of
-it read in worker processes costs beyond the read (:class:`WorkerFootprint`), so a source
-declares it without importing the pipeline.
+it read in worker processes costs beyond the read (:class:`WorkerFootprint`) and what a block
+order keeps resident in the page cache (:class:`OrderWorkingSet`), so a source declares both
+without importing the pipeline.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import os
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+
+from datarax.core.block_order import BlockOrder
 
 
 def available_cpus() -> int:
@@ -85,8 +88,49 @@ class WorkerFootprint(Protocol):
         ...
 
 
+@runtime_checkable
+class OrderWorkingSet(Protocol):
+    """What a block order keeps resident while a run of a source is read in it.
+
+    Every ``INDEXED`` source implements it: a source read from storage reports one buffer's
+    records' stored bytes (:func:`~datarax.core.block_order.buffer_bytes`), an in-memory source
+    0, since its records are already the training process's resident memory, and a mix the sum
+    of its children's. The plan charges it to the budget as the order's term, ``O``.
+    """
+
+    def order_working_bytes(self, order: BlockOrder) -> int:
+        """Bytes ``order`` keeps resident while a run of this source is read in it."""
+        ...
+
+
+def order_working_bytes(source: Any, order: BlockOrder | None) -> int:
+    """The bytes a run of ``source`` read in ``order`` keeps resident: 0 for the global order.
+
+    Args:
+        source: The source the run reads.
+        order: The run's block order, or ``None`` for the global order.
+
+    Returns:
+        The bytes.
+
+    Raises:
+        TypeError: If a block order is given for a source that reports no working set.
+    """
+    if order is None:
+        return 0
+    if not isinstance(source, OrderWorkingSet):
+        raise TypeError(
+            f"{type(source).__name__} reports no working set for a block order: implement "
+            "OrderWorkingSet.order_working_bytes(order), the stored bytes a buffer of its "
+            "records keeps resident, so a RAM budget can be planned for it"
+        )
+    return source.order_working_bytes(order)
+
+
 __all__ = [
     "HostResources",
+    "OrderWorkingSet",
     "WorkerFootprint",
     "available_cpus",
+    "order_working_bytes",
 ]

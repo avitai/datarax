@@ -60,7 +60,7 @@ from datarax.core.data_source import (
     StreamHostRead,
 )
 from datarax.core.element_batch import Batch
-from datarax.core.host_resources import HostResources
+from datarax.core.host_resources import HostResources, order_working_bytes
 from datarax.core.host_values import HostValue
 from datarax.core.index_words import to_words
 from datarax.core.prng import key_words
@@ -559,6 +559,7 @@ class HostStage:
         size = 1 if chunk is None else chunk
         return measure_terms(
             unit_bytes=size * host_batch_bytes(source, batch_size),
+            order_bytes=order_working_bytes(source, epoch_plan.block_order),
             depth=depth,
             path=path,
             resources=resources,

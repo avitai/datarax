@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,8 +12,10 @@ from typing import Any, cast, Self
 import jax
 import numpy as np
 from array_record.python.array_record_data_source import ArrayRecordDataSource
+from array_record.python.array_record_module import ArrayRecordReader
 from jax.typing import ArrayLike
 
+from datarax.core.block_order import BlockOrder, buffer_bytes
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
@@ -75,6 +79,20 @@ def _path_of(path: Any) -> str:
 def _listed(paths: Any) -> list[Any]:
     """``paths`` as a list: one path or ``FileInstruction``, or a sequence of them."""
     return [paths] if isinstance(paths, str) or not isinstance(paths, Sequence) else list(paths)
+
+
+_SLICE = re.compile(r"(.*)\[(\d+):(\d+)\]")
+"""A path reading part of a file, ``file[start:end]``, as ArrayRecord's data source parses it."""
+
+
+def _stored(path: Any) -> tuple[int, int]:
+    """A file's stored bytes and the records it holds, whatever part of it ``path`` reads."""
+    name = _path_of(path)
+    if (part := _SLICE.fullmatch(name)) is not None:
+        name = part.group(1)
+    with contextlib.closing(ArrayRecordReader(name)) as reader:
+        held = int(reader.num_records())
+    return Path(name).stat().st_size, held
 
 
 def _file_identity(path: Any) -> dict[str, Any]:
@@ -154,6 +172,23 @@ class ArrayRecordSourceModule(DataSourceModule):
     def __len__(self) -> int:
         """The number of records in the files."""
         return self._length
+
+    def order_working_bytes(self, order: BlockOrder) -> int:
+        """A buffer of ``order``'s records as stored: the files' bytes per record, rounded up.
+
+        Records vary in size, so the files' mean is charged: each file's bytes over every record
+        it holds (a slice of a file reads some of them at the file's density), rounded up so a
+        budget is never charged less.
+
+        Args:
+            order: The block order a run reads in.
+
+        Returns:
+            The bytes a buffer of records keeps in the page cache.
+        """
+        files = [_stored(path) for path in _listed(self._records.paths)]
+        stored, held = sum(size for size, _ in files), sum(count for _, count in files)
+        return buffer_bytes(order, self._length, -(-stored // max(held, 1)))
 
     @property
     def host_read(self) -> HostRead:

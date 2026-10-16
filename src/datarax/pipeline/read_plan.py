@@ -418,6 +418,7 @@ def host_batch_bytes(source: DataSourceModule, batch_size: int) -> int:
 def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each given once
     *,
     unit_bytes: int,
+    order_bytes: int,
     depth: int,
     path: HostReadPath,
     resources: HostResources,
@@ -425,7 +426,7 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     first_unit: Callable[[Any], Callable[[], Any]],
     settings: JaxSettings,
 ) -> HostTerms:
-    """What a run's reads cost, measured: ``E`` and ``M_main``, and for processes ``P, S, F``.
+    """What a run's reads cost, measured: ``E``, ``O``, ``M_main``, and for processes ``P, S, F``.
 
     ``M_main`` is the training process's resident memory now, the source's data and the
     process's runtime included. Under processes the workers' read is built first, so what it
@@ -437,6 +438,8 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
 
     Args:
         unit_bytes: ``E``, one unit's host bytes.
+        order_bytes: ``O``, what the run's order keeps resident
+            (:func:`~datarax.core.host_resources.order_working_bytes`); 0 for the global order.
         depth: ``d``, placed units staged on the device ahead of the consumer's.
         path: Where the run is read.
         resources: The caller's budget and cap.
@@ -448,7 +451,12 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     Returns:
         The terms.
     """
-    terms = HostTerms(unit_bytes=unit_bytes, device_buffer=depth, cpus=available_cpus())
+    terms = HostTerms(
+        unit_bytes=unit_bytes,
+        order_bytes=order_bytes,
+        device_buffer=depth,
+        cpus=available_cpus(),
+    )
     if path is not HostReadPath.PROCESSES:
         return dataclasses.replace(terms, main_bytes=host_workers.resident_bytes())
     worker_read = read()

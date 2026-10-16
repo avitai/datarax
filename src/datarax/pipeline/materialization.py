@@ -285,6 +285,7 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
     settings = JaxSettings.current()
     terms: HostTerms = measure_terms(
         unit_bytes=unit_bytes,
+        order_bytes=0,  # a build reads its source in stored order, whole units at a time
         depth=0,
         path=path,
         resources=resources,

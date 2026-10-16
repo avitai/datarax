@@ -19,7 +19,7 @@ import pytest
 from flax import nnx
 from substrax.testing.compiles import expect_compiles
 
-from datarax.core.block_order import BlockOrder, order_positions
+from datarax.core.block_order import BlockOrder, buffer_bytes, order_positions
 from datarax.core.index_shuffle import shuffle_positions
 from datarax.core.index_words import from_words, HostIntegers, MAX_RECORDS, to_words
 
@@ -270,6 +270,21 @@ class TestRefusals:
         order = _order(2, 2)
         with pytest.raises(dataclasses.FrozenInstanceError):
             order.block_size = 3  # type: ignore[misc]
+
+
+class TestBufferBytes:
+    """The page cache a block order keeps resident: one buffer's records, or every record."""
+
+    @pytest.mark.parametrize(
+        ("length", "expected"), [(1000, 6 * 24), (6, 6 * 24), (4, 4 * 24), (1, 24)]
+    )
+    def test_a_buffer_or_the_whole_source_if_smaller(self, length: int, expected: int) -> None:
+        assert buffer_bytes(_order(3, 2), length, 24) == expected
+
+    @pytest.mark.parametrize(("length", "record_bytes"), [(0, 24), (10, -1)])
+    def test_no_records_or_negative_sizes_are_refused(self, length: int, record_bytes: int) -> None:
+        with pytest.raises(ValueError, match="length|record_bytes"):
+            buffer_bytes(_order(3, 2), length, record_bytes)
 
 
 class TestTransforms:
