@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
+  and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
 - `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
   `Pipeline(host_resources=...)` (also `Pipeline.from_dag`): what the host stage may spend reading,
   a RAM budget and a cap on read threads or worker processes (at most the CPUs the process may run

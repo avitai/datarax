@@ -46,7 +46,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from datarax.core import index_words
-from datarax.core.index_words import HostIntegers, MAX_RECORDS, WORD_BITS
+from datarax.core.index_words import HostIntegers, WORD_BITS
 from datarax.core.prng import NAMING_PRNG_IMPL
 
 
@@ -152,13 +152,6 @@ def _encrypt[A: (jax.Array, np.ndarray)](high: A, low: A, bits: int, round_keys:
     return left >> (WORD_BITS - right_bits), (left << right_bits) | right
 
 
-def _check_length(length: int) -> None:
-    if not 1 <= length <= MAX_RECORDS:
-        raise ValueError(
-            f"length must be in [1, 2**63], the records a source can hold, got {length}"
-        )
-
-
 def shuffle_positions(positions: jax.Array, length: int, key: jax.Array) -> jax.Array:  # noqa: DOC502
     """The record at each position of the order ``key`` shuffles ``[0, length)`` into.
 
@@ -178,13 +171,8 @@ def shuffle_positions(positions: jax.Array, length: int, key: jax.Array) -> jax.
     Raises:
         ValueError: If ``length`` is out of range, or ``positions`` is not uint32 words.
     """
-    _check_length(length)
-    positions = jnp.asarray(positions)
-    if positions.dtype != jnp.uint32 or positions.ndim == 0 or positions.shape[-1] != 2:  # noqa: PLR2004
-        raise ValueError(
-            "positions are 64-bit integers as uint32 (..., 2) words (hi, lo); got "
-            f"{positions.dtype} {positions.shape}"
-        )
+    index_words.check_length(length)
+    positions = index_words.checked_words(positions)
     passes = _fixed_passes(length, positions.size // 2)
     return jax.lax.platform_dependent(
         positions,
@@ -322,7 +310,7 @@ def _shuffled_host(
     positions: HostIntegers, length: int, seed: int, epoch: int, partitionable: bool
 ) -> np.ndarray:
     """:func:`shuffle_positions_host` with the round keys of ``partitionable``."""
-    _check_length(length)
+    index_words.check_length(length)
     bits = _block_bits(length)
     round_keys = _host_round_keys(seed, epoch, partitionable)
     top = index_words.split_constant(length - 1)
