@@ -49,6 +49,13 @@ with jax.set_mesh(mesh):
   axis cannot split. The pipeline places it replicated, so an evaluation covers every record
   once with no padding row. Its step compiles once more, once per process, never per
   evaluation.
+- Replicated, that final batch puts all of its rows, up to `batch_size - 1`, on every device,
+  where a full batch puts `batch_size / N` on each of `N` devices. Its step can need up to `N`
+  times the per-device memory of a full batch's step: for a convolutional evaluation step on 8
+  emulated CPU devices with `batch_size=256`, a 255-row final batch took 7.97 times a full
+  batch's per-device bytes in XLA's memory analysis of the compiled step. Size an evaluation so
+  that `batch_size` rows fit one device's step, or choose a `batch_size` that divides the run's
+  record count (`num_epochs` times the source's length), so the run ends on a full batch.
 - The batch size must split over the sharding's row axes; one that does not is refused when the
   pipeline is built.
 - The mesh's axes must be `AxisType.Auto`. `DeviceMeshManager` builds Auto axes; `jax.make_mesh`
