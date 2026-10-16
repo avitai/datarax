@@ -64,25 +64,8 @@ try:
 except ImportError:
     pass  # benchmarks package not on path (core tests only)
 
-# Configure TensorFlow - only on Linux
-# Note: TensorFlow import on macOS ARM64 can hang during pytest collection due to
-# Metal/GPU device detection issues. This is a known upstream issue (tensorflow/tensorflow#52138).
-# Major ML projects (Keras, Flax) don't test on macOS at all for this reason.
-# We skip TensorFlow-dependent tests on macOS using module-level pytest.skip().
-if not IS_MACOS:
-    try:
-        import tensorflow as tf
-
-        if IS_LINUX:
-            # Disable all GPUs for TensorFlow to avoid conflicts with JAX
-            try:
-                tf.config.set_visible_devices([], "GPU")
-            except (RuntimeError, ValueError):
-                pass
-    except ImportError:
-        pass  # TensorFlow not installed
-    except (OSError, RuntimeError, ValueError) as e:
-        emit(f"Warning: Could not configure TensorFlow: {e}")
+# The test process never imports TensorFlow: in a JAX process it breaks JAX's NCCL collectives,
+# hiding the GPUs from it included. A test that needs TensorFlow runs it in a child process.
 
 
 # Configure beartype for runtime type checking
