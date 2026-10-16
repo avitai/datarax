@@ -98,6 +98,18 @@ class TestWhereEachUnitIsPlaced:
         assert _leaf_shardings(units[1]) == {rows}
         assert _leaf_shardings(units[2]) == {NamedSharding(rows.mesh, P())}
 
+    def test_rows_on_one_axis_of_a_two_axis_mesh_are_replicated_along_the_other(self) -> None:
+        mesh = jax.make_mesh((2, 4), ("data", "model"), axis_types=(AxisType.Auto,) * 2)
+        rows = NamedSharding(mesh, P("data"))
+        pipe = Pipeline(source=_source(), stages=[], batch_size=8, rngs=nnx.Rngs(0), sharding=rows)
+
+        value = next(iter(pipe.raw_batches()))["value"]
+
+        shards = value.addressable_shards
+        assert value.sharding == rows
+        assert {shard.data.shape for shard in shards} == {(4,)}
+        assert sorted(shard.index[0].start for shard in shards) == [0] * 4 + [4] * 4
+
     def test_batch_level_state_is_replicated_on_every_batch(self) -> None:
         rows = _rows()
         mix = BatchMixOperator(

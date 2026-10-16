@@ -18,7 +18,7 @@
 | **Runtime** | ~1 min (CPU or GPU) |
 | **Prerequisites** | [Randomness and Learnable Operators](02_randomness_and_learnable_operators_tutorial.py), [Sharding Guide](../advanced/distributed/02_sharding_guide.py) |
 | **Format** | Python + Jupyter |
-| **Devices** | Runs on one device; the mesh grows with the devices available |
+| **Devices** | Runs on 1, 2, 4 or 8 devices: the mesh takes every device, and its batches of 8 rows must split over them |
 
 ## Overview
 
@@ -110,12 +110,13 @@ is one batched `device_put`; on several, each process passes the slice it loaded
 stitches the slices into one global array on the sharding. It takes NumPy arrays as Grain
 yields them and JAX arrays as Datarax yields them.
 
-### Fixed batch shapes
+### Batch shapes
 
-A Datarax pipeline keeps every batch at `batch_size` so the compiled step has one shape.
-When a process's share of the records is not a multiple of the batch size, the last batch
-continues from the start of that process's order; this guide uses 64 records, two
-processes and batches of 8, so every batch is full and every record is served once.
+A Datarax pipeline never pads a batch. When a process's share of the records is not a
+multiple of the batch size, the batch reaching the end of the epoch is completed from the
+head of the next epoch's order (or `drop_last=True` skips the records short of a full batch),
+and a run of a fixed number of epochs ends with a short batch; this guide uses 64 records,
+two processes and batches of 8, so every batch is full and every record is served once.
 """
 
 # %% [markdown]
@@ -382,7 +383,7 @@ print(f"Learned weights: {np.round(datarax_weights.ravel(), 3)} (true {TRUE_WEIG
 |---|---|---|
 | Host partition | `ShardOptions(shard_index, shard_count)`, contiguous ranges; `ShardByJaxProcess()` reads the JAX process | `MemorySourceConfig(shard_id, num_workers)`, every `n`-th record |
 | Randomness under a partition | Keyed to the draw index within the shard | Keyed to the global record index: the same on any split |
-| Batch a process yields | NumPy arrays, possibly a short last batch | JAX arrays of a fixed shape |
+| Batch a process yields | NumPy arrays, possibly a short last batch | JAX arrays, possibly a short final batch |
 | Device placement | `place_batch_on_shards` under `jax.set_mesh` | The same call |
 | Training step | `spmd_train_step` inside `nnx.jit` | The same call |
 
