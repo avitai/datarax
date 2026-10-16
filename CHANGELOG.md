@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Guide"): CorgiPile's CIFAR-10 experiment (ResNet-18 on records stored in label order) in four
   orders, none, global, one block per buffer and `BlockOrder(100, 50)`, and a cold read of a
   tiled copy in the global and block orders.
+- `scripts/check_docs_pairs.py` and a contract test in `tests/examples/test_examples.py`: code a
+  page under `docs/examples` shows with a Terminal Output block is a contiguous run of the lines
+  of the one example script the page names; a page with output naming no script or several fails.
 - `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
   and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
 - `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
