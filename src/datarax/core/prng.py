@@ -31,7 +31,7 @@ NAMING_PRNG_IMPL = "threefry2x32"
 pass seed. Pinned, so record identity never depends on the caller's ``jax_default_prng_impl``
 (which is not part of a jitted program's cache key either, so a cached naming program would
 otherwise keep the impl it was first traced under), and exact under ``jax.vmap`` over keys,
-which a block of batches named in one call needs. A training step's own randomness follows the
+which several batches named in one call need. A training step's own randomness follows the
 caller's setting."""
 
 

@@ -45,8 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `threefry2x32` key (`datarax.core.prng.NAMING_PRNG_IMPL`), whatever the global
   `jax_default_prng_impl`, which is not part of a jitted program's cache key; a pipeline over
   streams of another impl draws its order key's data from them
-  (`datarax.core.prng.naming_key_data`). Record names no longer depend on the default impl, and a
-  block of batches named in one vmapped call names each exactly as alone. A training step's own
+  (`datarax.core.prng.naming_key_data`). Record names no longer depend on the default impl, and
+  several batches named in one vmapped call are each named exactly as alone. A training step's own
   randomness follows the caller's setting.
 - `datarax.pipeline.run_units`: `RunUnits`, `HostElement` and `IndexedRead`, the run's units and
   an indexed source's unit read, moved out of `datarax.pipeline.host_stage`.
@@ -116,11 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   static, such as a reader, a memory map or a decoder, is replaced by a marker that refuses any
   read), so none of its records is transferred and a cached program keeps no source and no host
   resource alive; every pipeline over a source structured alike under the same plan shares it,
-  and nothing transfers implicitly. `HostNaming.block(starts, epochs, key)` names a block of full
+  and nothing transfers implicitly. `HostNaming.batches(starts, epochs, key)` names several full
   batches in one call, the same program vmapped over their starts, so each is named exactly as
   alone: the host stage names a run's full batches 16,384 records per call and its short final
-  batch alone, so the program compiles once per structure for the block and once for the short
-  batch, and a run holds at most two blocks of names (12 bytes a record). The host stage holds
+  batch alone, so the program compiles once per structure for the full batches and once for the
+  short batch, and a run holds at most two calls' names (12 bytes a record). The host stage holds
   no naming of its own, so a compiled-step cache that keeps a pipeline's host stage keeps none of
   its source.
 - `datarax.pipeline.epochs.Run`: the batches a run serves, batch `ordinal` found without walking

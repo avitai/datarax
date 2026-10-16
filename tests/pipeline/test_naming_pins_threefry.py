@@ -7,7 +7,7 @@ key to its records names what a fresh process names under the default impl: the 
 threads and in worker processes, over an indexed source and a TFDS stream, the compiled step, a
 stream's pass seed and the host index shuffle. ``jax_threefry_partitionable`` does change the
 order (the Feistel order's round keys are threefry bits), so readers carry it and the names
-follow it. A block of batches named in one vmapped call equals each batch named alone.
+follow it. Several batches named in one vmapped call equal each batch named alone.
 """
 
 from __future__ import annotations
@@ -83,8 +83,8 @@ def test_a_tfds_stream_names_as_a_fresh_default_one_under_every_global_setting(
     list(itertools.product(IMPLS, PARTITIONABLE)),
     ids=lambda value: str(value),
 )
-def test_a_block_names_each_batch_as_alone(impl: str, partitionable: bool) -> None:
-    """``HostNaming.block`` (vmapped) equals per-batch naming under every global setting.
+def test_batches_named_in_one_call_are_each_named_as_alone(impl: str, partitionable: bool) -> None:
+    """``HostNaming.batches`` (vmapped) equals per-batch naming under every global setting.
 
     Each setting names over a plan of its own, so its programs are traced under it: a program a
     test traced earlier under another setting would otherwise be served again.
@@ -97,13 +97,13 @@ def test_a_block_names_each_batch_as_alone(impl: str, partitionable: bool) -> No
     with under(impl, partitionable, "context manager"):
         naming = HostNaming(source, plan, shuffled=True)
         alone = [np.asarray(naming(start, 0, 16, words)[0]) for start in starts]
-        block, _ = naming.block(
+        named, _ = naming.batches(
             np.stack([to_words(start) for start in starts]).astype(np.uint32),
             np.zeros(len(starts), np.int32),
             words,
         )
     for slot, names in enumerate(alone):
-        np.testing.assert_array_equal(np.asarray(block[slot]), names)
+        np.testing.assert_array_equal(np.asarray(named[slot]), names)
 
 
 @pytest.mark.parametrize("how", HOWS)
