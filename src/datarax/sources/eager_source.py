@@ -31,6 +31,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core import batch_ops
+from datarax.core.block_order import BlockOrder
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
@@ -430,6 +431,17 @@ class EagerSource(DataSourceModule):
     def __len__(self) -> int:
         """Return the number of records."""
         return self.length
+
+    def order_working_bytes(self, order: BlockOrder) -> int:  # noqa: ARG002 - nothing to hold
+        """0: the records are host columns, already the training process's resident memory.
+
+        Args:
+            order: The block order a run reads in.
+
+        Returns:
+            0.
+        """
+        return 0
 
     def __getitem__(self, index: int) -> PyTree:
         """Return record ``index`` (negative counts from the end): its array part.

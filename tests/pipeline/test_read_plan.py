@@ -455,6 +455,7 @@ class TestMeasureTerms:
     ) -> HostTerms:
         return measure_terms(
             unit_bytes=3 * _MiB,
+            order_bytes=0,
             depth=1,
             path=path,
             resources=resources,
@@ -579,6 +580,7 @@ class TestHostStageMeasuresFromABareSource:
 
         measured = measure_terms(
             unit_bytes=host_batch_bytes(source, 4),
+            order_bytes=0,  # the global order
             depth=planned.device_buffer,
             path=HostReadPath.PROCESSES,
             resources=budget,
@@ -626,7 +628,14 @@ class TestHostStageMeasuresFromABareSource:
 
 
 def test_the_moved_names_are_gone_from_core() -> None:
-    """The plan lives in the pipeline layer; core keeps the budget and the CPU count only."""
+    """The plan lives in the pipeline layer; core keeps the budget, the CPU count and what a
+    source declares to a plan (its workers' footprint, its block order's working set)."""
     for name in ("HostPlan", "HostTerms", "budget_plan", "default_plan", "host_read_path"):
         assert not hasattr(core_resources, name), name
-    assert set(core_resources.__all__) == {"HostResources", "WorkerFootprint", "available_cpus"}
+    assert set(core_resources.__all__) == {
+        "HostResources",
+        "OrderWorkingSet",
+        "WorkerFootprint",
+        "available_cpus",
+        "order_working_bytes",
+    }

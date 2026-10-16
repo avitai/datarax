@@ -39,6 +39,7 @@ from flax import nnx
 from jax.experimental import io_callback
 from jax.typing import ArrayLike
 
+from datarax.core.block_order import BlockOrder, buffer_bytes
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
@@ -294,6 +295,18 @@ class StreamingDiskSource(DataSourceModule):
     def __len__(self) -> int:
         """Total number of records on disk."""
         return self._length
+
+    def order_working_bytes(self, order: BlockOrder) -> int:
+        """A buffer of ``order``'s records as stored: every column's row bytes per record.
+
+        Args:
+            order: The block order a run reads in.
+
+        Returns:
+            The bytes a buffer of records keeps in the page cache.
+        """
+        row_bytes = sum(column.nbytes // column.shape[0] for column in self.config.columns)
+        return buffer_bytes(order, self._length, row_bytes)
 
     def __repr__(self) -> str:
         """Config-identifying representation for checkpoint validation.
