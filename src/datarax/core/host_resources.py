@@ -44,18 +44,23 @@ class HostResources:
         max_workers: The most read threads or worker processes, at most the CPUs available.
         worker_bytes: A worker's own memory (interpreter, imports, JAX's CPU runtime, its
             decoder), or ``None`` for one probe worker to measure it when a run first needs it.
+        shm_budget_bytes: This process's share of ``/dev/shm``, where its workers' units wait,
+            or ``None`` to bound them by the free space ``/dev/shm`` reports. Required for
+            worker processes under a sharding spanning processes: every process on the machine
+            would read the same free space and plan against all of it.
     """
 
     ram_budget_bytes: int
     max_workers: int
     worker_bytes: int | None = None
+    shm_budget_bytes: int | None = None
 
     def __post_init__(self) -> None:
         """Refuse a budget, cap or footprint no plan can honour.
 
         Raises:
             ValueError: If the budget is below one byte, the cap below one or above the CPUs
-                available, or ``worker_bytes`` negative.
+                available, ``worker_bytes`` negative, or ``shm_budget_bytes`` below one byte.
         """
         if self.ram_budget_bytes < 1:
             raise ValueError(f"ram_budget_bytes is at least 1; got {self.ram_budget_bytes}")
@@ -69,6 +74,8 @@ class HostResources:
             )
         if self.worker_bytes is not None and self.worker_bytes < 0:
             raise ValueError(f"worker_bytes is at least 0; got {self.worker_bytes}")
+        if self.shm_budget_bytes is not None and self.shm_budget_bytes < 1:
+            raise ValueError(f"shm_budget_bytes is at least 1; got {self.shm_budget_bytes}")
 
 
 @runtime_checkable

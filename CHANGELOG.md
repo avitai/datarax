@@ -17,9 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once without padding, its step compiling once more, once per process. Refused when the pipeline
   is built: a `batch_size` the sharding cannot split (JAX's `NamedSharding.shard_shape`), a spec
   naming more than the rows, a mesh with Explicit axes (MixUp and CutMix gather across records
-  without naming an output sharding), an `AbstractMesh`, and a mesh spanning other processes'
-  devices; `step()`, `scan` and `session()` refuse a pipeline holding a sharding. The staged depth
-  follows the mesh's platform.
+  without naming an output sharding) and an `AbstractMesh`; `step()`, `scan` and `session()`
+  refuse a pipeline holding a sharding. The staged depth follows the mesh's platform. The mesh may
+  span processes (`jax.distributed`, one process per GPU): `batch_size` is the global batch and
+  each process reads only the rows its devices hold of every global batch, so the global batches,
+  their per-record draws and MixUp's batch draws are one process's row for row; the short final
+  batch is read whole by every process and placed replicated; a unit's provenance names the
+  records this process read. Refused across processes: a stream
+  source and a source serving a worker's shard (when the pipeline is built), and a run whose
+  configuration, cursor or mesh differs between processes (in every process, by one all-gather of
+  a digest when the run opens).
 - `datarax.core.block_order`: `BlockOrder(block_size, blocks_per_buffer)`, a block order of the
   records (CorgiPile's buffer order, arXiv 2206.05830) for data read from storage larger than the
   page cache, and `order_positions(positions, length, key, block)`, the one function applying an
@@ -49,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the one example script the page names; a page with output naming no script or several fails.
 - `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
   and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
-- `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
+- `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None,
+  shm_budget_bytes=None)` and
   `Pipeline(host_resources=...)` (also `Pipeline.from_dag`): what the host stage may spend reading,
   a RAM budget and a cap on read threads or worker processes (at most the CPUs the process may run
   on). With it, a source whose host read holds the GIL is read in Grain worker processes
@@ -57,8 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probe worker, or `worker_bytes`), its copy of the read, the source's working set and the units
   in its queues (`2o + 2`) are counted beside the training process's resident memory when the run
   is planned (`psutil`, after JAX's runtime and compiler start) and the units at the device;
-  `/dev/shm` bounds it too. Only the process path pickles the read, to measure what each worker
-  is sent. A GIL-free read reads on at most four threads, fewer than the
+  `/dev/shm` bounds it too: this process's share, `shm_budget_bytes`, when given, else the free
+  bytes measured; worker processes under a mesh spanning processes need the share, since every
+  process on a machine measures the same free bytes. Only the process path pickles the read, to
+  measure what each worker is sent. A GIL-free read reads on at most four threads, fewer than the
   CPUs and at most the cap, `max(16, 2 x threads)` units ahead whatever the budget: on an H100
   train step four threads fed the step best, and eight threads filling a 1,000-unit buffer fed it
   less than with 16 while holding 2.7 times the memory. A budget below what a run holds before

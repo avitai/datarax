@@ -70,7 +70,13 @@ from datarax.core.spec import declared_spec, validate_batch, validate_device_dty
 from datarax.pipeline import host_workers, run_configuration as configuration
 from datarax.pipeline.epochs import EpochPlan, HostNaming, Run
 from datarax.pipeline.host_workers import JaxSettings
-from datarax.pipeline.placement import placement_platform, Placer, placer
+from datarax.pipeline.placement import (
+    placement_platform,
+    Placer,
+    placer,
+    process_rows,
+    spans_processes,
+)
 from datarax.pipeline.read_plan import (
     budget_plan,
     default_plan,
@@ -248,7 +254,7 @@ class _StreamIterator(grain.DatasetIterator):
             else None
         )
         unit, self._units = self._units, self._units + 1
-        return HostElement(batch, provenance, parts[-1][2], unit)
+        return HostElement(batch, provenance, parts[-1][2], unit, parts[0][0].batch_size)
 
     def get_state(self) -> dict[str, Any]:
         """Not used: the host stage's cursor is where a stream resumes."""
@@ -316,7 +322,7 @@ def _place(
     element: HostElement, place_unit: Placer
 ) -> tuple[Batch, Provenance | None, tuple[int, int, int]]:
     """The element's batch placed by the run's placer; provenance stays on the host."""
-    return place_unit(element.batch), element.provenance, element.after
+    return place_unit(element.batch, element.batch_rows), element.provenance, element.after
 
 
 type _PlacedElement = tuple[Batch, Provenance | None, tuple[int, int, int]]
@@ -522,6 +528,7 @@ class HostStage:
             path=path,
             resources=resources,
             settings=JaxSettings.current(),
+            sharding=pipeline.sharding,
         )
         return budget_plan(resources, path, terms)
 
@@ -548,8 +555,13 @@ class HostStage:
         path: HostReadPath,
         resources: HostResources,
         settings: JaxSettings,
+        sharding: NamedSharding | None,
     ) -> HostTerms:
         """What a run of ``source`` read along ``path`` costs (:func:`measure_terms`).
+
+        A unit is charged at its full batches' bytes, also under a mesh spanning processes,
+        where a process reads its share of a full batch: the short final batch is read whole,
+        and may hold all but one of a full batch's rows.
 
         Args:
             source: The source the run reads.
@@ -562,11 +574,13 @@ class HostStage:
             path: Where the run is read.
             resources: The caller's budget and cap.
             settings: The run's JAX settings.
+            sharding: The rows' sharding, or ``None`` for the default device.
 
         Returns:
             The terms.
         """
         size = 1 if chunk is None else chunk
+        rows = process_rows(sharding, batch_size)
         return measure_terms(
             unit_bytes=size * host_batch_bytes(source, batch_size),
             order_bytes=order_working_bytes(source, epoch_plan.block_order),
@@ -574,10 +588,17 @@ class HostStage:
             path=path,
             resources=resources,
             read=lambda: self._read(
-                source, epoch_plan, shuffle=shuffle, key=key, chunk=chunk, settings=settings
+                source,
+                epoch_plan,
+                shuffle=shuffle,
+                key=key,
+                chunk=chunk,
+                settings=settings,
+                rows=rows,
             ),
             first_unit=_FirstUnit,
             settings=settings,
+            spans_processes=spans_processes(sharding),
         )
 
     def _read(  # noqa: PLR0913 - what one run's worker read is built from
@@ -589,6 +610,7 @@ class HostStage:
         key: np.ndarray | None,
         chunk: int | None,
         settings: JaxSettings,
+        rows: np.ndarray | None,
     ) -> Any:
         """What worker processes read a run of ``source`` with: an indexed read or a run dataset.
 
@@ -599,6 +621,7 @@ class HostStage:
             key: The pipeline's key as host words, or ``None`` when it does not shuffle.
             chunk: Batches per chunk, or ``None`` for single batches.
             settings: The run's JAX settings.
+            rows: The rows of a full batch this process reads, or ``None`` for every row.
 
         Returns:
             The read, which pickles to the workers.
@@ -613,6 +636,7 @@ class HostStage:
                 with_provenance=False,
                 settings=settings,
                 crossing=True,
+                rows=rows,
             )
         # Only an indexed source or a stream with a run dataset is read in processes.
         stream = cast(SliceableStreamRun, source)
@@ -693,19 +717,53 @@ class HostStage:
             reads,
             pipeline.sharding,
         )
-        cursor = self.cursor
-        opened = (*options, cursor.epoch, cursor.position)
-        token = None if self._token is None else self._token()
-        if token is None or self.iterator is None or self._opened_for != opened:
-            self._end(_replaced_by(self._opened_for, opened))
-            dataset = self._dataset(pipeline, chunk, with_provenance, reads, settings)
-            token = self._open(
-                dataset, opened, reads.device_buffer, placer(pipeline.sharding, pipeline.batch_size)
-            )
+        token = self._run_token(pipeline, options, chunk, with_provenance, reads, settings)
         _RUN_HOLDERS[pipeline] = token
         return cast(
             Iterator[Batch] | Iterator[tuple[Batch, Provenance]],
             _Served(self, (*options,), with_provenance, token),
+        )
+
+    def _run_token(  # noqa: PLR0913 - a run is opened from all of them
+        self,
+        pipeline: Any,
+        options: tuple[Any, ...],
+        chunk: int | None,
+        with_provenance: bool,
+        reads: HostPlan,
+        settings: JaxSettings,
+    ) -> _RunToken:
+        """The token of the run open for ``options`` at the cursor, opening it when none is.
+
+        Under a sharding spanning processes every process opens its run at the same call, and
+        each first refuses a run whose configuration differs between them
+        (:func:`~datarax.pipeline.run_configuration.refuse_differing_processes`).
+
+        Args:
+            pipeline: The pipeline whose run is read.
+            options: What the run is read with (source, plan, order, chunk, provenance,
+                settings, read plan and sharding).
+            chunk: Batches per chunk, or ``None`` for single batches.
+            with_provenance: Whether each unit comes with its records' provenance.
+            reads: The run's read plan.
+            settings: The caller's JAX settings, which the run is read under.
+
+        Returns:
+            The run's token.
+        """
+        cursor = self.cursor
+        opened = (*options, cursor.epoch, cursor.position)
+        token = None if self._token is None else self._token()
+        if token is not None and self.iterator is not None and self._opened_for == opened:
+            return token
+        if spans_processes(pipeline.sharding):
+            configuration.refuse_differing_processes(
+                pipeline, chunk=chunk, epoch=cursor.epoch, position=cursor.position
+            )
+        self._end(_replaced_by(self._opened_for, opened))
+        dataset = self._dataset(pipeline, chunk, with_provenance, reads, settings)
+        return self._open(
+            dataset, opened, reads.device_buffer, placer(pipeline.sharding, pipeline.batch_size)
         )
 
     def _dataset(  # noqa: PLR0913 - a run's dataset is built from all of them
@@ -736,6 +794,7 @@ class HostStage:
                 with_provenance=with_provenance,
                 settings=settings,
                 crossing=processes,
+                rows=process_rows(pipeline.sharding, pipeline.batch_size),
             )
             count = units.units()
             mapped = grain.MapDataset.range(sys.maxsize if count is None else count).map(read)
@@ -926,6 +985,7 @@ class HostStage:
             key=_key(pipeline),
             with_provenance=False,
             settings=JaxSettings.current(),
+            rows=process_rows(pipeline.sharding, pipeline.batch_size),
         )
 
 
@@ -982,7 +1042,7 @@ class _RunElementsIterator(grain.DatasetIterator):
             with_provenance=self._dataset._with_provenance,  # noqa: SLF001
         )
         epoch, position = units.after(ordinal)
-        return HostElement(batch, provenance, (epoch, position, 0), ordinal)
+        return HostElement(batch, provenance, (epoch, position, 0), ordinal, batches[0][2])
 
     def get_state(self) -> dict[str, Any]:
         """Units served; a stream resumes through the host stage's cursor, not this state."""

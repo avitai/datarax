@@ -292,6 +292,7 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
         read=lambda: task,
         first_unit=_FirstUnitOfBuild,
         settings=settings,
+        spans_processes=False,  # a build places on no mesh
     )
     sunk = dataclasses.replace(terms, sink_bytes=sink_bytes)
     admitted = 0

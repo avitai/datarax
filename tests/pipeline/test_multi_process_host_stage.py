@@ -9,18 +9,10 @@ global order the per-process share of a mesh is cut from.
 
 from __future__ import annotations
 
-import socket
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import TypedDict
 
-from substrax.runtime import JaxRuntime
-from substrax.testing import run_python
+from tests.test_common.processes import run_processes
 
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_PROCESSES = 2
-_CHILD_SECONDS = 180.0
 
 # One process of the run: joins it, iterates three batches of a shuffled pipeline and reports.
 _PROCESS = """
@@ -63,35 +55,8 @@ class ProcessReport(TypedDict):
     named: list[list[int]]
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("localhost", 0))
-        return probe.getsockname()[1]
-
-
-def _run_processes(program: str) -> list[ProcessReport]:
-    """``program`` in two processes of one ``jax.distributed`` run, each one's last JSON line."""
-    port = _free_port()
-    runtime = JaxRuntime(platforms=("cpu",), cpu_devices=2, preallocate=False)
-    with ThreadPoolExecutor(max_workers=_PROCESSES) as pool:
-        children = [
-            pool.submit(
-                run_python,
-                program,
-                str(port),
-                str(process),
-                timeout=_CHILD_SECONDS,
-                runtime=runtime,
-                cwd=_REPO_ROOT,
-            )
-            for process in range(_PROCESSES)
-        ]
-        results = [child.result() for child in children]
-    return [result.check().last_json_as(ProcessReport) for result in results]
-
-
 def test_every_process_names_its_batches_on_its_own_cpu_device() -> None:
-    reports = _run_processes(_PROCESS)
+    reports = run_processes(_PROCESS, ProcessReport)
 
     assert [report["process"] for report in reports] == [0, 1]
     assert [report["host_device_process"] for report in reports] == [0, 1]
@@ -99,7 +64,7 @@ def test_every_process_names_its_batches_on_its_own_cpu_device() -> None:
 
 
 def test_every_process_names_the_same_records_for_each_batch() -> None:
-    first, second = _run_processes(_PROCESS)
+    first, second = run_processes(_PROCESS, ProcessReport)
 
     assert first["named"] == second["named"]
     assert [len(batch) for batch in first["named"]] == [8, 8, 8]
