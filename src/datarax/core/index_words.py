@@ -37,6 +37,42 @@ type HostIntegers = int | np.integer | Sequence[int] | np.ndarray
 """Integers on the host: Python ints of any size, or NumPy integers and arrays."""
 
 
+def check_length(length: int) -> None:
+    """Refuse an order over no records, or over more than a source can hold.
+
+    Args:
+        length: Records the order covers.
+
+    Raises:
+        ValueError: If ``length`` is not in ``[1, MAX_RECORDS]``.
+    """
+    if not 1 <= length <= MAX_RECORDS:
+        raise ValueError(
+            f"length must be in [1, 2**63], the records a source can hold, got {length}"
+        )
+
+
+def checked_words(positions: ArrayLike) -> jax.Array:
+    """``positions`` as a JAX array, refused unless they are uint32 ``(..., 2)`` words.
+
+    Args:
+        positions: 64-bit integers as their words ``(hi, lo)``, possibly traced.
+
+    Returns:
+        The words as a JAX array.
+
+    Raises:
+        ValueError: If ``positions`` is not uint32 with a trailing axis of 2.
+    """
+    words = jnp.asarray(positions)
+    if words.dtype != jnp.uint32 or words.ndim == 0 or words.shape[-1] != 2:  # noqa: PLR2004
+        raise ValueError(
+            "positions are 64-bit integers as uint32 (..., 2) words (hi, lo); got "
+            f"{words.dtype} {words.shape}"
+        )
+    return words
+
+
 @overload
 def to_words(values: jax.Array) -> jax.Array: ...
 
@@ -334,6 +370,8 @@ __all__ = [
     "MAX_RECORDS",
     "WORD_BITS",
     "add",
+    "check_length",
+    "checked_words",
     "divmod_word",
     "from_words",
     "greater",
