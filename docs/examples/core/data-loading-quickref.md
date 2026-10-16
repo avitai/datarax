@@ -88,6 +88,11 @@ source = from_tfds("cifar10", "train[:5000]")
 source = from_tfds("imagenet2012", "train", in_memory=False)
 ```
 
+A split larger than the page cache is also read faster in a block order,
+`Pipeline(..., shuffle=True, block_order=BlockOrder(block_size=256, blocks_per_buffer=64))`,
+which reads a few blocks of consecutive records per batch
+([data larger than the page cache](../../user_guide/data_sources.md#data-larger-than-the-page-cache)).
+
 !!! note "Prepare once, read without TensorFlow"
     Reading needs `uv pip install "datarax[data]"` (tensorflow-datasets). The eager source never
     prepares a dataset: prepare it once as ArrayRecord, in a process of its own with the `tfds`

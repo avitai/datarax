@@ -23,7 +23,10 @@ its records' provenance (their strings and objects) by index from one ArrayRecor
 [decoded copy](decoded_copy.md) holds it; `source_identity()` declares its columns (and the copy
 they are), which a copy written from it is checked against. A cold copy read from disk is
 faster on several read threads: with `Pipeline(host_resources=...)` the host stage reads it (a
-GIL-free read) on threads from the plan.
+GIL-free read) on threads from the plan. Columns larger than the page cache, read in a shuffled
+order, cost a device page per record; build the pipeline with `block_order` to read a few blocks
+of consecutive rows at a time
+([data larger than the page cache](../user_guide/data_sources.md#data-larger-than-the-page-cache)).
 
 ```python
 import numpy as np

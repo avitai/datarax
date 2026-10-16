@@ -211,7 +211,9 @@ interrupted.close()
 
 `from_tfds` decodes an ArrayRecord split into memory by default. With `in_memory=False` it
 returns an `ArrayRecordSourceModule` over the split's files, with TFDS's decoder, for a split
-larger than RAM; every record is then decoded each epoch.
+larger than RAM; every record is then decoded each epoch. Files larger than the page cache are
+read faster in a block order, `Pipeline(..., shuffle=True, block_order=BlockOrder(...))`, which
+reads a few blocks of consecutive records per batch.
 
 ```python
 from datarax.sources import from_tfds

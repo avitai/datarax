@@ -455,6 +455,9 @@ pipeline = Pipeline(source=source, stages=stages, batch_size=256, rngs=nnx.Rngs(
 - **A copy read cold needs read threads.** A copy larger than the page cache is read from disk:
   one reader is a fraction of a warm read, and concurrent readers recover it; with a budget the
   pipeline reads the copy (a GIL-free read) on several threads.
+- **A shuffled copy larger than the page cache reads a page per record.** Build the pipeline with
+  `block_order=BlockOrder(block_size=256, blocks_per_buffer=64)` so each batch reads a few blocks
+  of consecutive records; one buffer's bytes stay resident and the budget charges them.
 - **Pass `pipe.dag` to a transform, never the pipeline.** The RAM result holds its columns as
   every eager source does, on the host and out of NNX state, so a transform taking a module that
   holds the source transfers no data in any Flax mode; a train step still takes `raw_batches()` and

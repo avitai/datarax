@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order: sequential without a key, the global order with a key, the block order with both. It is
   computed per position from the keyed cipher, stores no order, visits every record once per
   epoch, and runs under `jit`, `vmap` and `scan`; the short final block stays in the last buffer.
+- `Pipeline(..., shuffle=True, block_order=BlockOrder(...))` (and `Pipeline.from_dag`,
+  `Pipeline.from_arrays`; `BlockOrder` is exported from `datarax`): each epoch is named in the block
+  order of its key, for an `INDEXED` source read from storage larger than the page cache. The
+  epoch plan carries the order, so the host stage, its read threads and worker processes and the
+  compiled session name records alike; a record's draws, exact resume and the names on any number
+  of readers are unchanged by it. `record_indices_at` and `resolve_wrapped_indices` take a
+  keyword `block` beside `key`, on every source. The resume fingerprint records the order
+  (`{"kind": "block", "block_size", "blocks_per_buffer"}`, `{"kind": "global"}` without one),
+  so a state saved under another order is refused. With `host_resources`, one buffer's stored
+  bytes are the plan's `O` term: each `INDEXED` source reports them
+  (`datarax.core.host_resources.OrderWorkingSet`: a disk source from its stored rows, ArrayRecord
+  from its files' bytes per record, an eager source 0, a mix the sum of its children's), and a
+  budget that cannot hold them is refused naming `O`. A block order without `shuffle`, over a
+  stream or for a source without a length is refused.
 - `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
   and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
 - `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and

@@ -42,6 +42,11 @@ a source that an epoch does not exhaust serves the same first records each time,
 unshuffled `drop_last` epoch skips the same tail. One pass over every record of several sources
 is a concatenation of the sources, not a weighted mix.
 
+With `Pipeline(..., block_order=BlockOrder(...))` each source names its records in that block
+order under its own key, so the mix reads every source a few of its blocks at a time, and a RAM
+budget charges each source's buffer
+([data larger than the page cache](../user_guide/data_sources.md#data-larger-than-the-page-cache)).
+
 ## Record identity
 
 A mixed record's index is its source's offset, the number of records in the sources before it,

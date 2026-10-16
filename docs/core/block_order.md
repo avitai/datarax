@@ -39,6 +39,11 @@ When `b` does not divide the length, the short final block is never permuted
 with the full blocks: it stays last, shuffled with the last buffer's other
 records, so its at most `b - 1` records fall in an epoch's last buffer.
 
+A pipeline names its epochs in a block order with
+`Pipeline(..., shuffle=True, block_order=BlockOrder(...))`, which also charges one buffer's
+stored bytes to a RAM budget
+([data larger than the page cache](../user_guide/data_sources.md#data-larger-than-the-page-cache)).
+
 ## See Also
 
 - [index_words](index_words.md) - Positions and records as two uint32 words

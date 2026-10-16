@@ -19,6 +19,9 @@ Data source adapters for loading data from various formats and libraries. Source
 !!! tip "Factory functions"
     `from_tfds(name, split, ...)` picks the TFDS source by the format the copy is prepared in (ArrayRecord: eager, or read per batch with `in_memory=False`; TFRecord: streamed). `from_hf(name, split, ...)` builds the eager source, or the stream with `streaming=True`.
 
+!!! tip "Larger than the page cache"
+    A shuffled epoch of a source read from storage larger than the page cache reads a device page per record. `Pipeline(..., shuffle=True, block_order=BlockOrder(...))` reads a few blocks of consecutive records at a time ([data larger than the page cache](../user_guide/data_sources.md#data-larger-than-the-page-cache)).
+
 ## Quick Start
 
 ```python
