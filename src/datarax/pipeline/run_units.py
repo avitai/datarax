@@ -4,8 +4,8 @@ A run of a pipeline's epoch plan (:class:`~datarax.pipeline.epochs.Run`) is serv
 (:class:`RunUnits`): one batch, or a chunk of ``K`` batches read together, numbered from the run's
 start. A unit as read on the host is a :class:`HostElement`: its batch, its records' provenance,
 where the run stands once it is served, and its place in the run. An ``INDEXED`` source's unit is
-read by :class:`IndexedRead`, which names the unit's records on the CPU device, a block of batches
-per call (:class:`_BlockNames`), and reads them with one host read under the run's JAX settings.
+read by :class:`IndexedRead`, which names the unit's records on the CPU device, several batches
+per call (:class:`_NamedBatches`), and reads them with one host read under the run's JAX settings.
 The read pickles with what it holds, so a Grain read thread and a worker process run the same
 object; it never names the host stage, its cursor or its placement, which consume its units.
 """
@@ -28,14 +28,14 @@ from datarax.pipeline.epochs import HostNaming, Run
 from datarax.pipeline.host_workers import JaxSettings
 
 
-_NAMING_BLOCK_RECORDS = 16_384
-"""Records the host naming names per call (:class:`_BlockNames`): ``max(1, this // B)`` full
-batches, so a block holds at most this many records' names (192 KiB), or one batch's for a larger
-batch. Fixed, so the block program compiles once per source structure and plan. At B = 256 a
-block is 64 batches."""
-_BLOCKS_KEPT = 2
-"""Blocks of names a run holds at once: the read threads read consecutive units, so at most two
-blocks are in use; an evicted block asked for again is named again, identically."""
+_NAMING_CALL_RECORDS = 16_384
+"""Records the host naming names per call (:class:`_NamedBatches`): ``max(1, this // B)`` full
+batches, so a call's names are at most this many records' (192 KiB), or one batch's for a larger
+batch. Fixed, so the batches' program compiles once per source structure and plan. At B = 256 a
+call names 64 batches."""
+_CALLS_KEPT = 2
+"""Calls' names a run holds at once: the read threads read consecutive units, so at most two
+calls' names are in use; an evicted call's names asked for again are named again, identically."""
 
 
 class HostElement(NamedTuple):
@@ -152,9 +152,9 @@ class RunUnits:
 class IndexedRead:
     """The read of an ``INDEXED`` source's run, unit by unit: what each Grain worker runs.
 
-    A unit's batches are named on the CPU device (in blocks, :class:`_BlockNames`) and read with
-    one host read (:func:`~datarax.core.data_source.read_records`, with provenance when asked);
-    a chunk is split into its batches and stacked, ``(K, B, ...)``. A read marks a run of
+    A unit's batches are named on the CPU device (several per call, :class:`_NamedBatches`) and
+    read with one host read (:func:`~datarax.core.data_source.read_records`, with provenance when
+    asked); a chunk is split into its batches and stacked, ``(K, B, ...)``. A read marks a run of
     consecutive records as contiguous only when its names are (so a source reads it as views).
     Each unit is named and read under the run's JAX settings, which a read thread does not
     inherit. It holds the source, the run's units, the naming, the key as host words and the
@@ -187,7 +187,7 @@ class IndexedRead:
         """
         self.source = source
         self.units = units
-        self.names = _BlockNames(naming, units.run, key)
+        self.names = _NamedBatches(naming, units.run, key)
         self.key = key
         self.with_provenance = with_provenance
         self.settings = settings
@@ -240,23 +240,23 @@ class IndexedRead:
         )
 
 
-class _BlockNames:
-    """A run's batch names, a block of full batches named per call of the host naming.
+class _NamedBatches:
+    """A run's batch names, several full batches named per call of the host naming.
 
     Naming costs a fixed dispatch to the CPU device and back per call, which dominates a small
-    batch's read, so the run's full batches are named :data:`_NAMING_BLOCK_RECORDS` records at a
-    time: block ``b`` holds the run's batches ``b * M .. b * M + M - 1`` (``M`` full batches),
-    named by :meth:`~datarax.pipeline.epochs.HostNaming.block`, which names each exactly as alone
+    batch's read, so the run's full batches are named :data:`_NAMING_CALL_RECORDS` records at a
+    time: call ``c`` names the run's batches ``c * M .. c * M + M - 1`` (``M`` full batches),
+    through :meth:`~datarax.pipeline.epochs.HostNaming.batches`, which names each exactly as alone
     whatever the global PRNG impl (naming pins threefry, exact under ``jax.vmap`` over keys).
-    Blocks count from the run's start, so a run resumed anywhere names the same records. The run's
-    short final batch is named alone, by the program that serves its size; a block's slots past
-    the run's full batches repeat a batch of the block and are never served. The read threads ask
-    in any order: a lock guards the blocks, of which the last :data:`_BLOCKS_KEPT` are held
+    Calls count from the run's start, so a run resumed anywhere names the same records. The run's
+    short final batch is named alone, by the program that serves its size; a call's slots past
+    the run's full batches repeat a batch of the call and are never served. The read threads ask
+    in any order: a lock guards the calls' names, of which the last :data:`_CALLS_KEPT` are held
     (12 bytes a record: its index words and epoch). It pickles as the naming, run and key.
     """
 
     def __init__(self, naming: HostNaming, run: Run, key: np.ndarray | None) -> None:
-        """Hold what the run's names need; no block is named until a batch asks.
+        """Hold what the run's names need; nothing is named until a batch asks.
 
         Args:
             naming: The pipeline's host naming.
@@ -266,18 +266,18 @@ class _BlockNames:
         self._naming = naming
         self._run = run
         self._key = key
-        self._per_block = max(1, _NAMING_BLOCK_RECORDS // run.plan.batch_size)
+        self._per_call = max(1, _NAMING_CALL_RECORDS // run.plan.batch_size)
         self._lock = threading.Lock()
-        self._blocks: collections.OrderedDict[int, tuple[np.ndarray, np.ndarray]] = (
+        self._calls: collections.OrderedDict[int, tuple[np.ndarray, np.ndarray]] = (
             collections.OrderedDict()
         )
 
     def __getstate__(self) -> dict[str, Any]:
-        """What a copy needs (a worker process's): the naming, run and key, no block."""
+        """What a copy needs (a worker process's): the naming, run and key, no names."""
         return {"naming": self._naming, "run": self._run, "key": self._key}
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Hold what was copied; the copy names its own blocks."""
+        """Hold what was copied; the copy names its own batches."""
         self.__init__(state["naming"], state["run"], state["key"])
 
     def __call__(
@@ -296,29 +296,29 @@ class _BlockNames:
         """
         if size != self._run.plan.batch_size:
             return self._naming(start, epoch, size, self._key)
-        block, slot = divmod(ordinal, self._per_block)
+        call, slot = divmod(ordinal, self._per_call)
         with self._lock:
-            names = self._blocks.get(block)
+            names = self._calls.get(call)
             if names is None:
-                names = self._name(block, (start, epoch))
-                self._blocks[block] = names
-                while len(self._blocks) > _BLOCKS_KEPT:
-                    self._blocks.popitem(last=False)
+                names = self._name(call, (start, epoch))
+                self._calls[call] = names
+                while len(self._calls) > _CALLS_KEPT:
+                    self._calls.popitem(last=False)
             else:
-                self._blocks.move_to_end(block)
+                self._calls.move_to_end(call)
         indices, epochs = names
         return indices[slot], epochs[slot]
 
-    def _name(self, block: int, filler: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
-        """Name block ``block``; ``filler``, a full batch of it, fills slots past the run's."""
-        starts = np.empty((self._per_block, 2), np.uint32)
-        epochs = np.empty(self._per_block, np.int32)
+    def _name(self, call: int, filler: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+        """Name call ``call``'s batches; ``filler``, a full batch, fills slots past the run's."""
+        starts = np.empty((self._per_call, 2), np.uint32)
+        epochs = np.empty(self._per_call, np.int32)
         size = self._run.plan.batch_size
-        for slot in range(self._per_block):
-            batch = self._run.batch(block * self._per_block + slot)
+        for slot in range(self._per_call):
+            batch = self._run.batch(call * self._per_call + slot)
             start, epoch = filler if batch is None or batch[2] != size else batch[:2]
             starts[slot], epochs[slot] = to_words(start), epoch
-        return self._naming.block(starts, epochs, self._key)
+        return self._naming.batches(starts, epochs, self._key)
 
 
 __all__ = ["HostElement", "IndexedRead", "RunUnits"]

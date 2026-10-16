@@ -1,7 +1,7 @@
-"""The host stage names a block of batches per call of its naming program, as each batch alone.
+"""The host stage names several batches per call of its naming program, as each batch alone.
 
 Naming costs a fixed overhead per call (a dispatch to the CPU device and back) that dominates a
-small batch's read, so the host stage names a block of consecutive full batches of the run in one
+small batch's read, so the host stage names several consecutive full batches of the run in one
 call of the same program, vmapped over their starts, and serves each batch its slice. The names
 (indices and epochs) are those of naming each batch alone, for every rule, every source kind, every
 resume position, chunked units and any number of read threads. The run's short final batch is
@@ -82,9 +82,9 @@ def _alone(pipe: Pipeline, start: tuple[int, int] = (0, 0)) -> list[tuple[bytes,
 
 
 @pytest.fixture
-def small_blocks(monkeypatch: pytest.MonkeyPatch) -> int:
-    """Blocks of 12 records, so short runs cross many blocks and resume mid-block."""
-    monkeypatch.setattr(run_units, "_NAMING_BLOCK_RECORDS", 12)
+def small_calls(monkeypatch: pytest.MonkeyPatch) -> int:
+    """Calls of 12 records, so short runs cross many calls and resume mid-call."""
+    monkeypatch.setattr(run_units, "_NAMING_CALL_RECORDS", 12)
     return 12
 
 
@@ -94,8 +94,8 @@ def small_blocks(monkeypatch: pytest.MonkeyPatch) -> int:
 @pytest.mark.parametrize("num_epochs", [1, 3])
 @pytest.mark.parametrize("batch_size", [1, 3, 4, 8])
 @pytest.mark.parametrize("length", [7, 10, 23, 64])
-def test_a_batch_named_in_a_block_is_named_as_alone(
-    small_blocks: int,
+def test_a_batch_named_with_others_in_one_call_is_named_as_alone(
+    small_calls: int,
     make: Any,
     shuffle: bool,
     drop_last: bool,
@@ -103,7 +103,7 @@ def test_a_batch_named_in_a_block_is_named_as_alone(
     batch_size: int,
     length: int,
 ) -> None:
-    del small_blocks
+    del small_calls
     if drop_last and batch_size > length:
         return  # the plan refuses it
     pipe = _pipeline(
@@ -121,10 +121,10 @@ def test_a_batch_named_in_a_block_is_named_as_alone(
 @pytest.mark.parametrize("drop_last", [False, True])
 @pytest.mark.parametrize("shuffle", [False, True])
 def test_resumed_at_every_position_the_rest_is_named_as_alone(
-    small_blocks: int, threads: int, drop_last: bool, shuffle: bool
+    small_calls: int, threads: int, drop_last: bool, shuffle: bool
 ) -> None:
-    """Blocks are counted from where a run starts; a resume mid-block names the same records."""
-    del small_blocks
+    """Calls are counted from where a run starts; a resume mid-call names the same records."""
+    del small_calls
 
     def build() -> Pipeline:
         return _pipeline(
@@ -144,8 +144,8 @@ def test_resumed_at_every_position_the_rest_is_named_as_alone(
 
 
 @pytest.mark.parametrize("chunk", [2, 3, 5])
-def test_a_chunk_s_batches_are_named_as_alone(small_blocks: int, chunk: int) -> None:
-    del small_blocks
+def test_a_chunk_s_batches_are_named_as_alone(small_calls: int, chunk: int) -> None:
+    del small_calls
     pipe = _pipeline(_memory(23), batch_size=4)
     expected = _alone(pipe)
     served: list[tuple[bytes, bytes]] = []
@@ -160,33 +160,33 @@ def test_a_chunk_s_batches_are_named_as_alone(small_blocks: int, chunk: int) -> 
     assert served == expected
 
 
-def test_full_batches_are_named_a_block_per_call(
-    small_blocks: int, monkeypatch: pytest.MonkeyPatch
+def test_full_batches_are_named_several_per_call(
+    small_calls: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run of 12 full batches of 3 and a short one: 3 block calls and 1 call alone."""
-    del small_blocks
-    calls = {"alone": 0, "block": 0}
-    alone, block = HostNaming.__call__, getattr(HostNaming, "block", None)
+    """A run of 12 full batches of 3 and a short one: 3 calls of batches and 1 call alone."""
+    del small_calls
+    calls = {"alone": 0, "batches": 0}
+    alone, batches = HostNaming.__call__, getattr(HostNaming, "batches", None)
 
     def counted_alone(self: HostNaming, *args: Any, **kwargs: Any) -> Any:
         calls["alone"] += 1
         return alone(self, *args, **kwargs)
 
-    def counted_block(self: HostNaming, *args: Any, **kwargs: Any) -> Any:
-        calls["block"] += 1
-        assert block is not None
-        return block(self, *args, **kwargs)
+    def counted_batches(self: HostNaming, *args: Any, **kwargs: Any) -> Any:
+        calls["batches"] += 1
+        assert batches is not None
+        return batches(self, *args, **kwargs)
 
     monkeypatch.setattr(HostNaming, "__call__", counted_alone)
-    monkeypatch.setattr(HostNaming, "block", counted_block, raising=False)
+    monkeypatch.setattr(HostNaming, "batches", counted_batches, raising=False)
     pipe = _pipeline(_memory(38), batch_size=3, shuffle=True, num_epochs=1)
     served = list(pipe.raw_batches())
     assert [batch.batch_size for batch in served] == [3] * 12 + [2]
-    assert calls == {"alone": 1, "block": 3}
+    assert calls == {"alone": 1, "batches": 3}
 
 
-def test_pipelines_built_alike_compile_the_block_program_once() -> None:
-    """One program per structure: the block's and the short batch's, whatever the pipeline."""
+def test_pipelines_built_alike_compile_the_batches_program_once() -> None:
+    """One program per structure: the full batches' and the short batch's, whatever the pipeline."""
 
     def run() -> None:
         pipe = _pipeline(_memory(50), batch_size=8, num_epochs=2)
@@ -198,16 +198,16 @@ def test_pipelines_built_alike_compile_the_block_program_once() -> None:
         run()
         run()
         run()
-    # 100 records in batches of 8: the block of full batches and the run's short final batch.
+    # 100 records in batches of 8: the program of full batches and the run's short final batch's.
     assert sum(str(program).startswith("jit(_names") for program in programs) == 2
 
 
-def test_the_names_a_run_holds_are_two_blocks_at_most(small_blocks: int) -> None:
-    """A run's naming holds at most two blocks of names: 12 bytes a record (words and epoch)."""
+def test_the_names_a_run_holds_are_two_calls_at_most(small_calls: int) -> None:
+    """A run's naming holds at most two calls' names: 12 bytes a record (words and epoch)."""
     pipe = _pipeline(_memory(64), batch_size=4, num_epochs=1)
     read = pipe.host_stage.read_for_workers(pipe)
     for unit in range(16):
         read(unit)
-    held = list(read.names._blocks.values())  # noqa: SLF001 - the names a run holds
+    held = list(read.names._calls.values())  # noqa: SLF001 - the names a run holds
     assert 0 < len(held) <= 2
-    assert sum(indices.nbytes + epochs.nbytes for indices, epochs in held) <= 2 * small_blocks * 12
+    assert sum(indices.nbytes + epochs.nbytes for indices, epochs in held) <= 2 * small_calls * 12
