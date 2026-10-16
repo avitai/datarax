@@ -69,6 +69,10 @@ def example_id(path: Path) -> str:
 
 EXAMPLE_FILES = find_example_files(EXAMPLES_DIR)
 
+# scripts/check_docs_pairs.py owns the rule for a docs page's code that shows output.
+check_docs_pairs = load_script("check_docs_pairs")
+DOCS_PAGES = check_docs_pairs.docs_pages(REPO_ROOT)
+
 
 class TestExampleStructure:
     """Tests for example file structure and content."""
@@ -180,6 +184,22 @@ class TestExampleOutputs:
 
         assert "DATARAX_EXAMPLES_OUTPUT_DIR" not in content
         assert "docs/assets" not in content
+
+
+class TestDocsPagesShowTheScriptsCode:
+    """Code a docs page shows with output is its script's code (``scripts/check_docs_pairs.py``)."""
+
+    @pytest.mark.parametrize(
+        "page", DOCS_PAGES, ids=lambda page: str(page.relative_to(REPO_ROOT / "docs" / "examples"))
+    )
+    def test_code_shown_with_output_is_a_run_of_the_script(self, page: Path) -> None:
+        assert check_docs_pairs.check_page(page, REPO_ROOT) == []
+
+    def test_the_pages_hold_code_to_check(self) -> None:
+        """A rule that matched no pair would pass every page while checking nothing."""
+        pairs = sum(len(check_docs_pairs.PAIR.findall(page.read_text())) for page in DOCS_PAGES)
+
+        assert pairs > 0
 
 
 @pytest.mark.slow
