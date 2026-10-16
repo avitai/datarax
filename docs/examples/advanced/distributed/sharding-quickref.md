@@ -76,9 +76,8 @@ flowchart TB
 
 ## Key Concepts
 
-The terminal output below is from a run on two CPU devices
-(`XLA_FLAGS=--xla_force_host_platform_device_count=2`). The same code runs on one device, a mesh
-of one, and on several GPUs.
+The terminal output below is from a run on two GPUs (2x NVIDIA A100-SXM4-80GB). The same code
+runs on one device, a mesh of one.
 
 ### Step 1: Device Mesh Setup
 
