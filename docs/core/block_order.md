@@ -48,6 +48,8 @@ stored bytes to a RAM budget
 
 - [index_words](index_words.md) - Positions and records as two uint32 words
 - [data_source](data_source.md) - `record_indices_at`, which names a batch's records
+- [Block order guide](../examples/advanced/performance/block-order-guide.md) - Training on data
+  stored in label order, and a cold read, in four orders
 
 ---
 

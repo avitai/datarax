@@ -103,6 +103,7 @@ Production-ready patterns and optimization techniques.
 | [Sharding Guide](advanced/distributed/sharding-guide.md) | Advanced | Advanced distributed training patterns |
 | [Interleaved Tutorial](advanced/multi_source/interleaved-tutorial.md) | Intermediate | Multiple data source mixing |
 | [Optimization Guide](advanced/performance/optimization-guide.md) | Advanced | Performance tuning and profiling |
+| [Block Order Guide](advanced/performance/block-order-guide.md) | Advanced | Training from data on disk stored in label order, CorgiPile's experiment |
 | [Sampling Tutorial](advanced/sampling/sampling-tutorial.md) | Intermediate | Sequential, shuffle, range, and epoch-aware samplers |
 | [End-to-End CIFAR-10](advanced/training/e2e-cifar10-guide.md) | Advanced | Complete training pipeline with all features |
 | [DADA Learned Augmentation](advanced/differentiable/dada-learned-augmentation.md) | Advanced | Differentiable augmentation policy search |

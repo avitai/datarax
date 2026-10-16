@@ -329,6 +329,10 @@ The block order applies to `INDEXED` sources: `StreamingDiskSource`, a
 [decoded copy](../sources/decoded_copy.md), `ArrayRecordSourceModule` and a mix of them. A
 stream already reads in its stored order, and a source in memory gains nothing from it.
 
+The [block order guide](../examples/advanced/performance/block-order-guide.md) trains ResNet-18 on
+CIFAR-10 stored in label order in four orders, reproducing CorgiPile's result, and measures a cold
+read in the global and block orders.
+
 ## Best Practices for Data Sources
 
 When working with data sources:
