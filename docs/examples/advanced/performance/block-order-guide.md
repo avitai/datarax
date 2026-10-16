@@ -624,9 +624,8 @@ evicted before each measurement, and each timed window reads a small part of it,
 page it touches comes from the disk. The kernel keeps a page that a memory map still holds, so
 each measurement evicts the files first and only then opens the source it reads through.
 
-The host keeps everything it reads during the window, because it has memory to spare. When the
-data exceed memory, the kernel also reclaims pages while the reads run, which costs the reading
-threads more; this part does not measure that.
+Each window reads far less than the host's memory holds, so this part measures reads from the
+disk, not data larger than memory.
 
 Two measurements per order:
 
@@ -759,14 +758,9 @@ Tiled copy: 20,000,000 records, 61.5 GB
  CorgiPile |      205,564 |                      1.87 |         14,100
 ```
 
-Read cold, the global order moved 37 times the bytes it served, and its supply alone, 13,862
-records a second, is about what this step consumes. The CorgiPile order moved 1.87 times the
-bytes it served and supplied 15 times as many records. Both orders trained at the same rate here
-because the global order's supply just met the step's demand on a host with memory to spare.
-A separate measurement on the same host type changed that one condition: ResNet-18 at batch 512
-on a 63 GB tiled CIFAR-10 copy, with the host's free memory held to 20 GiB so that the kernel
-reclaimed pages while the reads ran. There the GPU was busy 0.82 of the time it is busy on
-batches already on the device in the global order, and 1.00 in block orders.
+Read cold, the global order moved 37 times the bytes it served and supplied 13,862 records a
+second alone. The CorgiPile order moved 1.87 times the bytes it served and supplied 15 times as
+many records. In the training measurement both orders ran at about 14,100 images a second.
 
 ## Interpretation
 
@@ -779,10 +773,9 @@ reach about 100% training accuracy by epoch 50, Block-Only about 55%, No Shuffle
 
 Read cold, the global order faults a kernel read around every record it names, so the disk moves
 dozens of times the bytes the batch holds. The block order reads runs of consecutive records and
-moves about the bytes it uses, and its supply alone is many times the global order's. Whether
-the global order starves the step depends on the margin between its supply and the step's
-demand: a faster model, a slower disk, network storage or memory pressure each take that margin
-away, and the block order keeps it.
+moves about the bytes it uses, and its supply alone is many times the global order's. A step
+starves when it takes records faster than the order supplies them, so the global order leaves less
+headroom for a faster model or a slower disk.
 
 Choosing the parameters: `block_size` sets the length of each contiguous read, and
 `blocks_per_buffer` sets how many places in the data one batch draws from. On sorted data a
