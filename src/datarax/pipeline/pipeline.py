@@ -75,6 +75,7 @@ from typing import Any, Literal, overload
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from jax.sharding import NamedSharding
 from substrax.typing import CheckpointState
 
 from datarax.core import batch_ops
@@ -99,6 +100,7 @@ from datarax.pipeline.iteration import (
     source_columns,
     staged_view,
 )
+from datarax.pipeline.placement import check_sharding
 from datarax.pipeline.read_plan import HostPlan
 from datarax.sources.eager_source import bind_columns, eager_sources
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -144,6 +146,15 @@ def _check_block_order(
         )
 
 
+def _placed_by_iteration(call: str) -> str:
+    """Why ``call`` refuses a pipeline holding a sharding: only iteration places batches."""
+    return (
+        f"{call} serves batches through the compiled step, which places nothing on a mesh; "
+        "a pipeline holding a sharding is served by iteration: `for batch in pipe` or "
+        "`pipe.raw_batches()`"
+    )
+
+
 class Pipeline(nnx.Module):
     """JAX-native data pipeline with scan-based epoch iteration.
 
@@ -182,6 +193,13 @@ class Pipeline(nnx.Module):
             in which each epoch's records are named: a batch reads a few blocks of
             consecutive records, for an ``INDEXED`` source read from storage larger than the
             page cache. ``None`` (the default) is the global order.
+        sharding: A ``jax.sharding.NamedSharding`` over a batch's rows, to place each batch on
+            its data mesh: full batches with their rows on it and their batch-level state
+            replicated, a chunk ``(K, B, ...)`` with its rows on the axes after the chunk axis,
+            and a bounded run's short final batch replicated, so an evaluation covers every
+            record once without padding. ``None`` (the default) places on the default device,
+            uncommitted. The mesh is this process's devices; iteration places, so ``step()``,
+            ``scan`` and ``session()`` refuse a pipeline holding one.
 
     Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
     ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so
@@ -209,6 +227,7 @@ class Pipeline(nnx.Module):
         num_epochs: int | None = 1,
         host_resources: HostResources | None = None,
         block_order: BlockOrder | None = None,
+        sharding: NamedSharding | None = None,
     ) -> None:
         """Initialize the module.
 
@@ -227,15 +246,22 @@ class Pipeline(nnx.Module):
                 docstring).
             block_order: The block order a shuffled epoch is named in, or ``None`` for the
                 global order (see the class docstring).
+            sharding: The rows' sharding on a data mesh, or ``None`` for the default device
+                (see the class docstring).
 
         Raises:
             ValueError: If ``num_epochs`` is neither ``None`` nor at least 1, the source
                 has no records, ``drop_last`` is set with a ``batch_size`` above the
-                source's length, which serves no batch, or a block order is given without
-                ``shuffle`` or for a source that is not ``INDEXED`` or has no length.
+                source's length, which serves no batch, a block order is given without
+                ``shuffle`` or for a source that is not ``INDEXED`` or has no length, or the
+                sharding cannot place this pipeline's batches (more than the rows, an
+                ``AbstractMesh``, another process's devices, or a ``batch_size`` it cannot
+                split).
+            TypeError: If ``sharding`` is not a ``NamedSharding``.
         """
         super().__init__()
         _check_block_order(source, shuffle=shuffle, block_order=block_order)
+        check_sharding(sharding, batch_size)
         # Refuses an epoch rule no pipeline can serve.
         EpochPlan(
             length=known_length(source),
@@ -249,6 +275,7 @@ class Pipeline(nnx.Module):
         self.drop_last = drop_last
         self.num_epochs = num_epochs
         self.host_resources = host_resources
+        self.sharding = sharding
 
         self.dag = self._build_dag(stages, nodes, edges, sink)
         self.source = source
@@ -311,6 +338,7 @@ class Pipeline(nnx.Module):
         num_epochs: int | None = 1,
         host_resources: HostResources | None = None,
         block_order: BlockOrder | None = None,
+        sharding: NamedSharding | None = None,
     ) -> Pipeline:
         """Build a Pipeline whose stages execute in user-specified topological order.
 
@@ -333,6 +361,8 @@ class Pipeline(nnx.Module):
                 docstring).
             block_order: The block order a shuffled epoch is named in, or ``None`` (see the
                 class docstring).
+            sharding: The rows' sharding on a data mesh, or ``None`` for the default device
+                (see the class docstring).
 
         Raises:
             ValueError: If ``edges`` describes a cycle, references
@@ -353,6 +383,7 @@ class Pipeline(nnx.Module):
             num_epochs=num_epochs,
             host_resources=host_resources,
             block_order=block_order,
+            sharding=sharding,
         )
 
     @classmethod
@@ -366,6 +397,7 @@ class Pipeline(nnx.Module):
         drop_last: bool = False,
         num_epochs: int | None = 1,
         block_order: BlockOrder | None = None,
+        sharding: NamedSharding | None = None,
     ) -> Pipeline:
         """Build a Pipeline over in-memory arrays, with no stages.
 
@@ -384,6 +416,8 @@ class Pipeline(nnx.Module):
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
             block_order: The block order a shuffled epoch is named in, or ``None`` (see the
                 class docstring).
+            sharding: The rows' sharding on a data mesh, or ``None`` for the default device
+                (see the class docstring).
 
         Raises:
             ValueError: If the arrays differ in length or hold no records, or the epoch
@@ -401,6 +435,7 @@ class Pipeline(nnx.Module):
             drop_last=drop_last,
             num_epochs=num_epochs,
             block_order=block_order,
+            sharding=sharding,
         )
 
     @property
@@ -600,8 +635,9 @@ class Pipeline(nnx.Module):
         The DAG is not applied: pass :attr:`dag` into your differentiated train step and call it
         on each batch, so its operators' parameters train with the model. Records are served in
         the pipeline's order and epoch rule, named on the CPU device, read on the host by Grain
-        threads ahead of the consumer and placed on the default device by the consumer,
-        uncommitted, one batch ahead of the one taken on a GPU and none on the CPU and TPU;
+        threads ahead of the consumer and placed by the consumer: on the default device,
+        uncommitted, or with :attr:`sharding` on its data mesh (the short final batch
+        replicated), one batch ahead of the one taken on a GPU and none on the CPU and TPU;
         nothing else of the source reaches the device. Iteration stands where the last
         batch taken ended, so a later call continues the run with the same Grain iterator; the
         run ends after ``num_epochs`` epochs.
@@ -680,7 +716,12 @@ class Pipeline(nnx.Module):
 
         Returns:
             The sink output for the batch.
+
+        Raises:
+            ValueError: If the pipeline holds a sharding (iteration places on a mesh).
         """
+        if self.sharding is not None:
+            raise ValueError(_placed_by_iteration("step()"))
         if columns is None:
             return next_batch(self, type(self)._next_batch, self.batch_size)
         with bind_columns(eager_sources(self), columns):
@@ -766,7 +807,12 @@ class Pipeline(nnx.Module):
         in place, NumPy data from its device copy, uploaded once. The compiled scan is cached
         by ``step_fn``'s identity: pass the same function on every call, since a new one (a
         lambda written in the loop) compiles again.
+
+        Raises:
+            ValueError: If the pipeline holds a sharding (iteration places on a mesh).
         """
+        if self.sharding is not None:
+            raise ValueError(_placed_by_iteration("scan"))
         n_modules = len(modules)
         has_init_carry = init_carry is not None
         # Cache key: identity of step_fn plus the structural shape of the
@@ -852,7 +898,10 @@ class Pipeline(nnx.Module):
 
         Raises:
             TypeError: If the source is not ``INDEXED`` (a stream), which a session cannot drive.
+            ValueError: If the pipeline holds a sharding (iteration places on a mesh).
         """
+        if self.sharding is not None:
+            raise ValueError(_placed_by_iteration("session()"))
         kind = self.source.record_identity
         if kind is not RecordIdentity.INDEXED:
             raise TypeError(

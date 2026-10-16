@@ -9,6 +9,7 @@ import jax
 import pytest
 
 from datarax.pipeline import host_stage
+from datarax.pipeline.placement import Placer
 from datarax.pipeline.run_units import HostElement
 
 
@@ -25,10 +26,10 @@ class PlacementSpy:
         self.leaf_types: set[type] = set()
         place = host_stage._place  # noqa: SLF001 - the one placement the spy counts
 
-        def counted(element: HostElement) -> Any:
+        def counted(element: HostElement, place_unit: Placer) -> Any:
             self.threads.append(threading.get_ident())
             self.leaf_types |= {type(leaf) for leaf in jax.tree.leaves(element.batch)}
-            return place(element)
+            return place(element, place_unit)
 
         monkeypatch.setattr(host_stage, "_place", counted)
 

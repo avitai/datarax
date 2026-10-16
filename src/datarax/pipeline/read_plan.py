@@ -209,7 +209,7 @@ def default_plan(path: HostReadPath, *, device_buffer: int) -> HostPlan:
 
     Args:
         path: Where the run is read; never processes, which need a budget.
-        device_buffer: ``d`` for the default device's platform.
+        device_buffer: ``d`` for the platform the run places on.
 
     Returns:
         The plan.

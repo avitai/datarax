@@ -24,10 +24,11 @@ shared memory with its provenance as plain values (:mod:`datarax.pipeline.host_w
 consumer checks every unit arrives in order.
 
 A batch's provenance comes beside it when asked. Units are read ahead of the consumer, which places
-them on the default device, uncommitted, so a jitted step taking them compiles once; nothing else
+them on the default device, uncommitted, so a jitted step taking them compiles once, or with the
+pipeline's ``sharding`` on its data mesh (:mod:`datarax.pipeline.placement`); nothing else
 transfers. Taking a unit first places units until the platform's depth wait beside it
-(:func:`default_device_buffer`: one on a GPU, none on the CPU and TPU), and ``jax.device_put``
-returns before its transfer completes, so a transfer overlaps the step before it. Where iteration
+(:func:`default_device_buffer`: one on a GPU, none on the CPU and TPU), and placement returns
+before its transfer completes, so a transfer overlaps the step before it. Where iteration
 stands (:class:`Cursor`) advances when the consumer takes a batch, never when a worker reads one,
 so the cursor names exactly the batches served whatever the workers have read ahead. One Grain
 iterator serves a run across calls; it is closed at the run's end, by ``close()``, and when
@@ -48,6 +49,7 @@ from typing import Any, cast
 import grain
 import jax
 import numpy as np
+from jax.sharding import NamedSharding
 
 from datarax.core import batch_ops
 from datarax.core.data_source import (
@@ -68,6 +70,7 @@ from datarax.core.spec import declared_spec, validate_batch, validate_device_dty
 from datarax.pipeline import host_workers, run_configuration as configuration
 from datarax.pipeline.epochs import EpochPlan, HostNaming, Run
 from datarax.pipeline.host_workers import JaxSettings
+from datarax.pipeline.placement import placement_platform, Placer, placer
 from datarax.pipeline.read_plan import (
     budget_plan,
     default_plan,
@@ -309,17 +312,22 @@ def _checker(source: DataSourceModule, batch_size: int) -> Callable[[Batch], Non
     return check
 
 
-def _place(element: HostElement) -> tuple[Batch, Provenance | None, tuple[int, int, int]]:
-    """The element's batch on the default device, uncommitted; provenance stays on the host."""
-    return jax.device_put(element.batch), element.provenance, element.after
+def _place(
+    element: HostElement, place_unit: Placer
+) -> tuple[Batch, Provenance | None, tuple[int, int, int]]:
+    """The element's batch placed by the run's placer; provenance stays on the host."""
+    return place_unit(element.batch), element.provenance, element.after
 
 
 type _PlacedElement = tuple[Batch, Provenance | None, tuple[int, int, int]]
 type _Placed = grain.DatasetIterator[_PlacedElement]
 
 
-def _placement_platform() -> str:
-    """The platform of the device a batch placed now lands on: the caller's default device's."""
+def _placement_platform(sharding: NamedSharding | None) -> str:
+    """The platform a batch placed now lands on: the sharding's, else the default device's."""
+    on_mesh = placement_platform(sharding)
+    if on_mesh is not None:
+        return on_mesh
     device = jax.config.jax_default_device
     if device is None:
         return jax.default_backend()
@@ -330,26 +338,28 @@ class _PlacedAhead(grain.IterDataset):
     """Host elements placed by the consumer, ``depth`` placed ahead of the one it takes.
 
     Flax's ``prefetch_to_device`` (``flax/jax_utils.py``, flax ``d1f0d69b``): a deque of placed
-    batches filled on the consumer's thread. ``jax.device_put`` returns before its transfer
+    batches filled on the consumer's thread. Placement returns before its transfer
     completes, so the transfers of the batches ahead overlap the step. Placing on the consumer
     keeps the caller's thread-local JAX settings (transfer guard, precision mode, default device,
     mesh), which another thread would not inherit.
     """
 
-    def __init__(self, parent: grain.IterDataset, depth: int) -> None:
+    def __init__(self, parent: grain.IterDataset, depth: int, place_unit: Placer) -> None:
         super().__init__(parent)
         self._depth = depth
+        self._place_unit = place_unit
 
     def __iter__(self) -> _PlacedAheadIterator:
-        return _PlacedAheadIterator(iter(self._parent), self._depth)
+        return _PlacedAheadIterator(iter(self._parent), self._depth, self._place_unit)
 
 
 class _PlacedAheadIterator(grain.DatasetIterator):
     """The deque of :class:`_PlacedAhead`: taking an element first places until ``depth`` wait."""
 
-    def __init__(self, parent: grain.DatasetIterator, depth: int) -> None:
+    def __init__(self, parent: grain.DatasetIterator, depth: int, place_unit: Placer) -> None:
         super().__init__(parent)
         self._depth = depth
+        self._place_unit = place_unit
         self._placed: collections.deque[_PlacedElement] = collections.deque()
         self._exhausted = False
         # An error met placing ahead, raised once the batches placed before it are taken.
@@ -359,7 +369,7 @@ class _PlacedAheadIterator(grain.DatasetIterator):
         """Place elements until ``depth`` wait beside the one about to be taken."""
         while len(self._placed) <= self._depth and not self._exhausted and self._failed is None:
             try:
-                self._placed.append(_place(next(self._parent)))
+                self._placed.append(_place(next(self._parent), self._place_unit))
             except StopIteration:
                 self._exhausted = True
             except Exception as error:  # noqa: BLE001 - raised after the batches placed before it
@@ -414,7 +424,7 @@ class HostStage:
         self._plans: dict[tuple[Any, ...], HostPlan] = {}
         self._plan: HostPlan | None = None
         # Placed batches staged on the device ahead of the one the consumer holds, or ``None``
-        # for the default device's platform's (:func:`default_device_buffer`). Internal.
+        # for the placement platform's (:func:`default_device_buffer`). Internal.
         self._device_buffer: int | None = None
         # The run's Grain iterator, in a list the run's finalizer empties, so at exit the
         # iterator is closed and released before the interpreter tears Grain's modules down.
@@ -449,11 +459,11 @@ class HostStage:
             self._finalizer()
         self._opened_for, self._finalizer, self._token = None, None, None
 
-    def _depth(self) -> int:
-        """Placed batches staged ahead of the one the consumer holds, on the default device."""
+    def _depth(self, sharding: NamedSharding | None) -> int:
+        """Placed batches staged ahead of the one the consumer holds, on its platform."""
         if self._device_buffer is not None:
             return self._device_buffer
-        return default_device_buffer(_placement_platform())
+        return default_device_buffer(_placement_platform(sharding))
 
     def plan(self, pipeline: Any, chunk: int | None = None) -> HostPlan:
         """How a run of the pipeline reads its units: threads or processes, and their buffers.
@@ -469,7 +479,7 @@ class HostStage:
         Returns:
             The plan.
         """
-        depth = self._depth()
+        depth = self._depth(pipeline.sharding)
         resources: HostResources | None = pipeline.host_resources
         source = pipeline.source
         shape = (id(source), pipeline.epoch_plan, pipeline.shuffle, chunk, depth, resources)
@@ -608,7 +618,9 @@ class HostStage:
         stream = cast(SliceableStreamRun, source)
         return stream.run_dataset(units, key, for_workers=True)
 
-    def _open(self, dataset: grain.IterDataset, options: tuple[Any, ...], depth: int) -> _RunToken:
+    def _open(
+        self, dataset: grain.IterDataset, options: tuple[Any, ...], depth: int, place_unit: Placer
+    ) -> _RunToken:
         """Start the run's iterator: units read ahead, placed by the consumer ``depth`` ahead.
 
         The run lives as long as its token: the pipelines it served and the iterators serving
@@ -620,11 +632,12 @@ class HostStage:
             dataset: The run's dataset of host elements.
             options: What the run was opened for, compared when a later call continues it.
             depth: Placed batches staged ahead of the one the consumer holds.
+            place_unit: Places each unit: on the default device, or on the pipeline's mesh.
 
         Returns:
             The run's token.
         """
-        self._run_iterator.append(iter(_PlacedAhead(dataset, depth)))
+        self._run_iterator.append(iter(_PlacedAhead(dataset, depth, place_unit)))
         self._opened_for = options
         token = _RunToken()
         self._token = weakref.ref(token)
@@ -667,7 +680,7 @@ class HostStage:
                 )
         # A run is read under the caller's JAX settings (precision and the PRNG settings, which
         # read threads and worker processes do not inherit) and by its plan, which holds its read
-        # options and its depth on the default device's platform; a change of any opens a new run.
+        # options and its depth on the placement's platform; a change of any opens a new run.
         settings = JaxSettings.current()
         reads = self.plan(pipeline, chunk)
         options = (
@@ -678,6 +691,7 @@ class HostStage:
             with_provenance,
             settings,
             reads,
+            pipeline.sharding,
         )
         cursor = self.cursor
         opened = (*options, cursor.epoch, cursor.position)
@@ -685,7 +699,9 @@ class HostStage:
         if token is None or self.iterator is None or self._opened_for != opened:
             self._end(_replaced_by(self._opened_for, opened))
             dataset = self._dataset(pipeline, chunk, with_provenance, reads, settings)
-            token = self._open(dataset, opened, reads.device_buffer)
+            token = self._open(
+                dataset, opened, reads.device_buffer, placer(pipeline.sharding, pipeline.batch_size)
+            )
         _RUN_HOLDERS[pipeline] = token
         return cast(
             Iterator[Batch] | Iterator[tuple[Batch, Provenance]],
@@ -1141,6 +1157,7 @@ _OPTION_NAMES = (
     "with_provenance",
     "jax_settings",
     "plan",
+    "sharding",
     "epoch",
     "position",
 )
