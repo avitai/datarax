@@ -286,6 +286,49 @@ source[3]  # {"x": np.int64(3)}: the record's numbers
 batch = source.get_batch(to_words(np.asarray([7, 2, 9])))  # a Batch of those records
 ```
 
+### Data larger than the page cache
+
+With `shuffle=True` each epoch is a global order: consecutive positions name unrelated records.
+A source held in memory does not mind. A source read from storage larger than the page cache
+does, because a memory map then fetches a device page for every record it names. On a local NVMe
+disk, a copy of 3 KB rows read this way served about 10,000 records a second on one thread and
+moved 20 times the bytes it used.
+
+`block_order` keeps each batch inside a few runs of consecutive records:
+
+```python
+from flax import nnx
+
+from datarax import BlockOrder, Pipeline
+
+pipeline = Pipeline(
+    source=source,  # an INDEXED source read from storage
+    stages=[],
+    batch_size=256,
+    rngs=nnx.Rngs(0),
+    shuffle=True,
+    block_order=BlockOrder(block_size=256, blocks_per_buffer=64),
+)
+```
+
+The records split into blocks of `block_size` consecutive records. Each epoch permutes the full
+blocks, groups them `blocks_per_buffer` to a buffer and shuffles each buffer's records, so a
+batch reads from the blocks of the buffer it falls in. This is CorgiPile's buffer order (arXiv
+2206.05830). With `blocks_per_buffer=1` a batch holds records of one or two blocks, so the same
+records share batches every epoch; more blocks per buffer mix better and keep more bytes
+resident.
+
+The order changes which batch a record lands in and nothing else. Every record is still visited
+once per epoch, a record's augmentation draws are keyed on its index, a resume is exact, and
+read threads and worker processes name the same records. A state saved under one order is
+refused by a pipeline built with another. With `host_resources`, one buffer's stored bytes are
+the budget's `O` term, and a budget too small for it is refused naming it. When `block_size`
+does not divide the length, the short final block stays in the epoch's last buffer.
+
+The block order applies to `INDEXED` sources: `StreamingDiskSource`, a
+[decoded copy](../sources/decoded_copy.md), `ArrayRecordSourceModule` and a mix of them. A
+stream already reads in its stored order, and a source in memory gains nothing from it.
+
 ## Best Practices for Data Sources
 
 When working with data sources:

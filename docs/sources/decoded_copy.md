@@ -73,6 +73,10 @@ column and refuses a copy whose bytes no longer give it (a full read).
   reader that already mapped the old files keeps reading them, and the rebuild writes new files.
 - A copy read cold from disk needs concurrent readers to keep a GPU fed: a pipeline over it with
   `host_resources` reads it on several threads.
+- A copy larger than the page cache, read in a shuffled order, costs a device page per record.
+  `Pipeline(..., shuffle=True, block_order=BlockOrder(...))` reads it a few blocks of consecutive
+  rows at a time
+  ([data larger than the page cache](../user_guide/data_sources.md#data-larger-than-the-page-cache)).
 
 ## Refusals
 
