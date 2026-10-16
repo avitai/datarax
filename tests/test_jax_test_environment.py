@@ -9,6 +9,7 @@ a fresh interpreter started with the result sees the devices it names.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,31 @@ def test_importing_the_environment_module_does_not_import_jax() -> None:
     )
 
     assert result.check().last_json() is False
+
+
+@pytest.mark.tfds
+@pytest.mark.skipif(
+    importlib.util.find_spec("tensorflow") is None,
+    reason="TensorFlow is not installed, so nothing in the process can import it",
+)
+@pytest.mark.parametrize(
+    ("first", "expected"), [("", False), ("import tensorflow; ", True)], ids=["conftest", "control"]
+)
+def test_the_suite_conftest_keeps_tensorflow_out_of_the_test_process(
+    first: str, expected: bool
+) -> None:
+    """TensorFlow in a JAX process breaks JAX's NCCL collectives, so a multi-GPU test run lacks it.
+
+    The control imports TensorFlow itself, showing the probe sees it when it is there.
+    """
+    result = run_python(
+        f"import json, sys; {first}import tests.conftest; "
+        "print(json.dumps('tensorflow' in sys.modules))",
+        timeout=300.0,
+        cwd=_REPO_ROOT,
+    )
+
+    assert result.check().last_json() is expected
 
 
 @pytest.mark.parametrize(("requested", "devices"), [("0", 1), ("2", 2), (None, 8)])

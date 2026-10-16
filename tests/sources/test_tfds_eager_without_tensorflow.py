@@ -1,10 +1,10 @@
 """The eager TFDS source keeps TensorFlow out of the process and the records off the device.
 
 TensorFlow in a JAX process breaks JAX's NCCL collectives, and on a GPU machine it takes most of
-the card's memory, so the process that trains never imports it. The test process itself imports
-TensorFlow (the suite's conftest configures it when installed), so each check here runs in a
-fresh interpreter, beside a positive control showing the same check sees TensorFlow when it is
-imported. Building the source places nothing on a device: the host columns are NumPy.
+the card's memory, so the process that trains never imports it. A test process holds whatever
+modules earlier tests imported, so each check here runs in a fresh interpreter, beside a positive
+control showing the same check sees TensorFlow when it is imported. Building the source places
+nothing on a device: the host columns are NumPy.
 """
 
 from __future__ import annotations
