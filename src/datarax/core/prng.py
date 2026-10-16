@@ -88,17 +88,20 @@ def per_record_keys(
 
 
 def host_device() -> SingleDeviceSharding:
-    """The CPU device, where the host stage names records and folds keys, as a placement.
+    """This process's CPU device, where the host stage names records and folds keys.
+
+    Under ``jax.distributed`` the CPU platform lists every process's devices, so the device is
+    taken from this process's own: its results read back on this host.
 
     Returns:
-        A sharding placing an array whole on the process's first CPU device.
+        A sharding placing an array whole on this process's first CPU device.
 
     Raises:
         RuntimeError: If JAX was started without its CPU platform (``JAX_PLATFORMS=cuda``), which
             the host stage computes on; the message names the setting that includes it.
     """
     try:
-        return SingleDeviceSharding(jax.devices("cpu")[0])
+        return SingleDeviceSharding(jax.local_devices(backend="cpu")[0])
     except RuntimeError as error:
         raise RuntimeError(
             "datarax names records and folds keys on the CPU device, which this process has "

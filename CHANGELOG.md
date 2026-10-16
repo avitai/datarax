@@ -873,6 +873,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The host stage runs in every process of a `jax.distributed` run. It named records and folded
+  keys on `jax.devices("cpu")[0]`, which lists every process's CPU devices there, so every
+  process computed on process 0's and any other process failed on its first batch ("Fetching
+  value for `jax.Array` that spans non-addressable ... devices"). It now uses this process's own
+  CPU device (`jax.local_devices(backend="cpu")[0]`).
 - Programs datarax compiles and caches for `step()`, sessions and `Pipeline.scan` no longer keep a
   dropped pipeline's columns, provenance or host stage alive. They were keyed by, and closed over,
   the graph definition of the first pipeline of each structure, which holds its host values; they
