@@ -38,9 +38,9 @@ empirical data, and explain why certain design choices were made.
    --------------------------------
    The benchmark loop has this structure:
 
-       for batch in pipeline:                    # (S) sequential
-           images = device_put(batch, sharding)  # (S) shard overhead
-           result = _workload(images)            # (P) parallel across N devices
+       for batch in pipeline:                    # (S) sequential; the pipeline
+                                                 #     places each batch (shard overhead)
+           result = _workload(batch["image"])    # (P) parallel across N devices
            synchronize result tree               # (S) sync barrier
 
    Amdahl's law: Speedup = 1 / (s + (1-s)/N), where s = sequential fraction.
@@ -53,7 +53,8 @@ empirical data, and explain why certain design choices were made.
 
    The sequential fraction comes from:
      - Pipeline iteration (Python host loop, Datarax DAG executor)
-     - `jax.device_put(..., sharding)` — splits + copies data
+     - the pipeline's placement of each batch (`Pipeline(sharding=...)`), which
+       splits and copies data
      - result synchronization — barrier after each batch
 
    With 32×32 images and 3 light iterations (original design), per-batch
@@ -160,6 +161,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from flax import nnx
+from jax.sharding import NamedSharding
 from substrax.mesh import DeviceMeshManager
 from substrax.spmd import create_data_parallel_sharding
 
@@ -194,13 +196,25 @@ def normalize(element, key=None):
     return element.update_data({"image": element.data["image"] / 255.0})
 
 
-def create_pipeline(data: dict, batch_size: int = 64):
-    """Create a standard image processing pipeline."""
+def create_pipeline(data: dict, batch_size: int = 64, sharding: NamedSharding | None = None):
+    """Create a standard image processing pipeline, its batches placed by ``sharding``.
+
+    ``drop_last`` keeps every timed batch full: a run's short final batch is placed replicated,
+    so each device would compute all of its rows, which is not the data-parallel step this
+    benchmark measures.
+    """
     source = MemorySource(MemorySourceConfig(), data=data)
     normalizer = ElementOperator(
         ElementOperatorConfig(stochastic=False), fn=normalize, rngs=nnx.Rngs(0)
     )
-    return Pipeline(source=source, stages=[normalizer], batch_size=batch_size, rngs=nnx.Rngs(0))
+    return Pipeline(
+        source=source,
+        stages=[normalizer],
+        batch_size=batch_size,
+        rngs=nnx.Rngs(0),
+        drop_last=True,
+        sharding=sharding,
+    )
 
 
 # ── Simulated workload ──────────────────────────────────────────────────────
@@ -269,10 +283,10 @@ def benchmark_single_device(data: dict, batch_size: int = 64) -> dict:
 def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dict:
     """Benchmark pipeline + sharded computation across N devices.
 
-    Uses a substrax data-parallel mesh and sharding to distribute batches, then runs
-    a jitted workload that executes in parallel across shards.
+    The pipeline places each batch on a substrax data-parallel mesh, so its
+    normalization and the jitted workload run on every device's share.
 
-    The loop structure — device_put → workload → block_until_ready — is
+    The loop structure (placed batch, workload, block_until_ready) is
     intentionally synchronous so we measure true per-batch wall time.
     In production training loops (see docstring point 4), jax.jit's async
     dispatch naturally overlaps compute with host-side data loading,
@@ -284,28 +298,26 @@ def benchmark_sharded(data: dict, num_devices: int, batch_size: int = 64) -> dic
 
     # Batch size must be divisible by device count for even sharding.
     effective_bs = (batch_size // num_devices) * num_devices
-    pipeline = create_pipeline(data, effective_bs)
+    pipeline = create_pipeline(data, effective_bs, sharding)
 
     # Warmup: JIT compilation happens on first call with each new input shape.
     # We run several batches to ensure compilation is complete and caches warm.
     # Ref: JAX docs/benchmarking.md — "first run includes compilation overhead"
     with jax.set_mesh(mesh):
         for i, batch in enumerate(pipeline):
-            images = jax.device_put(batch["image"], sharding)
-            jax.block_until_ready(_workload(images))
+            jax.block_until_ready(_workload(batch["image"]))
             if i >= 5:
                 break
 
     # Timed run.  Result synchronization is mandatory for accurate timing because
     # JAX uses async dispatch — without it we'd only measure dispatch overhead
     # (~269 µs) not actual compute time.  Ref: JAX docs/benchmarking.md
-    pipeline = create_pipeline(data, effective_bs)
+    pipeline = create_pipeline(data, effective_bs, sharding)
     total_samples = 0
     t0 = time.perf_counter()
     with jax.set_mesh(mesh):
         for batch in pipeline:
-            images = jax.device_put(batch["image"], sharding)
-            jax.block_until_ready(_workload(images))
+            jax.block_until_ready(_workload(batch["image"]))
             total_samples += batch["image"].shape[0]
     elapsed = time.perf_counter() - t0
 

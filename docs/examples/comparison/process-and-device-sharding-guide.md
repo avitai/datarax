@@ -6,7 +6,7 @@
 | **Runtime** | ~1 min (CPU or GPU) |
 | **Prerequisites** | [Randomness and Learnable Operators](randomness-and-learnable-operators-tutorial.md), [Sharding Guide](../advanced/distributed/sharding-guide.md) |
 | **Format** | Python + Jupyter |
-| **Devices** | Runs on one device; the mesh grows with the devices available |
+| **Devices** | Runs on 1, 2, 4 or 8 devices: the mesh takes every device, and its batches of 8 rows must split over them |
 
 ## Overview
 
@@ -36,7 +36,7 @@ runs the step under `jax.set_mesh`.
 | `ShardOptions(shard_index, shard_count)`; `ShardByJaxProcess()` fills both from `jax.process_index()` and `jax.process_count()` | `MemorySourceConfig(shard_id=k, num_workers=n)` |
 | Each process reads a contiguous range (`even_split`; the remainder goes to the first shards) | Each worker reads every `n`-th position, `[k::n]` of the global order |
 | A record's generator belongs to its draw index within the shard | A record's key belongs to its global index, the same on any split |
-| Batches are NumPy arrays; the last one may be short | Batches are JAX arrays of one fixed shape |
+| Batches are NumPy arrays; the last one may be short | Batches are JAX arrays; a run's final one may be short |
 | `place_batch_on_shards(batch, sharding)` under `jax.set_mesh(mesh)` | The same call |
 | `spmd_train_step(model, optimizer, loss_fn, batch)` inside `nnx.jit` | The same call |
 
@@ -169,7 +169,7 @@ Datarax workers partition the records: True
 A Datarax pipeline never pads a batch. When a process's share of the records is not a
 multiple of the batch size, the batch reaching the end of the epoch is completed from the
 head of the next epoch's order (or `drop_last=True` skips the records short of a full batch),
-and a session serving a fixed number of epochs ends with a short batch; the guide uses 64
+and a run of a fixed number of epochs ends with a short batch; the guide uses 64
 records, two processes and batches of 8, so every batch is full and every record is served
 once.
 
@@ -385,7 +385,7 @@ flowchart LR
 |---|---|---|
 | Host partition | `ShardOptions(shard_index, shard_count)`, contiguous ranges; `ShardByJaxProcess()` reads the JAX process | `MemorySourceConfig(shard_id, num_workers)`, every `n`-th record |
 | Randomness under a partition | Keyed to the draw index within the shard | Keyed to the global record index: the same on any split |
-| Batch a process yields | NumPy arrays, possibly a short last batch | JAX arrays of a fixed shape |
+| Batch a process yields | NumPy arrays, possibly a short last batch | JAX arrays, possibly a short final batch |
 | Device placement | `place_batch_on_shards` under `jax.set_mesh` | The same call |
 | Training step | `spmd_train_step` inside `nnx.jit` | The same call |
 

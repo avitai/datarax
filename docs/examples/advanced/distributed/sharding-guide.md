@@ -19,7 +19,7 @@ optimize throughput for distributed training, and handle common pitfalls.
 1. Design data parallelism strategies for different device topologies
 2. Implement efficient sharded batch distribution
 3. Profile and optimize distributed data loading
-4. Handle edge cases (uneven batches, device failures)
+4. Size a batch for the device count, and read an evaluation's short final batch
 5. Integrate sharded pipelines with distributed training
 
 ## Coming from PyTorch?
@@ -38,7 +38,7 @@ optimize throughput for distributed training, and handle common pitfalls.
 | TensorFlow | Datarax |
 |------------|---------|
 | `tf.distribute.MirroredStrategy` | `Mesh` with data axis |
-| `experimental_distribute_dataset` | `jax.device_put` with sharding |
+| `experimental_distribute_dataset` | `Pipeline(..., sharding=sharding)` |
 | `strategy.scope()` | `jax.set_mesh(mesh)` |
 | `tf.distribute.Strategy.run()` | `jax.jit` + sharding |
 
@@ -97,9 +97,10 @@ model_sharded = P(None, None, None, "model") # Model parallelism
 
 ## Part 2: Creating the Device Mesh
 
-The guide builds a **1D mesh** for pure data parallelism — all devices along a
-single `"data"` axis. This is what the script does (the output below is from a single-GPU run,
-so the script takes its single-device branch and builds no mesh):
+The guide builds a **1D mesh** for pure data parallelism, all devices along a single `"data"`
+axis. The terminal output on this page is from a run on two CPU devices
+(`XLA_FLAGS=--xla_force_host_platform_device_count=2`); on one device the script builds no mesh
+and its pipelines place batches on the default device:
 
 ```python
 # Device configuration
@@ -121,19 +122,18 @@ else:
 
 **Terminal Output:**
 ```
-Available devices: 1
-Device types: ['NVIDIA L40S']
+Available devices: 2
+Device types: ['cpu', 'cpu']
 
-Single device mode - will simulate sharding concepts
+Created mesh: OrderedDict({'data': 2}) with axis 'data'
 ```
 
 !!! note "Conceptual extension: 2D meshes"
     A **2D mesh** combines data and model parallelism for large models. This
-    guide does not use it — the snippet below is shown only to illustrate the
-    pattern:
+    guide does not use it; the snippet below only illustrates the pattern:
 
     ```python
-    # Conceptual only — not exercised by this guide
+    # Conceptual only, not exercised by this guide
     if len(devices) >= 4:
         mesh_2d = DeviceMeshManager.create_device_mesh({"data": 2, "model": 2}, devices)
     ```
@@ -141,108 +141,122 @@ Single device mode - will simulate sharding concepts
 ## Part 3: Sharded Batch Distribution
 
 substrax builds the data-parallel sharding: the first (batch) dimension of every array is split
-across the `"data"` axis and the rest is replicated:
+across the `"data"` axis and the rest is replicated. A pipeline's `sharding` names the rows of its
+batches only:
 
 ```python
-from substrax.spmd import create_data_parallel_sharding
-
-batch_sharding = create_data_parallel_sharding(mesh)
+batch_sharding = None if mesh is None else create_data_parallel_sharding(mesh)
 print(f"Batch sharding: {batch_sharding}")
 ```
 
-The pipeline itself is a standard Datarax pipeline with a preprocessing stage:
+**Terminal Output:**
+```
+Batch sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',), memory_kind=device)
+```
+
+The pipeline is a standard Datarax pipeline with a preprocessing stage. Its `sharding` places
+every batch on the mesh, so the preprocessing runs on each device's share:
 
 ```python
-BATCH_SIZE = 128  # Total batch size across all devices
+BATCH_SIZE = 128  # Total batch size across all devices; the device count must divide it
 NUM_SAMPLES = 2048
 
 
-def preprocess_image(element, key=None):
-    """Standard image preprocessing."""
-    del key
-    image = element.data["image"].astype(jnp.float32) / 255.0
-    return element.update_data({"image": image})
-
-
-def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES):
-    """Create CIFAR-10 data pipeline."""
+def create_pipeline(batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, sharding=batch_sharding):
+    """Create CIFAR-10 data pipeline, its batches placed by ``sharding``."""
     config = TFDSEagerConfig(
         name="cifar10",
         split=f"train[:{num_samples}]",
     )
+
     source = TFDSEagerSource(config)
+
     preprocessor = ElementOperator(
         ElementOperatorConfig(stochastic=False),
         fn=preprocess_image,
         rngs=nnx.Rngs(0),
     )
+
     return Pipeline(
         source=source,
         stages=[preprocessor],
         batch_size=batch_size,
         rngs=nnx.Rngs(0),
         shuffle=True,
+        sharding=sharding,
     )
 ```
 
-With a mesh, each batch is placed on it by applying the sharding to every array it contains;
-with a single device the script reports the unsharded batch:
+The first batch arrives placed on the mesh:
 
 ```python
 # Test distribution
-if mesh is not None:
-    test_batch = next(iter(pipeline))
-    with jax.set_mesh(mesh):
-        sharded_batch = place_batch_on_shards(test_batch, create_data_parallel_sharding(mesh))
-        print("\nDistributed batch:")
-        print(f"  Image shape: {sharded_batch['image'].shape}")
-        print(f"  Image sharding: {sharded_batch['image'].sharding.spec}")
-else:
-    test_batch = next(iter(pipeline))
-    print("\nSingle-device batch:")
-    print(f"  Image shape: {test_batch['image'].shape}")
+test_batch = next(iter(pipeline))
+print("\nDistributed batch:")
+print(f"  Image shape: {test_batch['image'].shape}")
+print(f"  Image sharding: {test_batch['image'].sharding}")
 ```
 
 **Terminal Output:**
 ```
-Single-device batch:
+Distributed batch:
   Image shape: (128, 32, 32, 3)
+  Image sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P('data',), memory_kind=device)
+```
+
+### Batch Size and the Final Batch
+
+A batch size the row axes cannot split is refused when the pipeline is built: a full batch that
+does not divide is a wrong batch size. An evaluation whose length the batch size does not divide
+ends on a short batch, which the pipeline places whole on every device, so every record is
+evaluated once with no padding:
+
+```python
+if mesh is not None:
+    try:
+        create_pipeline(batch_size=BATCH_SIZE + 1)
+    except ValueError as error:
+        print(f"Refused: {error}")
+
+evaluation = create_pipeline(num_samples=BATCH_SIZE * 2 + BATCH_SIZE // 2)
+final_batch = list(evaluation)[-1]
+print(f"Final batch: {final_batch['image'].shape[0]} rows")
+print(f"  Image sharding: {final_batch['image'].sharding}")
+```
+
+**Terminal Output:**
+```
+Refused: batch_size 129 does not split over P('data',) on mesh {'data': 2}: use a multiple of the devices on the row axes
+Final batch: 64 rows
+  Image sharding: NamedSharding(mesh=Mesh('data': 2, axis_types=(Auto,)), spec=P(), memory_kind=device)
 ```
 
 ## Part 4: Optimizing Throughput
 
 The guide benchmarks throughput across a sweep of batch sizes. Each run warms
-up once, then times how quickly sharded batches become ready:
+up once, then times how quickly the placed batches become ready:
 
 ```python
 def benchmark_pipeline(batch_size, num_batches=20, mesh=None):
     """Benchmark pipeline throughput."""
-    pipeline = create_pipeline(batch_size=batch_size, num_samples=batch_size * num_batches)
+    sharding = None if mesh is None else create_data_parallel_sharding(mesh)
+    pipeline = create_pipeline(
+        batch_size=batch_size, num_samples=batch_size * num_batches, sharding=sharding
+    )
 
     # Warmup
-    warmup_batch = next(iter(pipeline))
-    if mesh is not None:
-        sharding = create_data_parallel_sharding(mesh)
-        with jax.set_mesh(mesh):
-            _ = place_batch_on_shards(warmup_batch, sharding)
+    _ = next(iter(pipeline))["image"].block_until_ready()
 
     # Benchmark
-    pipeline = create_pipeline(batch_size=batch_size, num_samples=batch_size * num_batches)
+    pipeline = create_pipeline(
+        batch_size=batch_size, num_samples=batch_size * num_batches, sharding=sharding
+    )
 
     start = time.time()
     samples = 0
-
-    if mesh is not None:
-        sharding = create_data_parallel_sharding(mesh)
-        with jax.set_mesh(mesh):
-            for batch in pipeline:
-                sharded = place_batch_on_shards(batch, sharding)
-                _ = sharded["image"].block_until_ready()
-                samples += batch["image"].shape[0]
-    else:
-        for batch in pipeline:
-            _ = batch["image"].block_until_ready()
-            samples += batch["image"].shape[0]
+    for batch in pipeline:
+        _ = batch["image"].block_until_ready()
+        samples += batch["image"].shape[0]
 
     elapsed = time.time() - start
     return samples / elapsed
@@ -255,8 +269,7 @@ for bs in batch_sizes:
     print(f"  Batch size {bs}: {tp:.0f} samples/s")
 ```
 
-Throughput rises with batch size as the fixed per-batch distribution overhead is
-amortized across more samples:
+Throughput rises with batch size:
 
 ![Sharding Throughput Scaling](../../../assets/images/examples/dist-sharding-throughput-scaling.png)
 
@@ -301,11 +314,13 @@ total batch of 128.*
 
 ### Key Takeaways
 
-1. **Batch size**: Should be divisible by device count
+1. **Batch size**: Must split over the row axes, or the pipeline refuses it; an evaluation's
+   short final batch is placed whole on every device
 2. **Memory**: Sharding reduces per-device memory linearly
-3. **Overhead**: Distribution has fixed cost — larger batches amortize it
-4. **Mesh**: Build it with `DeviceMeshManager`, place batches with `place_batch_on_shards`,
-   and run the sharded loop under `jax.set_mesh(mesh)`
+3. **Overhead**: Distribution has fixed cost - larger batches amortize it
+4. **Mesh**: Build it with `DeviceMeshManager`, give the pipeline
+   `sharding=create_data_parallel_sharding(mesh)`, and run the sharded loop under
+   `jax.set_mesh(mesh)`
 5. **Fallback**: Code should handle single-device gracefully
 
 ## Next Steps
