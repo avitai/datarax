@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.block_order`: `BlockOrder(block_size, blocks_per_buffer)`, a block order of the
+  records (CorgiPile's buffer order, arXiv 2206.05830) for data read from storage larger than the
+  page cache, and `order_positions(positions, length, key, block)`, the one function applying an
+  order: sequential without a key, the global order with a key, the block order with both. It is
+  computed per position from the keyed cipher, stores no order, visits every record once per
+  epoch, and runs under `jit`, `vmap` and `scan`; the short final block stays in the last buffer.
 - `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
   and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
 - `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
