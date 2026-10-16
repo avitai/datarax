@@ -233,6 +233,7 @@ nav:
           - host_values: core/host_values.md
           - element_batch: core/element_batch.md
           - index_words: core/index_words.md
+          - block_order: core/block_order.md
           - batch_ops: core/batch_ops.md
           - state_keys: core/state_keys.md
           - maybe: core/maybe.md
