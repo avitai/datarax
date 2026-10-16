@@ -88,6 +88,19 @@ class TestWhereEachUnitIsPlaced:
         assert all(_leaf_shardings(unit) == {rows} for unit in units[:3])
         assert _leaf_shardings(units[3]) == {replicated}
 
+    def test_the_short_final_batch_holds_all_its_rows_on_every_device(self) -> None:
+        """The documented memory limit: up to N times a full batch's rows on each device."""
+        rows = _rows()
+        devices = rows.mesh.size
+
+        units = list(_pipeline(rows, length=3 * _BATCH + _BATCH - 1).raw_batches())
+
+        full_rows = {shard.data.shape[0] for shard in units[0]["value"].addressable_shards}
+        final_rows = {shard.data.shape[0] for shard in units[-1]["value"].addressable_shards}
+        assert full_rows == {_BATCH // devices}
+        assert final_rows == {_BATCH - 1}
+        assert _BATCH - 1 <= devices * (_BATCH // devices)
+
     def test_a_chunk_has_its_rows_on_the_axes_after_the_chunk_axis(self) -> None:
         rows = _rows()
 

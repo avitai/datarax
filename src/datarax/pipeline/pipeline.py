@@ -197,9 +197,12 @@ class Pipeline(nnx.Module):
             its data mesh: full batches with their rows on it and their batch-level state
             replicated, a chunk ``(K, B, ...)`` with its rows on the axes after the chunk axis,
             and a bounded run's short final batch replicated, so an evaluation covers every
-            record once without padding. ``None`` (the default) places on the default device,
-            uncommitted. The mesh is this process's devices; iteration places, so ``step()``,
-            ``scan`` and ``session()`` refuse a pipeline holding one.
+            record once without padding. That final batch holds all of its rows, up to
+            ``batch_size - 1``, on every device, against ``batch_size / N`` for a full batch on
+            ``N`` devices, so its step can need up to ``N`` times a full batch's per-device
+            memory. ``None`` (the default) places on the default device, uncommitted. The mesh
+            is this process's devices; iteration places, so ``step()``, ``scan`` and
+            ``session()`` refuse a pipeline holding one.
 
     Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
     ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so
