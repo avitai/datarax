@@ -43,8 +43,19 @@ def run_configuration(pipeline: Any) -> dict[str, Any]:
         "num_epochs": plan.num_epochs,
         "shuffled": bool(pipeline.shuffle),
         "seed": [int(word) for word in key_words(pipeline._epoch_key_base.get_value())],  # noqa: SLF001
-        "order": {"kind": "global"},
+        "order": _order(plan),
         "shard": shard_identity(pipeline.source),
+    }
+
+
+def _order(plan: EpochPlan) -> dict[str, Any]:
+    """The order a plan names its epochs in, as plain values: global, or a block order."""
+    if plan.block_order is None:
+        return {"kind": "global"}
+    return {
+        "kind": "block",
+        "block_size": plan.block_order.block_size,
+        "blocks_per_buffer": plan.block_order.blocks_per_buffer,
     }
 
 

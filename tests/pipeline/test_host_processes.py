@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from datarax.core.block_order import BlockOrder
 from datarax.core.config import OperatorConfig
 from datarax.core.data_source import DataSourceModule, HostRead
 from datarax.core.element_batch import Element
@@ -83,6 +84,7 @@ def _pipeline(
     num_epochs: int | None = 2,
     batch_size: int = _BATCH,
     stages: Sequence[nnx.Module] = (),
+    block_order: BlockOrder | None = None,
 ) -> Pipeline:
     return Pipeline(
         source=source,
@@ -93,6 +95,7 @@ def _pipeline(
         drop_last=drop_last,
         num_epochs=num_epochs,
         host_resources=resources(workers) if workers else None,
+        block_order=block_order,
     )
 
 
@@ -147,6 +150,14 @@ class TestTheStreamDoesNotDependOnTheWorkers:
         self, png_paths: list[str], workers: int, shuffle: bool, drop_last: bool
     ) -> None:
         _same_stream(lambda: png_source(png_paths), workers, shuffle=shuffle, drop_last=drop_last)
+
+    @pytest.mark.parametrize("workers", _COUNTS)
+    def test_a_block_order_serves_the_thread_stream(
+        self, png_paths: list[str], workers: int
+    ) -> None:
+        """Workers name their units from the plan, which carries the block order."""
+        order = BlockOrder(block_size=3, blocks_per_buffer=2)
+        _same_stream(lambda: png_source(png_paths), workers, block_order=order)
 
     @pytest.mark.parametrize("workers", _COUNTS)
     def test_chunks_reshaped_in_the_worker(
@@ -297,6 +308,21 @@ class TestExactResume:
         resumed.set_state(state)
         tail = stream_of(resumed.raw_batches())
         assert stream_of(iter(head)) + tail == whole
+        resumed.close()
+
+    def test_under_a_block_order_a_resume_across_worker_counts_is_exact(
+        self, png_paths: list[str]
+    ) -> None:
+        order = BlockOrder(block_size=3, blocks_per_buffer=2)
+        whole = stream_of(_pipeline(png_source(png_paths), block_order=order).raw_batches())
+        pipe = _pipeline(png_source(png_paths), workers=2, block_order=order)
+        batches = iter(pipe.raw_batches())
+        head = [next(batches) for _ in range(3)]
+        state = pipe.get_state()
+        pipe.close()
+        resumed = _pipeline(png_source(png_paths), workers=_SECOND, block_order=order)
+        resumed.set_state(state)
+        assert stream_of(iter(head)) + stream_of(resumed.raw_batches()) == whole
         resumed.close()
 
     def test_a_resume_from_threads_to_processes_and_back(self, png_paths: list[str]) -> None:
