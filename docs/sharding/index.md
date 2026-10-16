@@ -1,37 +1,67 @@
 # Sharding
 
-Datarax slices data for the current JAX process. Placing batches on a device mesh, naming mesh
-axes and partitioning parameters come from substrax and Flax NNX.
+Datarax slices data for the current JAX process, and a pipeline given a `sharding` places its
+batches on that data mesh. Building meshes, naming mesh axes, placing other arrays and
+partitioning parameters come from substrax and Flax NNX.
 
 | Need | API |
 |------|-----|
 | Slice records for the current JAX process | `datarax.sharding.JaxProcessSharderModule` |
 | A data-parallel mesh and its batch sharding | `substrax.mesh.DeviceMeshManager`, `substrax.spmd.create_data_parallel_sharding` |
-| Place a batch on the mesh | `substrax.spmd.place_batch_on_shards` |
+| Place a pipeline's batches on the mesh | `Pipeline(..., sharding=create_data_parallel_sharding(mesh))` |
+| Place another batch or array on the mesh | `substrax.spmd.place_batch_on_shards` |
 | Map logical axis names to mesh axes | `substrax.mesh.MeshRules`, `substrax.mesh.partition_spec_for_names` |
 | Apply a function to each shard | `flax.nnx.shard_map` |
 | Create a parameter with a partitioning annotation | `flax.nnx.with_partitioning` |
 
 ## Place Pipeline Batches on a Mesh
 
-`place_batch_on_shards` hands every array leaf of a batch to one
-`jax.make_array_from_process_local_data` call. On one process that is a single batched
-transfer; on several, each process passes the batch it loaded and jax assembles the global
-batch. The batch size must be a multiple of the number of devices on the `data` axis.
+Give the pipeline the sharding of a batch's rows. Iteration (`for batch in pipeline` and
+`pipeline.raw_batches()`) then places every batch on the mesh as it serves it:
 
 ```python
 import jax
+from flax import nnx
 from substrax.mesh import DeviceMeshManager
-from substrax.spmd import create_data_parallel_sharding, place_batch_on_shards
+from substrax.spmd import create_data_parallel_sharding
+
+from datarax import Pipeline
 
 mesh = DeviceMeshManager.create_data_parallel_mesh()
-sharding = create_data_parallel_sharding(mesh)
+pipeline = Pipeline(
+    source=source,
+    stages=stages,
+    batch_size=256,
+    rngs=nnx.Rngs(0),
+    shuffle=True,
+    sharding=create_data_parallel_sharding(mesh),
+)
 
 with jax.set_mesh(mesh):
     for batch in pipeline:
-        batch = place_batch_on_shards(batch, sharding)
         loss = train_step(model, optimizer, batch)
 ```
+
+- A full batch has its rows on the sharding and its batch-level state (MixUp's `lam`)
+  replicated. A `raw_batches(chunk=K)` chunk `(K, B, ...)` has its rows on the axes after the
+  chunk axis, `P(None, "data")`.
+- A run bounded by `num_epochs` with `drop_last=False` ends on a short batch, which the data
+  axis cannot split. The pipeline places it replicated, so an evaluation covers every record
+  once with no padding row. Its step compiles once more, once per process, never per
+  evaluation.
+- The batch size must split over the sharding's row axes; one that does not is refused when the
+  pipeline is built.
+- The mesh's axes must be `AxisType.Auto`. `DeviceMeshManager` builds Auto axes; `jax.make_mesh`
+  on jax 0.11 builds Explicit ones unless given `axis_types`. On Explicit axes an operator that
+  reads another record (MixUp, CutMix) must name the sharding of what it gathers, which
+  datarax's operators do not, so such a mesh is refused.
+- The mesh is this process's devices. A mesh spanning several processes is refused: each
+  process would place a whole batch of the same records as its slice.
+- `step()`, `scan` and `session()` serve batches through the compiled step, which places nothing
+  on a mesh, so they refuse a pipeline holding a sharding.
+
+`place_batch_on_shards` places any other batch or array: every array leaf goes to one
+`jax.make_array_from_process_local_data` call, on one process a single batched transfer.
 
 ## Slice Data per Process
 
