@@ -30,6 +30,7 @@ import numpy as np
 from flax import nnx
 from jax.typing import ArrayLike
 
+from datarax.core.block_order import BlockOrder
 from datarax.core.data_source import DataSourceModule
 from datarax.core.index_words import is_word_start, split_constant, subtract, to_words
 from datarax.core.prng import host_device, NAMING_PRNG_IMPL
@@ -48,20 +49,25 @@ class EpochPlan:
         drop_last: Whether an epoch's records short of a full batch are skipped, rather
             than completed from the next epoch.
         num_epochs: Epochs a session serves, or ``None`` for a session that never stops.
+        block_order: The block order an epoch's records are named in when the pipeline
+            shuffles (:class:`~datarax.core.block_order.BlockOrder`), or ``None`` for the
+            global order.
     """
 
     length: int | None
     batch_size: int
     drop_last: bool
     num_epochs: int | None
+    block_order: BlockOrder | None = None
 
     def __post_init__(self) -> None:
         """Refuse a plan no pipeline can serve.
 
         Raises:
             ValueError: If ``batch_size`` is not positive, ``num_epochs`` is neither
-                ``None`` nor at least 1, the source has no records, or ``drop_last``
-                skips every record because a batch is larger than an epoch.
+                ``None`` nor at least 1, the source has no records, ``drop_last``
+                skips every record because a batch is larger than an epoch, or a block order
+                is given for a source without a length.
         """
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be at least 1; got {self.batch_size}")
@@ -71,6 +77,10 @@ class EpochPlan:
             )
         if self.length == 0:
             raise ValueError("the source has no records, so no batch can be served")
+        if self.block_order is not None and self.length is None:
+            raise ValueError(
+                "a block order orders an epoch of a source with a length; this source has none"
+            )
         if self.drop_last and self.length is not None and self.batch_size > self.length:
             raise ValueError(
                 f"drop_last needs batch_size <= len(source), or every record is skipped; got "
@@ -314,7 +324,8 @@ def batch_records(
     first from ``start``, the rest from their heads), and each row takes its own epoch's name: no
     conditional, one batched index computation, the same program for every batch, and index
     arrays of O(``size``) per epoch touched. Epoch ``e`` is ordered by
-    ``fold_in(wrap_key_data(key_base, impl=NAMING_PRNG_IMPL), e)``, or sequentially without a key.
+    ``fold_in(wrap_key_data(key_base, impl=NAMING_PRNG_IMPL), e)`` in the plan's block order,
+    if it has one, or sequentially without a key.
     Traceable; the source is read for its order only, never its records.
 
     Args:
@@ -339,7 +350,9 @@ def batch_records(
                 jax.random.wrap_key_data(jnp.asarray(key_base), impl=NAMING_PRNG_IMPL), epoch_of
             )
         )
-        return jnp.asarray(source.record_indices_at(first, size, key), jnp.uint32)
+        return jnp.asarray(
+            source.record_indices_at(first, size, key, block=plan.block_order), jnp.uint32
+        )
 
     if not plan.crosses:
         return Records(names(jnp.asarray(start), epoch), jnp.full((size,), epoch, jnp.int32))

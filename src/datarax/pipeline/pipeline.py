@@ -78,6 +78,7 @@ from flax import nnx
 from substrax.typing import CheckpointState
 
 from datarax.core import batch_ops
+from datarax.core.block_order import BlockOrder
 from datarax.core.data_source import (
     DataSourceModule,
     known_length,
@@ -115,6 +116,34 @@ _SCAN_BODIES: weakref.WeakKeyDictionary[Pipeline, dict[tuple[Any, ...], Callable
 )
 
 
+def _check_block_order(
+    source: DataSourceModule, *, shuffle: bool, block_order: BlockOrder | None
+) -> None:
+    """Refuse a block order the pipeline cannot name an epoch in.
+
+    Args:
+        source: The pipeline's source.
+        shuffle: Whether the pipeline shuffles.
+        block_order: The block order asked for, or ``None``.
+
+    Raises:
+        ValueError: If a block order is given without ``shuffle``, or for a source that is not
+            ``INDEXED``, whose records arrive in its own order.
+    """
+    if block_order is None:
+        return
+    if not shuffle:
+        raise ValueError(
+            "block_order orders a shuffled epoch, and this pipeline does not shuffle: build it "
+            "with shuffle=True, or without block_order for the sequential order"
+        )
+    if source.record_identity is not RecordIdentity.INDEXED:
+        raise ValueError(
+            f"block_order orders an INDEXED source's records; {type(source).__name__} is "
+            f"{source.record_identity.name}, whose records arrive in its own order"
+        )
+
+
 class Pipeline(nnx.Module):
     """JAX-native data pipeline with scan-based epoch iteration.
 
@@ -149,6 +178,10 @@ class Pipeline(nnx.Module):
             GIL-free read on up to four threads, 16 units ahead; without it, one read thread
             two units ahead, which can leave a fast train step waiting (see :attr:`host_plan`).
             No default budget: the training process knows its share.
+        block_order: With ``shuffle=True``, a :class:`~datarax.core.block_order.BlockOrder`
+            in which each epoch's records are named: a batch reads a few blocks of
+            consecutive records, for an ``INDEXED`` source read from storage larger than the
+            page cache. ``None`` (the default) is the global order.
 
     Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
     ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so
@@ -175,6 +208,7 @@ class Pipeline(nnx.Module):
         drop_last: bool = False,
         num_epochs: int | None = 1,
         host_resources: HostResources | None = None,
+        block_order: BlockOrder | None = None,
     ) -> None:
         """Initialize the module.
 
@@ -191,21 +225,27 @@ class Pipeline(nnx.Module):
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream that never stops.
             host_resources: The host stage's RAM budget and cap, or ``None`` (see the class
                 docstring).
+            block_order: The block order a shuffled epoch is named in, or ``None`` for the
+                global order (see the class docstring).
 
         Raises:
             ValueError: If ``num_epochs`` is neither ``None`` nor at least 1, the source
-                has no records, or ``drop_last`` is set with a ``batch_size`` above the
-                source's length, which serves no batch.
+                has no records, ``drop_last`` is set with a ``batch_size`` above the
+                source's length, which serves no batch, or a block order is given without
+                ``shuffle`` or for a source that is not ``INDEXED`` or has no length.
         """
         super().__init__()
+        _check_block_order(source, shuffle=shuffle, block_order=block_order)
         # Refuses an epoch rule no pipeline can serve.
         EpochPlan(
             length=known_length(source),
             batch_size=batch_size,
             drop_last=drop_last,
             num_epochs=num_epochs,
+            block_order=block_order,
         )
         self.shuffle = shuffle
+        self.block_order = block_order
         self.drop_last = drop_last
         self.num_epochs = num_epochs
         self.host_resources = host_resources
@@ -270,6 +310,7 @@ class Pipeline(nnx.Module):
         drop_last: bool = False,
         num_epochs: int | None = 1,
         host_resources: HostResources | None = None,
+        block_order: BlockOrder | None = None,
     ) -> Pipeline:
         """Build a Pipeline whose stages execute in user-specified topological order.
 
@@ -290,6 +331,8 @@ class Pipeline(nnx.Module):
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
             host_resources: The host stage's RAM budget and cap, or ``None`` (see the class
                 docstring).
+            block_order: The block order a shuffled epoch is named in, or ``None`` (see the
+                class docstring).
 
         Raises:
             ValueError: If ``edges`` describes a cycle, references
@@ -309,6 +352,7 @@ class Pipeline(nnx.Module):
             drop_last=drop_last,
             num_epochs=num_epochs,
             host_resources=host_resources,
+            block_order=block_order,
         )
 
     @classmethod
@@ -321,6 +365,7 @@ class Pipeline(nnx.Module):
         shuffle: bool = False,
         drop_last: bool = False,
         num_epochs: int | None = 1,
+        block_order: BlockOrder | None = None,
     ) -> Pipeline:
         """Build a Pipeline over in-memory arrays, with no stages.
 
@@ -337,6 +382,8 @@ class Pipeline(nnx.Module):
             shuffle: Whether each epoch serves the records in a new random order.
             drop_last: The last-batch rule (see the class docstring).
             num_epochs: Epochs ``iter`` serves, or ``None`` for a stream.
+            block_order: The block order a shuffled epoch is named in, or ``None`` (see the
+                class docstring).
 
         Raises:
             ValueError: If the arrays differ in length or hold no records, or the epoch
@@ -353,6 +400,7 @@ class Pipeline(nnx.Module):
             shuffle=shuffle,
             drop_last=drop_last,
             num_epochs=num_epochs,
+            block_order=block_order,
         )
 
     @property
@@ -434,6 +482,7 @@ class Pipeline(nnx.Module):
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_epochs=self.num_epochs,
+            block_order=self.block_order,
         )
 
     def __len__(self) -> int:
