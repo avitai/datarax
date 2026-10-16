@@ -63,7 +63,7 @@ def resolve_wrapped_indices(
     ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
     logical positions ``start + arange(size)`` wrap at its own length. The same arguments
     always yield the same indices. Positions and indices are 64-bit, exact for every length up
-    to ``2**64 - 1`` (:func:`~datarax.core.index_words.wrapped_positions`).
+    to ``2**63`` (:func:`~datarax.core.index_words.wrapped_positions`).
 
     Args:
         start: Starting logical position: a Python int of any size, its two uint32 words

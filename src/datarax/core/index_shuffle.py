@@ -162,7 +162,7 @@ def shuffle_positions(positions: jax.Array, length: int, key: jax.Array) -> jax.
     Args:
         positions: uint32 ``(..., 2)`` positions in ``[0, length)``, each a 64-bit integer as
             its words ``(hi, lo)`` (:func:`~datarax.core.index_words.to_words`).
-        length: Number of records the order covers, in ``[1, 2**64 - 1]``.
+        length: Number of records the order covers, in ``[1, 2**63]``.
         key: PRNG key selecting the order.
 
     Returns:
@@ -288,7 +288,7 @@ def shuffle_positions_host(  # noqa: DOC502
     Args:
         positions: Nonnegative integer positions in ``[0, length)``, any shape: Python ints of
             any size or a NumPy integer array.
-        length: Number of records the order covers, in ``[1, 2**64 - 1]``.
+        length: Number of records the order covers, in ``[1, 2**63]``.
         seed: Integer seed in ``[0, 2**32)``.
         epoch: Epoch whose order is served.
 
@@ -347,7 +347,7 @@ def index_shuffle(index: int, seed: int, num_elements: int, epoch: int = 0) -> i
     Args:
         index: Position in ``[0, num_elements)``.
         seed: Integer seed in ``[0, 2**32)``.
-        num_elements: Number of records the order covers, at most ``2**64 - 1``.
+        num_elements: Number of records the order covers, at most ``2**63``.
         epoch: Epoch whose order is served.
 
     Returns:
