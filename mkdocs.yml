@@ -214,6 +214,7 @@ nav:
               - Interleaved Tutorial: examples/advanced/multi_source/interleaved-tutorial.md
           - Performance:
               - Optimization Guide: examples/advanced/performance/optimization-guide.md
+              - Block Order Guide: examples/advanced/performance/block-order-guide.md
           - Sampling:
               - Sampling Tutorial: examples/advanced/sampling/sampling-tutorial.md
           - Training:

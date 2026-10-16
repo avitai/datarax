@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from its files' bytes per record, an eager source 0, a mix the sum of its children's), and a
   budget that cannot hold them is refused naming `O`. A block order without `shuffle`, over a
   stream or for a source without a length is refused.
+- Example `examples/advanced/performance/02_block_order_guide.py` (docs page "Block Order
+  Guide"): CorgiPile's CIFAR-10 experiment (ResNet-18 on records stored in label order) in four
+  orders, none, global, one block per buffer and `BlockOrder(100, 50)`, and a cold read of a
+  tiled copy in the global and block orders.
 - `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
   and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
 - `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
