@@ -250,6 +250,14 @@ class TestRefusals:
         assert pipe.epoch_plan.block_order == _ORDER
 
 
+def test_the_order_is_exported_beside_the_pipeline() -> None:
+    """A user builds ``Pipeline(block_order=...)`` from the package's top level."""
+    import datarax  # noqa: PLC0415 - the package's own namespace is what is checked
+
+    assert datarax.BlockOrder is BlockOrder
+    assert "BlockOrder" in datarax.__all__
+
+
 class TestCompiles:
     def test_pipelines_built_alike_compile_the_block_naming_once(self) -> None:
         """One naming program per structure and plan; the global order's plan is another."""

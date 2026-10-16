@@ -13,6 +13,7 @@ from datarax.control.prefetcher import prefetch_to_device
 
 # Core modules
 from datarax.core.batcher import BatcherModule
+from datarax.core.block_order import BlockOrder
 from datarax.core.data_source import DataSourceModule
 
 # Record and batch types
@@ -54,8 +55,9 @@ __all__ = [
     "DataSourceModule",
     "OperatorModule",
     "SamplerModule",
-    # Pipeline (linear stages + Pipeline.from_dag for branching) and its host stage's budget
+    # Pipeline (linear stages + Pipeline.from_dag for branching), its order and its budget
     "Pipeline",
+    "BlockOrder",
     "HostResources",
     # Host-to-device prefetching
     "prefetch_to_device",
