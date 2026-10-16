@@ -253,6 +253,34 @@ final_carry, outputs = pipeline.scan(
 The whole epoch compiles as a single XLA graph; per-step Python
 overhead is eliminated and gradients flow through the data path.
 
+## Scanning chunks of `raw_batches`, the final batch included
+
+`pipeline.raw_batches(chunk=K)` serves `(K, B, ...)` chunks while `K` full batches remain, then
+the remaining batches one at a time, a bounded run's short final batch last. Scan your step over
+each chunk and call the same step on each single batch, and an evaluation whose length the batch
+size does not divide covers every record once, with no padding:
+
+```python
+@jax.jit
+def scan_chunk(total, chunk):
+    return jax.lax.scan(evaluate_step, total, chunk)
+
+
+evaluate_step_jit = jax.jit(evaluate_step)
+
+total = initial_total
+for unit in pipeline.raw_batches(chunk=8):
+    if unit.indices.ndim == 3:  # a chunk: (K, B, 2) record indices
+        total, _ = scan_chunk(total, unit)
+    else:  # a single batch: a full one or the short final one
+        total, _ = evaluate_step_jit(total, unit)
+```
+
+The first evaluation compiles one program per chunk shape and one per single shape (a full batch
+and the short final one); later evaluations compile nothing. With a `sharding`, chunks arrive
+with their rows on the axes after the chunk axis and the short final batch replicated
+([Sharding](../sharding/index.md#place-pipeline-batches-on-a-mesh)).
+
 ## Stage types
 
 Any `nnx.Module` whose `__call__(batch) -> batch` transforms the

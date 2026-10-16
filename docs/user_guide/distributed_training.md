@@ -242,11 +242,16 @@ for batch in prefetch_to_device(pipeline, size=2):
    reduced = reduce_mean_collective(values, axis_name="batch")
    ```
 
-4. **Shard data correctly** to match the device arrangement:
+4. **Shard data correctly** to match the device arrangement. A datarax pipeline places its own
+   batches when given the sharding, and places a bounded run's short final batch replicated, so
+   an evaluation needs no padding
+   ([Sharding](../sharding/index.md#place-pipeline-batches-on-a-mesh)):
    ```python
    mesh = DeviceMeshManager.create_data_parallel_mesh()
    sharding = create_data_parallel_sharding(mesh)
-   sharded_batch = place_batch_on_shards(batch, sharding)
+   pipeline = Pipeline(source=source, stages=stages, batch_size=256, rngs=nnx.Rngs(0),
+                       sharding=sharding)
+   # any other batch: place_batch_on_shards(batch, sharding)
    ```
 
 5. **Use SPMD metric reductions for accuracy** when reporting metrics under
