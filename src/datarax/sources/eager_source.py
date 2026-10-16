@@ -45,7 +45,6 @@ from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
 from datarax.sources._field_paths import field_name, field_names
 from datarax.sources._index_validation import validate_index_batch
-from datarax.sources.source_ops import resolve_wrapped_indices
 
 
 def is_array_leaf(value: Any) -> bool:
@@ -517,26 +516,6 @@ class EagerSource(DataSourceModule):
         if not held:
             return (NO_PROVENANCE,) * len(rows)
         return tuple(held[int(row)] for row in rows)
-
-    def record_indices_at(
-        self,
-        start: int | ArrayLike,
-        size: int,
-        key: jax.Array | None = None,
-    ) -> jax.Array:
-        """Return the index of each record at positions ``start .. start + size``.
-
-        Args:
-            start: Starting position: a Python int, its two uint32 words ``(hi, lo)``, or a
-                traced int32 ``jax.Array`` (see
-                :func:`~datarax.core.index_words.wrapped_positions`).
-            size: Number of records (Python int).
-            key: The key selecting the order, or ``None`` for the sequential order.
-
-        Returns:
-            uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
-        """
-        return resolve_wrapped_indices(start, size, self.length, key)
 
     def device_columns(self) -> PyTree:
         """The columns' device copy, for a caller's transform around :meth:`get_records`.

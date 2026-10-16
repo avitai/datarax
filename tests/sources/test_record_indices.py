@@ -140,6 +140,17 @@ class TestEverySource:
         if name != "mixed":  # a mixed index is an offset into the concatenated sources
             np.testing.assert_array_equal(served, from_words(indices).astype(np.float32))
 
+    @pytest.mark.parametrize("keyed", [False, True])
+    @pytest.mark.parametrize("start", [0, 7, 23, jnp.int32(9)], ids=["0", "7", "wraps", "traced"])
+    def test_an_eager_source_names_as_the_default(
+        self, keyed: bool, start: int | jax.Array
+    ) -> None:
+        """An in-memory source's order is the default's: positions wrapped, then the key's order."""
+        key = jax.random.key(7) if keyed else None
+        np.testing.assert_array_equal(
+            _Eager(10).record_indices_at(start, 6, key), _Sized(10).record_indices_at(start, 6, key)
+        )
+
     def test_a_source_without_a_length_names_records_by_position(self) -> None:
         start = (1 << 32) - 2
         np.testing.assert_array_equal(
