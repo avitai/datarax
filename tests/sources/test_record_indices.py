@@ -18,10 +18,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from datarax.core.block_order import BlockOrder, order_positions
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import DataSourceModule, known_length, RecordIdentity
 from datarax.core.index_shuffle import shuffle_positions_host
-from datarax.core.index_words import from_words, MAX_RECORDS, to_words
+from datarax.core.index_words import from_words, MAX_RECORDS, to_words, wrapped_positions
 from datarax.pipeline.epochs import EpochPlan
 from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -339,3 +340,102 @@ class TestWordStart:
         _, named = jax.lax.scan(body, None, starts)
         for step, start in enumerate(range(0, 8, 2)):
             np.testing.assert_array_equal(named[step], source.record_indices_at(start, 3, key))
+
+
+_BLOCKS = BlockOrder(block_size=3, blocks_per_buffer=2)
+"""Blocks of 3 records, 2 to a buffer: the sources above hold 10 to 16 records, so every order
+has full buffers, a short last buffer and a short final block."""
+
+
+class TestBlockOrder:
+    """Every source names a block order's records: its positions, ordered by blocks.
+
+    The pipeline passes the block order beside its epoch key; a source applies it exactly where it
+    applies the key's global order, to the same positions.
+    """
+
+    @pytest.mark.parametrize("name", ["default", "memory", "eager", "disk"])
+    @pytest.mark.parametrize("start", [0, 4, 9, jnp.int32(5)], ids=["0", "4", "wraps", "traced"])
+    def test_a_source_names_the_block_order_of_its_positions(
+        self, tmp_path: Path, name: str, start: int | jax.Array
+    ) -> None:
+        source = _sources(tmp_path)[name]
+        length = known_length(source)
+        assert length is not None
+        key = jax.random.key(21)
+        expected = order_positions(wrapped_positions(start, 8, length), length, key, _BLOCKS)
+        np.testing.assert_array_equal(
+            source.record_indices_at(start, 8, key, block=_BLOCKS), expected
+        )
+
+    @pytest.mark.parametrize(("workers", "shard"), [(3, 1), (2, 0)])
+    def test_a_worker_s_share_is_ordered_within_the_whole_order(
+        self, workers: int, shard: int
+    ) -> None:
+        """A worker's positions are its stride of the order's positions, ordered by blocks."""
+        source = _memory(10, num_workers=workers, shard_id=shard)
+        key = jax.random.key(22)
+        positions = jnp.asarray(to_words(_reference(1, 6, 10, workers=workers, shard=shard)))
+        np.testing.assert_array_equal(
+            source.record_indices_at(1, 6, key, block=_BLOCKS),
+            order_positions(positions, 10, key, _BLOCKS),
+        )
+
+    def test_without_a_block_order_a_source_names_the_global_order(self, tmp_path: Path) -> None:
+        source = _sources(tmp_path)["memory"]
+        key = jax.random.key(23)
+        np.testing.assert_array_equal(
+            source.record_indices_at(2, 6, key, block=None), source.record_indices_at(2, 6, key)
+        )
+
+    @pytest.mark.parametrize("name", ["default", "memory", "eager", "mixed", "disk"])
+    def test_a_block_order_without_a_key_is_refused(self, tmp_path: Path, name: str) -> None:
+        with pytest.raises(ValueError, match="key"):
+            _sources(tmp_path)[name].record_indices_at(0, 4, None, block=_BLOCKS)
+
+    def test_a_source_without_a_length_refuses_a_block_order(self) -> None:
+        with pytest.raises(ValueError, match="length"):
+            _Unsized().record_indices_at(0, 4, jax.random.key(0), block=_BLOCKS)
+
+    @pytest.mark.parametrize("name", ["default", "memory", "eager", "mixed", "disk"])
+    def test_under_jit_a_word_start_names_what_an_integer_start_names(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        source = _sources(tmp_path)[name]
+        named = jax.jit(lambda start, key: source.record_indices_at(start, 5, key, block=_BLOCKS))
+        key = jax.random.key(24)
+        for start in (0, 3, 7):
+            np.testing.assert_array_equal(
+                named(jnp.asarray(to_words(start)), key),
+                source.record_indices_at(start, 5, key, block=_BLOCKS),
+            )
+
+    @pytest.mark.parametrize("name", ["default", "memory", "mixed"])
+    def test_under_vmap_over_keys_each_key_names_its_block_order(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        source = _sources(tmp_path)[name]
+        keys = jnp.stack([jax.random.key(seed) for seed in range(4)])
+        start = jnp.asarray(to_words(3))
+        named = jax.vmap(lambda key: source.record_indices_at(start, 5, key, block=_BLOCKS))(keys)
+        for row, seed in enumerate(range(4)):
+            np.testing.assert_array_equal(
+                named[row], source.record_indices_at(3, 5, jax.random.key(seed), block=_BLOCKS)
+            )
+
+    @pytest.mark.parametrize("name", ["default", "memory", "mixed"])
+    def test_under_scan_over_word_starts_each_step_names_its_batch(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        source = _sources(tmp_path)[name]
+        key = jax.random.key(25)
+        starts = jnp.asarray(to_words(np.arange(0, 8, 2, dtype=np.uint64)))
+
+        def body(carry: None, start: jax.Array) -> tuple[None, jax.Array]:
+            return carry, source.record_indices_at(start, 3, key, block=_BLOCKS)
+
+        _, named = jax.lax.scan(body, None, starts)
+        for step, start in enumerate(range(0, 8, 2)):
+            np.testing.assert_array_equal(
+                named[step], source.record_indices_at(start, 3, key, block=_BLOCKS)
+            )

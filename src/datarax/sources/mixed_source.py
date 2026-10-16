@@ -33,6 +33,7 @@ from jax.typing import ArrayLike
 
 from datarax.config.registry import register_component
 from datarax.core import batch_ops
+from datarax.core.block_order import BlockOrder
 from datarax.core.config import StructuralConfig
 from datarax.core.data_source import (
     DataSourceModule,
@@ -732,22 +733,27 @@ class MixDataSourcesNode(DataSourceModule):
         start: int | ArrayLike,
         size: int,
         key: jax.Array | None = None,
+        *,
+        block: BlockOrder | None = None,
     ) -> jax.Array:
         """Name the records at mix positions ``start .. start + size`` of an epoch.
 
         Grain's selection gives each position's child and the child's position there. A child's
         positions in a run of the mix are consecutive, so each child names its whole window of
         ``size`` positions with its own ``record_indices_at``, keyed ``fold_in(key, c)`` when a
-        key is given and sequential otherwise, and each row takes its child's name for its
-        position. The program is the same for every start. Positions wrap at the epoch's length;
-        a run that wraps names its rows past the end from inside their children's windows, which
-        the pipeline replaces with the next epoch's names.
+        key is given and sequential otherwise, in its own block order when ``block`` is given,
+        and each row takes its child's name for its position. The program is the same for every
+        start. Positions wrap at the epoch's length; a run that wraps names its rows past the end
+        from inside their children's windows, which the pipeline replaces with the next epoch's
+        names.
 
         Args:
             start: Starting position: a Python int of any size, its two uint32 words
                 ``(hi, lo)`` (a position of the epoch), or a traced int32 ``jax.Array``.
             size: Number of records (Python int).
             key: The pipeline's epoch key, or ``None`` for the children's sequential orders.
+            block: The block order each child names its records in, or ``None`` for the
+                global order a key selects.
 
         Returns:
             uint32 array of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
@@ -760,7 +766,10 @@ class MixDataSourcesNode(DataSourceModule):
             [
                 jnp.asarray(
                     source.record_indices_at(
-                        child_start, size, None if key is None else jax.random.fold_in(key, c)
+                        child_start,
+                        size,
+                        None if key is None else jax.random.fold_in(key, c),
+                        block=block,
                     ),
                     jnp.uint32,
                 )

@@ -19,6 +19,7 @@ import pytest
 from flax import nnx
 from substrax.testing.compiles import expect_compiles
 
+from datarax.core.block_order import BlockOrder
 from datarax.core.index_words import from_words, to_words
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
@@ -80,6 +81,19 @@ class TestTheNames:
             mine = local[owners == child]
             own = from_words(source.record_indices_at(0, len(mine), jax.random.fold_in(key, child)))
             np.testing.assert_array_equal(mine, own.astype(np.int64))
+
+    def test_with_a_block_order_each_child_serves_its_own_block_order(self) -> None:
+        """The mix routes the block order with the key: child c names its block order under
+        fold_in(key, c), so each child is read a few of its own blocks at a time."""
+        mix, order = _mix(), BlockOrder(block_size=3, blocks_per_buffer=2)
+        key = jax.random.key(12)
+        owners, local = _owned(mix, mix.record_indices_at(0, len(mix), key, block=order))
+        for child, source in enumerate(mix.sources):
+            mine = local[owners == child]
+            own = source.record_indices_at(
+                0, len(mine), jax.random.fold_in(key, child), block=order
+            )
+            np.testing.assert_array_equal(mine, from_words(own).astype(np.int64))
 
     @pytest.mark.parametrize("order", _ORDERS)
     def test_an_epoch_names_each_record_at_most_once(self, order: str) -> None:

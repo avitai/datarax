@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.config.registry import register_component
+from datarax.core.block_order import BlockOrder
 from datarax.core.config import StructuralConfig
 from datarax.core.element_batch import Element
 from datarax.sources.eager_source import (
@@ -211,13 +212,15 @@ class MemorySource(EagerSource):
         start: int | ArrayLike,
         size: int,
         key: jax.Array | None = None,
+        *,
+        block: BlockOrder | None = None,
     ) -> jax.Array:
         """Return the global index of each record at positions ``start .. start + size``.
 
-        ``start`` and ``size`` are positions in the order ``key`` selects (the sequential order
-        when ``key`` is ``None``): the whole dataset, or with ``num_workers > 1`` this worker's
-        positions ``[shard_id::num_workers]`` of the global order. The indices are global, so a
-        record has one index on every worker.
+        ``start`` and ``size`` are positions in the order ``key`` and ``block`` select (the
+        sequential order when both are ``None``): the whole dataset, or with
+        ``num_workers > 1`` this worker's positions ``[shard_id::num_workers]`` of the order. The
+        indices are global, so a record has one index on every worker.
 
         Args:
             start: Starting logical position: a Python int, its two uint32 words ``(hi, lo)``,
@@ -225,6 +228,7 @@ class MemorySource(EagerSource):
                 :func:`~datarax.core.index_words.wrapped_positions`).
             size: Number of records (Python int).
             key: The key selecting the order, or ``None`` for the sequential order.
+            block: The block order, or ``None`` for the global order a key selects.
 
         Returns:
             uint32 ``jax.Array`` of shape ``(size, 2)``, each index as its words ``(hi, lo)``.
@@ -234,6 +238,7 @@ class MemorySource(EagerSource):
             size,
             self.length,
             key,
+            block=block,
             num_workers=self.config.num_workers,
             shard_id=self.config.shard_id or 0,
         )

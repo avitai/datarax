@@ -16,6 +16,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -355,7 +356,14 @@ class TestTheKeySelectsTheOrder:
         assert (set(first.tolist()) == set(second.tolist())) is not shuffle
 
 
-def _layout(name: str) -> dict[str, int]:
+class _Layout(TypedDict, total=False):
+    """A source's worker layout, as ``resolve_wrapped_indices`` takes it."""
+
+    num_workers: int
+    shard_id: int
+
+
+def _layout(name: str) -> _Layout:
     return {"num_workers": 3, "shard_id": 1} if name == "memory-worker" else {}
 
 

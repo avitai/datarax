@@ -23,7 +23,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from datarax.core import index_words
-from datarax.core.index_shuffle import shuffle_positions
+from datarax.core.block_order import BlockOrder, order_positions
 
 
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
@@ -49,15 +49,16 @@ def resolve_wrapped_indices(
     length: int,
     key: jax.Array | None,
     *,
+    block: BlockOrder | None = None,
     num_workers: int = 1,
     shard_id: int = 0,
 ) -> jax.Array:
     """Return the global record indices for a wrapped slice of a worker's record order.
 
-    The dataset order is ``arange(length)``, or the keyed bijection
-    :func:`~datarax.core.index_shuffle.shuffle_positions` of it when a ``key`` is given
-    (the pipeline passes its epoch key exactly when it shuffles); each index costs O(1), so a
-    slice costs O(size) at every
+    The dataset order is ``arange(length)``, the keyed bijection of it when a ``key`` is given,
+    or ``block``'s block order of it with a block order too
+    (:func:`~datarax.core.block_order.order_positions`; the pipeline passes its epoch key
+    exactly when it shuffles); each index costs O(1), so a slice costs O(size) at every
     dataset size and no order is stored. Worker ``shard_id`` of
     ``num_workers`` serves positions ``[shard_id::num_workers]`` of that order, and its
     logical positions ``start + arange(size)`` wrap at its own length. The same arguments
@@ -71,6 +72,7 @@ def resolve_wrapped_indices(
         size: Number of records to return (static Python int).
         length: Total number of records in the dataset.
         key: The key selecting the order, or ``None`` for the sequential order.
+        block: The block order, or ``None`` for the global order a key selects.
         num_workers: Number of workers the dataset is split across.
         shard_id: This worker's index.
 
@@ -85,9 +87,9 @@ def resolve_wrapped_indices(
         )
         high, low = index_words.add(scaled, index_words.split_constant(shard_id))
         positions = jnp.stack([high, low], axis=-1)
-    if key is not None:
-        return shuffle_positions(positions, length, key)
-    return positions
+    if key is None and block is None:
+        return positions
+    return order_positions(positions, length, key, block)
 
 
 def format_source_repr(
