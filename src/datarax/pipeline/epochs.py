@@ -13,7 +13,7 @@ reaching the epoch's end is completed from the head of the next epoch's order, t
 epochs stops after exactly those records, so its final batch may be short.
 :class:`~datarax.pipeline.pipeline.Pipeline` builds a plan from its source's current length,
 and its length, ``batches_left``, iteration sessions and compiled step all read it. On the host
-positions and epochs are Python integers, exact at every length up to ``2**64 - 1`` records.
+positions and epochs are Python integers, exact at every length up to ``2**63`` records.
 """
 
 from __future__ import annotations
@@ -206,7 +206,7 @@ class Run:
     not recomputed, so a run resumed anywhere ends where the uninterrupted one would. Batch
     ``ordinal`` is the one :meth:`EpochPlan.batch_start` and :meth:`EpochPlan.advance` reach
     after that many batches, the last one short when the records left do not fill it. Python
-    integers throughout, exact at every length up to ``2**64 - 1`` records.
+    integers throughout, exact at every length up to ``2**63`` records.
 
     Attributes:
         plan: How records divide into batches and epochs.
@@ -395,7 +395,7 @@ class HostNaming:
     """A pipeline's naming on the host: :func:`batch_records` as one ``jax.jit`` program on the CPU.
 
     The host stage names each batch's records here, before reading them: the start goes in as two
-    uint32 words, so every position up to ``2**64 - 1`` is exact, and the program runs on the CPU
+    uint32 words, so every position below ``2**63`` is exact, and the program runs on the CPU
     device (:func:`~datarax.core.prng.host_device`), off the accelerator's queue. It names one batch
     (``naming(start, epoch, size, key)``) or several full batches in one call (:meth:`batches`):
     the same program vmapped over their starts, so each batch of a call is named exactly as alone
@@ -441,7 +441,7 @@ class HostNaming:
         """The records of the batch of ``size`` rows starting at ``start`` of epoch ``epoch``.
 
         Args:
-            start: Where the batch starts in its epoch, any position up to ``2**64 - 2``.
+            start: Where the batch starts in its epoch, any position below ``2**63``.
             epoch: The epoch the first row belongs to.
             size: Rows to serve.
             key: The pipeline's key as uint32 words on the host
