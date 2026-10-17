@@ -302,6 +302,7 @@ noise_on_one_process = noise_by_record(
     datarax_pipeline([noise_operator()], sharding=None), np.asarray
 )
 noise_independent_of_processes = np.array_equal(noise_across_processes, noise_on_one_process)
+noise_difference = np.abs(noise_across_processes - noise_on_one_process)
 print(f"Datarax: same noise per record as on one process: {noise_independent_of_processes}")
 # Expected output:
 # Datarax: same noise per record as on one process: True
@@ -409,7 +410,12 @@ def main() -> None:
     if grain_is_one_process_batch != (jax.process_count() == 1):
         raise SystemExit("Grain's global batch did not follow the process count")
     if not noise_independent_of_processes:
-        raise SystemExit("Datarax noise changed with the process count")
+        ulps = noise_difference / np.spacing(np.abs(noise_on_one_process))
+        raise SystemExit(
+            f"Datarax noise changed with the process count: {int((noise_difference > 0).sum())} "
+            f"of {noise_difference.size} values differ, by at most {noise_difference.max():.3e} "
+            f"({ulps.max():.1f} ULP)"
+        )
     if not fits_reach_true_weights:
         raise SystemExit(f"a fit ended at {grain_weights.ravel()}, {datarax_weights.ravel()}")
     print("The global batches, the draws and both fits agree with the guide's claims.")

@@ -30,6 +30,7 @@ print(json.dumps({
     "datarax_is_one_process_batch": bool(claims["datarax_is_one_process_batch"]),
     "grain_is_one_process_batch": bool(claims["grain_is_one_process_batch"]),
     "noise_independent_of_processes": bool(claims["noise_independent_of_processes"]),
+    "noise_largest_difference": float(claims["noise_difference"].max()),
     "fits_reach_true_weights": bool(claims["fits_reach_true_weights"]),
 }), flush=True)
 """
@@ -40,6 +41,7 @@ class GuideReport(TypedDict):
     datarax_is_one_process_batch: bool
     grain_is_one_process_batch: bool
     noise_independent_of_processes: bool
+    noise_largest_difference: float
     fits_reach_true_weights: bool
 
 
@@ -51,5 +53,5 @@ def test_the_guide_run_as_two_processes_holds_its_claims_in_each() -> None:
         assert report["processes"] == PROCESSES
         assert report["datarax_is_one_process_batch"]
         assert not report["grain_is_one_process_batch"]
-        assert report["noise_independent_of_processes"]
+        assert report["noise_independent_of_processes"], report["noise_largest_difference"]
         assert report["fits_reach_true_weights"]

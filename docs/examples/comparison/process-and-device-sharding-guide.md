@@ -280,6 +280,7 @@ noise_on_one_process = noise_by_record(
     datarax_pipeline([noise_operator()], sharding=None), np.asarray
 )
 noise_independent_of_processes = np.array_equal(noise_across_processes, noise_on_one_process)
+noise_difference = np.abs(noise_across_processes - noise_on_one_process)
 print(f"Datarax: same noise per record as on one process: {noise_independent_of_processes}")
 # Expected output:
 # Datarax: same noise per record as on one process: True
