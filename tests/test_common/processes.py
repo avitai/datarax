@@ -2,7 +2,10 @@
 
 Each process is a fresh interpreter started by ``substrax.testing.run_python`` with the program,
 the coordinator's port and its process index as arguments, and two CPU devices; the processes run
-concurrently and each one's last line is read as JSON of the caller's shape.
+concurrently and each one's last line is read as JSON of the caller's shape. While coverage
+measures the test, each process measures itself too (``COVERAGE_PROCESS_START``, read by the
+start-up hook coverage installs), writing its data beside the test's for ``coverage combine``: the
+code only the processes run is read as covered where it ran.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import socket
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import coverage
 from substrax.runtime import JaxRuntime
 from substrax.testing import run_python
 
@@ -26,6 +30,13 @@ def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("localhost", 0))
         return probe.getsockname()[1]
+
+
+def _coverage_environment() -> dict[str, str]:
+    """``COVERAGE_PROCESS_START`` naming the repository's configuration while coverage measures."""
+    if coverage.Coverage.current() is None:
+        return {}
+    return {"COVERAGE_PROCESS_START": str(REPO_ROOT / "pyproject.toml")}
 
 
 def run_processes[T](program: str, report: type[T], *args: str) -> list[T]:
@@ -51,6 +62,7 @@ def run_processes[T](program: str, report: type[T], *args: str) -> list[T]:
                 *args,
                 timeout=CHILD_SECONDS,
                 runtime=runtime,
+                env=_coverage_environment(),
                 cwd=REPO_ROOT,
             )
             for process in range(PROCESSES)
