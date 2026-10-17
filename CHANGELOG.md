@@ -65,10 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probe worker, or `worker_bytes`), its copy of the read, the source's working set and the units
   in its queues (`2o + 2`) are counted beside the training process's resident memory when the run
   is planned (`psutil`, after JAX's runtime and compiler start) and the units at the device;
-  `/dev/shm` bounds it too: this process's share, `shm_budget_bytes`, when given, else the free
-  bytes measured; worker processes under a mesh spanning processes need the share, since every
-  process on a machine measures the same free bytes. Only the process path pickles the read, to
-  measure what each worker is sent. A GIL-free read reads on at most four threads, fewer than the
+  `/dev/shm` bounds it too: the smaller of this process's share, `shm_budget_bytes`, and the
+  free bytes measured, or the free bytes without a share; worker processes under a mesh spanning
+  processes need the share, since every process on a machine measures the same free bytes. Only
+  the process path pickles the read, to measure what each worker is sent. A GIL-free read reads
+  on at most four threads, fewer than the
   CPUs and at most the cap, `max(16, 2 x threads)` units ahead whatever the budget: on an H100
   train step four threads fed the step best, and eight threads filling a 1,000-unit buffer fed it
   less than with 16 while holding 2.7 times the memory. A budget below what a run holds before

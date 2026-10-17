@@ -552,9 +552,20 @@ class TestMeasureTerms:
         assert terms.worker_bytes == 5 * _MiB
 
     @pytest.mark.parametrize("spans_processes", [False, True])
-    def test_a_dev_shm_share_bounds_the_workers_in_place_of_the_free_space(
-        self, spans_processes: bool
+    @pytest.mark.parametrize(
+        ("free", "bound", "is_share"),
+        [(64 * _MiB, 9 * _MiB, True), (5 * _MiB, 5 * _MiB, False), (None, 9 * _MiB, True)],
+        ids=["share-below-free", "free-below-share", "no-dev-shm"],
+    )
+    def test_a_dev_shm_share_and_the_free_space_bound_the_workers_by_the_smaller(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        spans_processes: bool,
+        free: int | None,
+        bound: int,
+        is_share: bool,
     ) -> None:
+        monkeypatch.setattr(host_workers, "shm_free_bytes", lambda: free)
         share = HostResources(
             ram_budget_bytes=1 << 40, max_workers=1, worker_bytes=_MiB, shm_budget_bytes=9 * _MiB
         )
@@ -565,7 +576,7 @@ class TestMeasureTerms:
             lambda value: value,
             spans_processes=spans_processes,
         )
-        assert (terms.shm_free_bytes, terms.shm_share) == (9 * _MiB, True)
+        assert (terms.shm_free_bytes, terms.shm_share) == (bound, is_share)
 
     def test_without_a_share_the_free_space_bounds_one_process_s_workers(self) -> None:
         budget = HostResources(ram_budget_bytes=1 << 40, max_workers=1, worker_bytes=_MiB)

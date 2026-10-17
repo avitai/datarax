@@ -44,10 +44,11 @@ class HostResources:
         max_workers: The most read threads or worker processes, at most the CPUs available.
         worker_bytes: A worker's own memory (interpreter, imports, JAX's CPU runtime, its
             decoder), or ``None`` for one probe worker to measure it when a run first needs it.
-        shm_budget_bytes: This process's share of ``/dev/shm``, where its workers' units wait,
-            or ``None`` to bound them by the free space ``/dev/shm`` reports. Required for
-            worker processes under a sharding spanning processes: every process on the machine
-            would read the same free space and plan against all of it.
+        shm_budget_bytes: This process's share of ``/dev/shm``, where its workers' units wait:
+            they are bounded by the smaller of the share and the free space ``/dev/shm``
+            reports, or by the free space when ``None``. Required for worker processes under a
+            sharding spanning processes: every process on the machine would read the same free
+            space and plan against all of it.
     """
 
     ram_budget_bytes: int
