@@ -26,7 +26,7 @@ print(f"Recommended batch size: {recommendation.optimal_batch_size}")
 mesh = DeviceMeshManager.create_device_mesh({"data": 2, "model": 4})
 ```
 
-## Multi-Host Training
+## One Process per GPU
 
 With one process per GPU (`jax.distributed`), every process builds the same pipeline with a
 `sharding` over a mesh of all the processes' devices. `batch_size` is the global batch: each
