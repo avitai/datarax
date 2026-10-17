@@ -28,19 +28,12 @@ mesh = DeviceMeshManager.create_device_mesh({"data": 2, "model": 4})
 
 ## Multi-Host Training
 
-For multi-host setups, `JaxProcessSharderModule` derives the shard topology
-from Grain's `ShardByJaxProcess`, so each process automatically slices its
-local shard:
-
-```python
-# Each host runs this code
-from datarax.sharding import JaxProcessSharderModule
-
-sharder = JaxProcessSharderModule()
-
-# Shard data across hosts (process index/count are auto-derived)
-local_batch = sharder.shard_data(global_batch)
-```
+With one process per GPU (`jax.distributed`), every process builds the same pipeline with a
+`sharding` over a mesh of all the processes' devices. `batch_size` is the global batch: each
+process reads only the rows its own devices hold of every global batch, and the placement
+assembles them, so every process's batches are the single-process batches row for row. The
+source is an `INDEXED` source of all its records; [Sharding](../sharding/index.md) lists what is
+refused across processes.
 
 ## See Also
 

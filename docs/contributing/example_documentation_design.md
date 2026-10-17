@@ -843,14 +843,14 @@ Use this reference when creating migration sections:
 | Sequential | `SequentialSampler` | Default order | `SequentialSamplerModule` |
 | Shuffled | `RandomSampler` | `.shuffle()` | `Pipeline(..., shuffle=True)` |
 | Subset | `SubsetRandomSampler` | `.take()` | `RangeSampler` |
-| Distributed | `DistributedSampler` | `tf.distribute` | `JaxProcessSharder` |
+| Distributed | `DistributedSampler` | `tf.distribute` | `Pipeline(..., sharding=...)` |
 
 #### Distribution
 
 | Concept | PyTorch | TensorFlow | Datarax |
 |---------|---------|------------|---------|
 | Multi-device | `DistributedDataParallel` | `tf.distribute.Strategy` | `Mesh` + `NamedSharding` |
-| Data parallelism | `DistributedSampler` | `MirroredStrategy` | `JaxProcessSharder` |
+| Data parallelism | `DistributedSampler` | `MirroredStrategy` | `Pipeline(..., sharding=...)` |
 
 ### When to Include Migration Sections
 

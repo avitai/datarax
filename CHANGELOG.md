@@ -814,6 +814,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `datarax.sharding`, with `JaxProcessSharderModule` and `JaxProcessSharderConfig`, which sliced
+  arrays and lists to the current JAX process's portion: a pipeline whose `sharding` spans
+  processes reads and places each process's rows of every global batch itself
+  (`Pipeline(..., sharding=...)`). Their tests, the `jax_process_sharder` page and the
+  import-linter layer go with them.
 - `MemorySourceConfig.cache_size`, which nothing read, and
   `datarax.core.data_source.LocalFilesOnlyMixin`, which no source used (HuggingFace and
   ArrayRecord sources check `local_files_only` their own way).

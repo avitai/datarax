@@ -93,7 +93,7 @@ def test_corpora_reach_what_their_rules_cover() -> None:
 
     assert {
         "README.md",
-        "src/datarax/sharding/jax_process_sharder.py",
+        "src/datarax/pipeline/placement.py",
         "tests/sharding/test_direct_sharding.py",
         "benchmarks/distributed_scaling_benchmark.py",
         "examples/advanced/distributed/02_sharding_guide.ipynb",

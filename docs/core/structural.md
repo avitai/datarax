@@ -1,6 +1,6 @@
 # Structural Types
 
-StructuralModule — base class for non-parametric structural processors (batchers, samplers, sources, sharders).
+StructuralModule — base class for non-parametric structural processors (batchers, samplers, sources).
 
 ## See Also
 

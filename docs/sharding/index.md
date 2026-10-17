@@ -1,12 +1,11 @@
 # Sharding
 
-Datarax slices data for the current JAX process, and a pipeline given a `sharding` places its
-batches on that data mesh. Building meshes, naming mesh axes, placing other arrays and
-partitioning parameters come from substrax and Flax NNX.
+A pipeline given a `sharding` places its batches on that data mesh, which may span processes.
+Building meshes, naming mesh axes, placing other arrays and partitioning parameters come from
+substrax and Flax NNX.
 
 | Need | API |
 |------|-----|
-| Slice records for the current JAX process | `datarax.sharding.JaxProcessSharderModule` |
 | A data-parallel mesh and its batch sharding | `substrax.mesh.DeviceMeshManager`, `substrax.spmd.create_data_parallel_sharding` |
 | Place a pipeline's batches on the mesh | `Pipeline(..., sharding=create_data_parallel_sharding(mesh))` |
 | Place another batch or array on the mesh | `substrax.spmd.place_batch_on_shards` |
@@ -86,23 +85,6 @@ with jax.set_mesh(mesh):
 
 `place_batch_on_shards` places any other batch or array: every array leaf goes to one
 `jax.make_array_from_process_local_data` call, on one process a single batched transfer.
-
-## Slice Data per Process
-
-```python
-from datarax.sharding import JaxProcessSharderModule
-
-# The module reads the process index and count from Grain's ShardByJaxProcess.
-sharder = JaxProcessSharderModule()
-
-# ``shard_data`` slices arrays, lists and tuples to this process's portion.
-local_images = sharder.shard_data(global_images)
-local_labels = sharder.shard_data(global_labels)
-```
-
-## Modules
-
-- [jax_process_sharder](jax_process_sharder.md) - Process-level data slicing
 
 ## See Also
 

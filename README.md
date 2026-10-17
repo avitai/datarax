@@ -181,14 +181,13 @@ complex_pipeline = Pipeline.from_dag(
 
 ```text
 src/datarax/
-  core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler, Sharder
+  core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler
   pipeline/     # Pipeline (nnx.Module): linear stages and Pipeline.from_dag for branching
   sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixDataSourcesNode, StreamingDiskSource
   operators/    # ElementOperator, MapOperator, CompositeOperator, modality-specific (image, audio)
     strategies/ # Sequential, Parallel, Branching, Ensemble, Merging composition strategies
   samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware, SlidingWindow, BufferSampler
   batching/     # DefaultBatcher with buffer state management
-  sharding/     # JaxProcessSharderModule: data slicing per JAX process
   checkpoint/   # IteratorCheckpoint over substrax's Orbax checkpoint store
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # Goodput tracking, host/device synchronization
