@@ -266,8 +266,9 @@ Datarax keys each record's randomness on its epoch, its draw and its global inde
 (`per_record_keys`), and every process names the same global batches, so the noise a record
 receives on several processes is the noise it receives on one. The pipeline with a `sharding`
 and the one without both add noise to every record of an epoch; gathered, the two agree
-record for record. Grain's generator belongs to the draw within each process's share, so a
-different process count draws differently.
+record for record, to one float32 rounding: they are two compiled programs, and XLA may round the
+noise's multiply-add differently in each. Grain's generator belongs to the draw within each
+process's share, so a different process count draws differently.
 """
 
 
@@ -301,7 +302,12 @@ with jax.set_mesh(mesh):
 noise_on_one_process = noise_by_record(
     datarax_pipeline([noise_operator()], sharding=None), np.asarray
 )
-noise_independent_of_processes = np.array_equal(noise_across_processes, noise_on_one_process)
+# One float32 ULP at the data's largest magnitude: the two programs' sums of the same draws can
+# differ by one rounding (measured on a CI runner's CPU: 2 of 192 values, by 1.19e-07).
+NOISE_ATOL = float(np.spacing(np.abs(features).max()))
+noise_independent_of_processes = np.allclose(
+    noise_across_processes, noise_on_one_process, rtol=0, atol=NOISE_ATOL
+)
 noise_difference = np.abs(noise_across_processes - noise_on_one_process)
 print(f"Datarax: same noise per record as on one process: {noise_independent_of_processes}")
 # Expected output:
