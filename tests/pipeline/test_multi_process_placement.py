@@ -5,8 +5,10 @@ devices. Each process reads the rows of every global batch its devices hold, so 
 processes assemble are the single-process batches row for row: records, values, a per-record
 draw and MixUp's batch draws (lambda and the partner permutation, drawn from the first record's
 key). The short final batch is read whole by every process and placed replicated, even when its
-rows equal one process's share. A chunk stacks each process's rows of its batches, and a unit's
-provenance names the records this process read. A state saved on both processes restores both.
+rows equal one process's share. Each process compiles the DAG once per placement, as one process
+does, and a second pass compiles nothing. A chunk stacks each process's rows of its batches, and
+a unit's provenance names the records this process read. A state saved on both processes
+restores both.
 Refused across processes: a stream source, a worker's shard of a source, a run whose
 configuration differs between processes (in every process, not one), and the worker-process read
 without a ``/dev/shm`` share in ``HostResources``.
@@ -58,6 +60,11 @@ class BatchReport(TypedDict):
 class DrawsReport(TypedDict):
     batches: list[BatchReport]
     rng_counts: list[int]
+
+
+class CompilesReport(TypedDict):
+    first: list[str]
+    again: list[str]
 
 
 class RowsReport(TypedDict):
@@ -134,6 +141,18 @@ class TestEveryGlobalBatchIsOneProcesssBatch:
         for _ in reference_pipe:
             pass
         assert first["rng_counts"] == second["rng_counts"] == built.rng_counts(reference_pipe)
+
+
+class TestCompilesAcrossProcesses:
+    def test_each_process_compiles_the_dag_once_per_placement_and_a_second_pass_nothing(
+        self,
+    ) -> None:
+        reports = run_processes(PROGRAM, CompilesReport, "compiles")
+
+        first, second = reports
+        assert first["first"].count("jit(step)") == 2  # the sharded full batches, the tail
+        assert first["first"] == second["first"]
+        assert first["again"] == second["again"] == []
 
 
 class TestChunksAcrossProcesses:

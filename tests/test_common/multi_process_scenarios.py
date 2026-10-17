@@ -16,6 +16,7 @@ from typing import Any
 import jax
 import numpy as np
 from flax import nnx
+from substrax.testing.compiles import compiled_programs
 
 from datarax.checkpoint import IteratorCheckpoint
 from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
@@ -91,6 +92,17 @@ def chunks(process: int, args: Sequence[str]) -> dict[str, Any]:
             for unit, provenance in pipe.raw_batches(chunk=2, with_provenance=True)
         ]
     }
+
+
+def compiles(process: int, args: Sequence[str]) -> dict[str, Any]:
+    """The programs one epoch of the draws pipeline compiles from cleared caches, then a second."""
+    del process, args
+    jax.clear_caches()
+    with compiled_programs() as first:
+        list(built.pipeline(stages=built.draw_stages(), sharding=built.rows_on_every_device()))
+    with compiled_programs() as again:
+        list(built.pipeline(stages=built.draw_stages(), sharding=built.rows_on_every_device()))
+    return {"first": list(first), "again": list(again)}
 
 
 def checkpoint(process: int, args: Sequence[str]) -> dict[str, Any]:
@@ -172,6 +184,7 @@ def shm(process: int, args: Sequence[str]) -> dict[str, Any]:
 SCENARIOS: dict[str, Callable[[int, Sequence[str]], dict[str, Any]]] = {
     "placement": placement,
     "draws": draws,
+    "compiles": compiles,
     "chunks": chunks,
     "checkpoint": checkpoint,
     "refusals": refusals,
