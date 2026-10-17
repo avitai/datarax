@@ -46,12 +46,17 @@ class HostElement(NamedTuple):
         provenance: One mapping per record, in row order, or ``None`` when not asked for.
         after: ``(epoch, position, arrived)`` once the unit is served.
         unit: The unit's place in the run, which the consumer checks units arrive by.
+        batch_rows: The rows of each of the unit's batches before a process's share of a mesh
+            spanning processes (:func:`~datarax.pipeline.placement.process_rows`): the batch
+            size for a full batch or chunk, fewer for the short final batch, which placement
+            tells by it.
     """
 
     batch: Batch
     provenance: Provenance | None
     after: tuple[int, int, int]
     unit: int
+    batch_rows: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -160,7 +165,8 @@ class IndexedRead:
     inherit. It holds the source, the run's units, the naming, the key as host words and the
     settings, and pickles with them, so a worker process reads with a copy of it; a worker's read
     sends provenance as plain dicts, which cross the process boundary
-    (:func:`~datarax.pipeline.host_workers.crossing_provenance`).
+    (:func:`~datarax.pipeline.host_workers.crossing_provenance`). Under a mesh spanning processes
+    it reads ``rows`` of every full batch, this process's share; a short final batch whole.
     """
 
     def __init__(  # noqa: PLR0913 - what one unit's read needs, each given once
@@ -173,6 +179,7 @@ class IndexedRead:
         with_provenance: bool,
         settings: JaxSettings,
         crossing: bool = False,
+        rows: np.ndarray | None = None,
     ) -> None:
         """Hold what a unit's read needs.
 
@@ -184,6 +191,8 @@ class IndexedRead:
             with_provenance: Whether each unit's provenance is looked up.
             settings: The run's JAX settings, each unit named and read under them.
             crossing: Whether a worker process runs the read, sending its units across.
+            rows: The rows of a full batch this process reads
+                (:func:`~datarax.pipeline.placement.process_rows`), or ``None`` for every row.
         """
         self.source = source
         self.units = units
@@ -192,6 +201,7 @@ class IndexedRead:
         self.with_provenance = with_provenance
         self.settings = settings
         self.crossing = crossing
+        self.rows = rows
 
     def __call__(self, ordinal: int) -> HostElement:
         """Read unit ``ordinal``.
@@ -212,7 +222,7 @@ class IndexedRead:
         if self.crossing:
             provenance = host_workers.crossing_provenance(provenance, ordinal)
         epoch, position = self.units.after(ordinal)
-        return HostElement(batch, provenance, (epoch, position, 0), ordinal)
+        return HostElement(batch, provenance, (epoch, position, 0), ordinal, batches[0][2])
 
     def _named_records(
         self, first: int, batches: tuple[tuple[int, int, int], ...]
@@ -226,7 +236,10 @@ class IndexedRead:
         Returns:
             The unit's records as one batch, and their provenance when asked for.
         """
-        named = [self.names(first + k, *batch) for k, batch in enumerate(batches)]
+        named = [
+            self._held(*self.names(first + k, *batch), size=batch[2])
+            for k, batch in enumerate(batches)
+        ]
         indices = np.concatenate([indices for indices, _ in named])
         epochs = np.concatenate([epochs for _, epochs in named])
         values = from_words(indices)
@@ -238,6 +251,23 @@ class IndexedRead:
             contiguous=contiguous,
             with_provenance=self.with_provenance,
         )
+
+    def _held(
+        self, indices: np.ndarray, epochs: np.ndarray, *, size: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """This process's rows of a batch's names: its share of a full batch, a short one whole.
+
+        Args:
+            indices: The batch's record words, ``(size, 2)``.
+            epochs: The batch's epochs, ``(size,)``.
+            size: The batch's rows.
+
+        Returns:
+            The rows this process reads, in global row order.
+        """
+        if self.rows is None or size != self.units.run.plan.batch_size:
+            return indices, epochs
+        return indices[self.rows], epochs[self.rows]
 
 
 class _NamedBatches:

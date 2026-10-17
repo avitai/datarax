@@ -317,7 +317,6 @@ nav:
           - shuffle_sampler: samplers/shuffle_sampler.md
       - Sharding:
           - Overview: sharding/index.md
-          - jax_process_sharder: sharding/jax_process_sharder.md
       - Sources:
           - Overview: sources/index.md
           - array_record_source: sources/array_record_source.md

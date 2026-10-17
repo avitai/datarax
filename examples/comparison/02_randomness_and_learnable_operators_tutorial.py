@@ -422,8 +422,8 @@ mixture `[0.25, 0.75]`, by gradient descent through the pipeline itself.
 
 ## Next Steps
 
-1. [Sharding Guide](03_sharding_guide.py): place batches from both libraries on a device
-   mesh
+1. [Sharding Guide](03_sharding_guide.py): one pipeline across processes, beside Grain's
+   per-process shards
 2. [DADA Learned Augmentation](../advanced/differentiable/01_dada_learned_augmentation_guide.py):
    a learned augmentation policy trained through a Datarax pipeline
 3. [Resumable Training Guide](../advanced/checkpointing/02_resumable_training_guide.py):

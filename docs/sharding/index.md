@@ -1,12 +1,11 @@
 # Sharding
 
-Datarax slices data for the current JAX process, and a pipeline given a `sharding` places its
-batches on that data mesh. Building meshes, naming mesh axes, placing other arrays and
-partitioning parameters come from substrax and Flax NNX.
+A pipeline given a `sharding` places its batches on that data mesh, which may span processes.
+Building meshes, naming mesh axes, placing other arrays and partitioning parameters come from
+substrax and Flax NNX.
 
 | Need | API |
 |------|-----|
-| Slice records for the current JAX process | `datarax.sharding.JaxProcessSharderModule` |
 | A data-parallel mesh and its batch sharding | `substrax.mesh.DeviceMeshManager`, `substrax.spmd.create_data_parallel_sharding` |
 | Place a pipeline's batches on the mesh | `Pipeline(..., sharding=create_data_parallel_sharding(mesh))` |
 | Place another batch or array on the mesh | `substrax.spmd.place_batch_on_shards` |
@@ -67,30 +66,32 @@ with jax.set_mesh(mesh):
   on jax 0.11 builds Explicit ones unless given `axis_types`. On Explicit axes an operator that
   reads another record (MixUp, CutMix) must name the sharding of what it gathers, which
   datarax's operators do not, so such a mesh is refused.
-- The mesh is this process's devices. A mesh spanning several processes is refused: each
-  process would place a whole batch of the same records as its slice.
+- The mesh may span processes (`jax.distributed`, one process per GPU). `batch_size` is then
+  the global batch: every process builds the same pipeline and reads only the rows its own
+  devices hold of each global batch, so the batches, their per-record draws and MixUp's batch
+  draws are the single-process batches row for row. The short final batch is read whole by
+  every process and placed replicated. A chunk holds each process's rows of its `K` batches,
+  and a unit's provenance names the records this process read.
+- Across processes the source is an `INDEXED` source of all its records. A stream (read
+  forward, with no position to read a process's rows by) and a source serving a worker's shard
+  (`shard_id`, `num_workers`) are refused when the pipeline is built, and a run whose
+  configuration, cursor or mesh differs between processes is refused in every process when it
+  opens.
+- Across processes, worker processes (`host_resources` for a GIL-bound read) need each
+  process's share of `/dev/shm`, `HostResources(shm_budget_bytes=...)`: every process on a
+  machine sees the same free bytes, and each would plan against all of them.
+- `HostResources` is one process's budget: with one process per GPU, each process passes its
+  share of the machine's RAM and CPUs, not the machine's totals.
+- A source that holds its records in memory (`MemorySource`, an eager TFDS source) holds them
+  in every process, so N processes hold N copies. A decoded copy reads its columns through
+  memory maps, which the processes share in the machine's page cache.
+- Save and restore a pipeline's state on every process at the same step: the checkpoint
+  store's save and restore are collective across the processes.
 - `step()`, `scan` and `session()` serve batches through the compiled step, which places nothing
   on a mesh, so they refuse a pipeline holding a sharding.
 
 `place_batch_on_shards` places any other batch or array: every array leaf goes to one
 `jax.make_array_from_process_local_data` call, on one process a single batched transfer.
-
-## Slice Data per Process
-
-```python
-from datarax.sharding import JaxProcessSharderModule
-
-# The module reads the process index and count from Grain's ShardByJaxProcess.
-sharder = JaxProcessSharderModule()
-
-# ``shard_data`` slices arrays, lists and tuples to this process's portion.
-local_images = sharder.shard_data(global_images)
-local_labels = sharder.shard_data(global_labels)
-```
-
-## Modules
-
-- [jax_process_sharder](jax_process_sharder.md) - Process-level data slicing
 
 ## See Also
 

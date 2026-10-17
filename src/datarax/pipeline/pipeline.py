@@ -201,8 +201,14 @@ class Pipeline(nnx.Module):
             ``batch_size - 1``, on every device, against ``batch_size / N`` for a full batch on
             ``N`` devices, so its step can need up to ``N`` times a full batch's per-device
             memory. ``None`` (the default) places on the default device, uncommitted. The mesh
-            is this process's devices; iteration places, so ``step()``, ``scan`` and
-            ``session()`` refuse a pipeline holding one.
+            may span processes (``jax.distributed``, one process per GPU): ``batch_size`` is
+            then the global batch, every process builds the same pipeline over an ``INDEXED``
+            source of all its records, and each reads the rows its devices hold of every
+            global batch, so the batches are one process's row for row; a run whose
+            configuration differs between processes is refused in every process, and worker
+            processes need each process's ``/dev/shm`` share
+            (``HostResources(shm_budget_bytes=...)``). Iteration places, so ``step()``,
+            ``scan`` and ``session()`` refuse a pipeline holding a sharding.
 
     Epochs: the pipeline owns the iteration position, the epoch counter and the order. With
     ``shuffle=True`` every batch passes each record's epoch key to ``record_indices_at``, so
@@ -258,13 +264,13 @@ class Pipeline(nnx.Module):
                 source's length, which serves no batch, a block order is given without
                 ``shuffle`` or for a source that is not ``INDEXED`` or has no length, or the
                 sharding cannot place this pipeline's batches (more than the rows, an
-                ``AbstractMesh``, another process's devices, or a ``batch_size`` it cannot
-                split).
+                ``AbstractMesh``, Explicit axes, or a ``batch_size`` it cannot split; across
+                processes, a stream source or one serving a worker's shard).
             TypeError: If ``sharding`` is not a ``NamedSharding``.
         """
         super().__init__()
         _check_block_order(source, shuffle=shuffle, block_order=block_order)
-        check_sharding(sharding, batch_size)
+        check_sharding(sharding, batch_size, source)
         # Refuses an epoch rule no pipeline can serve.
         EpochPlan(
             length=known_length(source),

@@ -17,9 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once without padding, its step compiling once more, once per process. Refused when the pipeline
   is built: a `batch_size` the sharding cannot split (JAX's `NamedSharding.shard_shape`), a spec
   naming more than the rows, a mesh with Explicit axes (MixUp and CutMix gather across records
-  without naming an output sharding), an `AbstractMesh`, and a mesh spanning other processes'
-  devices; `step()`, `scan` and `session()` refuse a pipeline holding a sharding. The staged depth
-  follows the mesh's platform.
+  without naming an output sharding) and an `AbstractMesh`; `step()`, `scan` and `session()`
+  refuse a pipeline holding a sharding. The staged depth follows the mesh's platform. The mesh may
+  span processes (`jax.distributed`, one process per GPU): `batch_size` is the global batch and
+  each process reads only the rows its devices hold of every global batch, so the global batches,
+  their per-record draws and MixUp's batch draws are one process's row for row; the short final
+  batch is read whole by every process and placed replicated; a unit's provenance names the
+  records this process read. Refused across processes: a stream
+  source and a source serving a worker's shard (when the pipeline is built), and a run whose
+  configuration, cursor or mesh differs between processes (in every process, by one all-gather of
+  a digest when the run opens).
 - `datarax.core.block_order`: `BlockOrder(block_size, blocks_per_buffer)`, a block order of the
   records (CorgiPile's buffer order, arXiv 2206.05830) for data read from storage larger than the
   page cache, and `order_positions(positions, length, key, block)`, the one function applying an
@@ -49,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the one example script the page names; a page with output naming no script or several fails.
 - `datarax.core.index_words.check_length` and `checked_words`: the checks of an order's length
   and of its uint32 `(..., 2)` position words, which `shuffle_positions` applies.
-- `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None)` and
+- `datarax.HostResources(ram_budget_bytes, max_workers, worker_bytes=None,
+  shm_budget_bytes=None)` and
   `Pipeline(host_resources=...)` (also `Pipeline.from_dag`): what the host stage may spend reading,
   a RAM budget and a cap on read threads or worker processes (at most the CPUs the process may run
   on). With it, a source whose host read holds the GIL is read in Grain worker processes
@@ -57,8 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probe worker, or `worker_bytes`), its copy of the read, the source's working set and the units
   in its queues (`2o + 2`) are counted beside the training process's resident memory when the run
   is planned (`psutil`, after JAX's runtime and compiler start) and the units at the device;
-  `/dev/shm` bounds it too. Only the process path pickles the read, to measure what each worker
-  is sent. A GIL-free read reads on at most four threads, fewer than the
+  `/dev/shm` bounds it too: the smaller of this process's share, `shm_budget_bytes`, and the
+  free bytes measured, or the free bytes without a share; worker processes under a mesh spanning
+  processes need the share, since every process on a machine measures the same free bytes. Only
+  the process path pickles the read, to measure what each worker is sent. A GIL-free read reads
+  on at most four threads, fewer than the
   CPUs and at most the cap, `max(16, 2 x threads)` units ahead whatever the budget: on an H100
   train step four threads fed the step best, and eight threads filling a 1,000-unit buffer fed it
   less than with 16 while holding 2.7 times the memory. A budget below what a run holds before
@@ -339,6 +350,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The comparison guide `examples/comparison/03_sharding_guide.py` (with its notebook and page) is
+  one program every process runs, joined by the coordinator, process count and index on its
+  command line, or run as one process: each process prints its rows of a global batch under
+  Grain's `ShardByJaxProcess` and a Datarax `Pipeline(..., sharding=...)`, and the guide checks
+  that a Datarax global batch and its per-record draws equal the single-process ones while
+  Grain's depend on the process count. It replaces the guide's one-process simulation with
+  `MemorySourceConfig(shard_id, num_workers)` and its hand placement of Datarax batches;
+  `tests/examples/test_sharding_guide_processes.py` runs it as two processes. The README, the
+  docs index and the distributed training guide state one process per GPU on one machine, the
+  run measured, in place of "multi-host", and the sharding page states that `HostResources` is
+  one process's budget, that an in-memory source is held once per process, and that every
+  process saves and restores together.
 - **Breaking:** the TFDS sources' module is split by responsibility.
   - `datarax.sources.tfds_streaming_source` holds `TFDSStreamingConfig`, `TFDSStreamingSource` and
     `TFDSStreamDataset`, the Grain dataset `pass_dataset` and `run_dataset` return; what a run reads
@@ -804,6 +827,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `datarax.sharding`, with `JaxProcessSharderModule` and `JaxProcessSharderConfig`, which sliced
+  arrays and lists to the current JAX process's portion: a pipeline whose `sharding` spans
+  processes reads and places each process's rows of every global batch itself
+  (`Pipeline(..., sharding=...)`). Their tests, the `jax_process_sharder` page and the
+  import-linter layer go with them.
 - `MemorySourceConfig.cache_size`, which nothing read, and
   `datarax.core.data_source.LocalFilesOnlyMixin`, which no source used (HuggingFace and
   ArrayRecord sources check `local_files_only` their own way).
@@ -873,6 +901,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The host stage runs in every process of a `jax.distributed` run. It named records and folded
+  keys on `jax.devices("cpu")[0]`, which lists every process's CPU devices there, so every
+  process computed on process 0's and any other process failed on its first batch ("Fetching
+  value for `jax.Array` that spans non-addressable ... devices"). It now uses this process's own
+  CPU device (`jax.local_devices(backend="cpu")[0]`).
 - Programs datarax compiles and caches for `step()`, sessions and `Pipeline.scan` no longer keep a
   dropped pipeline's columns, provenance or host stage alive. They were keyed by, and closed over,
   the graph definition of the first pipeline of each structure, which holds its host values; they

@@ -26,7 +26,7 @@
 - **JAX-Native Design:** All core components built on JAX's functional paradigm with Flax NNX module system for state management
 - **High Performance:** JIT-compiled pipelines via XLA, profiled and roofline-analysed through calibrax
 - **DAG Pipelines:** Graph-based construction via `Pipeline.from_dag` with branching, parallel execution, caching, and differentiable rebatching nodes
-- **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
+- **Scalability:** Batches placed on a data mesh over several devices, in one process or one process per GPU: every process runs the same pipeline and reads its rows of each global batch
 - **Determinism:** Reproducible pipelines by default using a keyed Feistel bijection over 64-bit record indices (O(1) memory), with resumable mid-epoch iteration for exact checkpoint/restore
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
 - **Benchmarking Suite:** Comparative benchmarks against 14+ frameworks with calibrax-powered analysis and regression checks
@@ -181,14 +181,13 @@ complex_pipeline = Pipeline.from_dag(
 
 ```text
 src/datarax/
-  core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler, Sharder
+  core/         # Base modules: DataSourceModule, OperatorModule, Element, Batcher, Sampler
   pipeline/     # Pipeline (nnx.Module): linear stages and Pipeline.from_dag for branching
   sources/      # MemorySource, TFDS (eager/streaming), HuggingFace (eager/streaming), ArrayRecord, MixDataSourcesNode, StreamingDiskSource
   operators/    # ElementOperator, MapOperator, CompositeOperator, modality-specific (image, audio)
     strategies/ # Sequential, Parallel, Branching, Ensemble, Merging composition strategies
   samplers/     # Sequential, Shuffle (Feistel cipher), Range, EpochAware, SlidingWindow, BufferSampler
   batching/     # DefaultBatcher with buffer state management
-  sharding/     # JaxProcessSharderModule: data slicing per JAX process
   checkpoint/   # IteratorCheckpoint over substrax's Orbax checkpoint store
   monitoring/   # MetricsCollector, callbacks, reporters (console/file)
   performance/  # Goodput tracking, host/device synchronization

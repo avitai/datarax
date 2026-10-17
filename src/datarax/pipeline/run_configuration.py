@@ -4,15 +4,20 @@
 the batch rule, the length, the epochs, the key and the order (:func:`run_configuration`).
 ``set_state`` refuses a state of another configuration, naming the first field that differs,
 and one holding none (:func:`refuse_another_configuration`). A checkpoint store may hand a state
-back with NumPy leaves, read as plain values first (:func:`plain_state`).
+back with NumPy leaves, read as plain values first (:func:`plain_state`). Under a mesh spanning
+processes every process runs one configuration from one cursor, and a run whose configuration
+differs between them is refused in every process (:func:`refuse_differing_processes`).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
+from jax.experimental import multihost_utils
 
 from datarax.core.data_source import shard_identity
 from datarax.core.prng import key_words
@@ -83,6 +88,49 @@ def refuse_another_configuration(pipeline: Any, saved: Any) -> None:
             )
 
 
+def refuse_differing_processes(
+    pipeline: Any, *, chunk: int | None, epoch: int, position: int
+) -> None:
+    """Refuse a run whose configuration differs between the processes of a mesh spanning them.
+
+    Every process names the same global batches and reads its rows of each, so every process
+    runs one configuration (:func:`run_configuration`, the batches per unit and the mesh) from
+    one cursor; a process running another would place rows of other records into the same
+    global batch. Each process sends a digest of its run to one all-gather
+    (``multihost_utils.assert_equal``) and compares all of them, so each refuses alike. Called
+    where a run opens, which every process does at the same call.
+
+    Args:
+        pipeline: The pipeline whose run opens, with a sharding spanning processes.
+        chunk: Batches per chunk, or ``None`` for single batches.
+        epoch: The cursor's epoch.
+        position: The cursor's position in it.
+
+    Raises:
+        ValueError: If any process's run differs from this one's.
+    """
+    sharding = pipeline.sharding
+    run = {
+        "configuration": run_configuration(pipeline),
+        "chunk": chunk,
+        "epoch": epoch,
+        "position": position,
+        "spec": str(sharding.spec),
+        "mesh": dict(sharding.mesh.shape),
+        "devices": sharding.mesh.device_ids.ravel().tolist(),
+    }
+    digest = hashlib.sha256(json.dumps(run, sort_keys=True).encode()).digest()
+    try:
+        multihost_utils.assert_equal(np.frombuffer(digest, np.uint8), "run digests")
+    except AssertionError as error:
+        raise ValueError(
+            "the run's configuration differs between processes (batch rule, length, epochs, "
+            "key, order, chunk, cursor or mesh): every process of a mesh spanning processes "
+            "reads its rows of the same global batches, so every process builds the same "
+            f"pipeline; this process runs {run}"
+        ) from error
+
+
 def plain_state(value: Any) -> Any:
     """A saved state as plain Python values: a checkpoint store may return NumPy leaves.
 
@@ -108,5 +156,6 @@ __all__ = [
     "SESSION_VERSION",
     "plain_state",
     "refuse_another_configuration",
+    "refuse_differing_processes",
     "run_configuration",
 ]
