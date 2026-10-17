@@ -1,6 +1,7 @@
 # Distributed Training
 
-This guide shows how to train on several devices or hosts with a datarax pipeline.
+This guide shows how to train on several devices with a datarax pipeline, in one process or one
+process per GPU.
 
 ## Overview
 

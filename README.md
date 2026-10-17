@@ -26,7 +26,7 @@
 - **JAX-Native Design:** All core components built on JAX's functional paradigm with Flax NNX module system for state management
 - **High Performance:** JIT-compiled pipelines via XLA, profiled and roofline-analysed through calibrax
 - **DAG Pipelines:** Graph-based construction via `Pipeline.from_dag` with branching, parallel execution, caching, and differentiable rebatching nodes
-- **Scalability:** Multi-device and multi-host data distribution with device mesh sharding
+- **Scalability:** Batches placed on a data mesh over several devices, in one process or one process per GPU: every process runs the same pipeline and reads its rows of each global batch
 - **Determinism:** Reproducible pipelines by default using a keyed Feistel bijection over 64-bit record indices (O(1) memory), with resumable mid-epoch iteration for exact checkpoint/restore
 - **Extensibility:** Custom data sources, operators, and augmentation strategies via composable NNX modules
 - **Benchmarking Suite:** Comparative benchmarks against 14+ frameworks with calibrax-powered analysis and regression checks

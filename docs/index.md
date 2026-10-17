@@ -16,7 +16,7 @@ achieve near-optimal data processing speeds on CPUs, GPUs, and TPUs.
 - **JAX-Native Design:** All core components and operations are designed with JAX's
 functional programming paradigm and immutable data structures (PyTrees) in mind.
 - **Scalability:** Supports efficient data loading and processing for large datasets
-and distributed training scenarios, including multi-host and multi-device setups.
+and distributed training on several devices, in one process or one process per GPU.
 - **Extensibility:** Easily define and integrate custom data sources, transformations,
 and augmentation operations.
 - **Usability:** Provides a clear, intuitive Python API and a flexible configuration

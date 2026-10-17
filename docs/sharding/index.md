@@ -80,6 +80,13 @@ with jax.set_mesh(mesh):
 - Across processes, worker processes (`host_resources` for a GIL-bound read) need each
   process's share of `/dev/shm`, `HostResources(shm_budget_bytes=...)`: every process on a
   machine sees the same free bytes, and each would plan against all of them.
+- `HostResources` is one process's budget: with one process per GPU, each process passes its
+  share of the machine's RAM and CPUs, not the machine's totals.
+- A source that holds its records in memory (`MemorySource`, an eager TFDS source) holds them
+  in every process, so N processes hold N copies. A decoded copy reads its columns through
+  memory maps, which the processes share in the machine's page cache.
+- Save and restore a pipeline's state on every process at the same step: the checkpoint
+  store's save and restore are collective across the processes.
 - `step()`, `scan` and `session()` serve batches through the compiled step, which places nothing
   on a mesh, so they refuse a pipeline holding a sharding.
 

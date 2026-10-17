@@ -349,6 +349,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The comparison guide `examples/comparison/03_sharding_guide.py` (with its notebook and page) is
+  one program every process runs, joined by the coordinator, process count and index on its
+  command line, or run as one process: each process prints its rows of a global batch under
+  Grain's `ShardByJaxProcess` and a Datarax `Pipeline(..., sharding=...)`, and the guide checks
+  that a Datarax global batch and its per-record draws equal the single-process ones while
+  Grain's depend on the process count. It replaces the guide's one-process simulation with
+  `MemorySourceConfig(shard_id, num_workers)` and its hand placement of Datarax batches;
+  `tests/examples/test_sharding_guide_processes.py` runs it as two processes. The README, the
+  docs index and the distributed training guide state one process per GPU on one machine, the
+  run measured, in place of "multi-host", and the sharding page states that `HostResources` is
+  one process's budget, that an in-memory source is held once per process, and that every
+  process saves and restores together.
 - **Breaking:** the TFDS sources' module is split by responsibility.
   - `datarax.sources.tfds_streaming_source` holds `TFDSStreamingConfig`, `TFDSStreamingSource` and
     `TFDSStreamDataset`, the Grain dataset `pass_dataset` and `run_dataset` return; what a run reads
