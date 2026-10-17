@@ -248,13 +248,14 @@ class _StreamIterator(grain.DatasetIterator):
             raise StopIteration
         parts, full = self._unit(chunk)
         batch = batch_ops.stack([b for b, _, _ in parts]) if full and stacked else parts[0][0]
+        batch_rows = self._config.batch_size if full else parts[0][0].batch_size
         provenance = (
             tuple(record for _, part, _ in parts for record in part)
             if self._config.with_provenance
             else None
         )
         unit, self._units = self._units, self._units + 1
-        return HostElement(batch, provenance, parts[-1][2], unit, parts[0][0].batch_size)
+        return HostElement(batch, provenance, parts[-1][2], unit, batch_rows)
 
     def get_state(self) -> dict[str, Any]:
         """Not used: the host stage's cursor is where a stream resumes."""
@@ -322,7 +323,8 @@ def _place(
     element: HostElement, place_unit: Placer
 ) -> tuple[Batch, Provenance | None, tuple[int, int, int]]:
     """The element's batch placed by the run's placer; provenance stays on the host."""
-    return place_unit(element.batch, element.batch_rows), element.provenance, element.after
+    place = place_unit.full if element.batch_rows == place_unit.batch_size else place_unit.final
+    return place(element.batch), element.provenance, element.after
 
 
 type _PlacedElement = tuple[Batch, Provenance | None, tuple[int, int, int]]

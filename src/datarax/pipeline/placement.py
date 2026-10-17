@@ -25,6 +25,7 @@ final batch.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 
 import jax
@@ -37,9 +38,24 @@ from datarax.core.data_source import DataSourceModule, RecordIdentity, shard_ide
 from datarax.core.element_batch import Batch
 
 
-type Placer = Callable[[Batch, int], Batch]
-"""Places one unit, a batch or a chunk, read on the host, given its rows per batch before any
-process's share."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class Placer:
+    """How a run's units are placed: a full unit, a batch or a chunk, and the short final batch.
+
+    The host stage takes ``full`` for a unit whose batches hold ``batch_size`` rows before any
+    process's share (``HostElement.batch_rows``) and ``final`` for the short final batch. Each is
+    a plain callable, ``jax.device_put`` itself on the default device, so choosing one adds no
+    call to a unit's placement.
+
+    Attributes:
+        batch_size: The pipeline's batch size.
+        full: Places a unit of full batches.
+        final: Places the short final batch.
+    """
+
+    batch_size: int
+    full: Callable[[Batch], Batch]
+    final: Callable[[Batch], Batch]
 
 
 def check_sharding(
@@ -161,7 +177,7 @@ def placement_platform(sharding: NamedSharding | None) -> str | None:
 
 
 def placer(sharding: NamedSharding | None, batch_size: int) -> Placer:
-    """The function placing each unit of a run.
+    """How each unit of a run is placed.
 
     Args:
         sharding: The rows' sharding, or ``None`` for the default device, uncommitted.
@@ -169,28 +185,21 @@ def placer(sharding: NamedSharding | None, batch_size: int) -> Placer:
             final one.
 
     Returns:
-        A function placing one unit, given its rows per batch before any process's share.
+        The placer.
     """
     if sharding is None:
-
-        def on_default_device(unit: Batch, batch_rows: int) -> Batch:
-            del batch_rows
-            return jax.device_put(unit)
-
-        return on_default_device
+        return Placer(batch_size, full=jax.device_put, final=jax.device_put)
     replicated = NamedSharding(sharding.mesh, PartitionSpec())
     chunk_rows = NamedSharding(sharding.mesh, PartitionSpec(None, *sharding.spec))
 
-    def place(unit: Batch, batch_rows: int) -> Batch:
-        if unit.indices.ndim == 3:
-            rows = chunk_rows
-        elif batch_rows == batch_size:
-            rows = sharding
-        else:
-            rows = replicated
+    def full(unit: Batch) -> Batch:
+        rows = chunk_rows if unit.indices.ndim == 3 else sharding
         return place_batch_on_shards(unit, batch_ops.shardings(unit, rows, replicated))
 
-    return place
+    def final(unit: Batch) -> Batch:
+        return place_batch_on_shards(unit, batch_ops.shardings(unit, replicated, replicated))
+
+    return Placer(batch_size, full=full, final=final)
 
 
 __all__ = [
