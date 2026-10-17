@@ -112,8 +112,8 @@ processes' devices) and the same pipeline. JAX holds a global array in parts, ea
 seeing the rows its own devices hold (`addressable_shards`); this guide gathers one with
 `multihost_utils.process_allgather` only to print it.
 
-The outputs below are from two CPU processes with two devices each, run as above; where the
-two processes print different lines, both are shown.
+The outputs below are from two processes with one NVIDIA A100-SXM4-80GB each, run as above;
+where the two processes print different lines, both are shown.
 
 ### Part 1: Each Process's Rows of a Global Batch
 
@@ -202,10 +202,10 @@ for name, batch in [("Grain", grain_first), ("Datarax", datarax_first)]:
 
 **Terminal Output** (process 0, then process 1):
 ```
-Grain on process 0: rows 0-1: [0, 1]; rows 2-3: [2, 3]
-Datarax on process 0: rows 0-1: [0, 1]; rows 2-3: [2, 3]
-Grain on process 1: rows 4-5: [32, 33]; rows 6-7: [34, 35]
-Datarax on process 1: rows 4-5: [4, 5]; rows 6-7: [6, 7]
+Grain on process 0: rows 0-3: [0, 1, 2, 3]
+Datarax on process 0: rows 0-3: [0, 1, 2, 3]
+Grain on process 1: rows 4-7: [32, 33, 34, 35]
+Datarax on process 1: rows 4-7: [4, 5, 6, 7]
 ```
 
 Gathered, each library's first global batch can be set beside the batch one process serves:
