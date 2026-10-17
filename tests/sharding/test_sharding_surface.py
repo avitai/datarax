@@ -1,9 +1,11 @@
-"""Datarax provides process-level sharding; device placement and axis rules come from substrax.
+"""A pipeline places each process's share of its batches; meshes and other arrays are substrax's.
 
-Batch placement is ``substrax.spmd.place_batch_on_shards``, logical-to-mesh axis rules are
-``substrax.mesh.MeshRules`` with ``partition_spec_for_names``, a per-shard transform is
-``nnx.shard_map`` and a partitioned parameter is ``nnx.with_partitioning``. Datarax's own module
-is the process sharder, which slices data for the current JAX process.
+``Pipeline(..., sharding=...)`` reads and places the rows of every global batch a process's devices
+hold (``datarax.pipeline.placement``). Any other batch is placed by
+``substrax.spmd.place_batch_on_shards``, logical-to-mesh axis rules are ``substrax.mesh.MeshRules``
+with ``partition_spec_for_names``, a per-shard transform is ``nnx.shard_map`` and a partitioned
+parameter ``nnx.with_partitioning``. No other datarax module splits data between processes, so
+the pipeline's placement is the one per-process share.
 """
 
 from __future__ import annotations
@@ -14,23 +16,21 @@ import pytest
 
 import datarax
 import datarax.core
-import datarax.sharding
 from datarax.config import registry
-from datarax.core.module import DataraxModule
-from datarax.sharding import JaxProcessSharderModule
 
 
 pytestmark = pytest.mark.contract
 
 
-def test_sharding_package_exports_only_the_process_sharder() -> None:
-    assert datarax.sharding.__all__ == ["JaxProcessSharderConfig", "JaxProcessSharderModule"]
+def _module_names() -> list[str]:
+    return [module.name for module in pkgutil.walk_packages(datarax.__path__, "datarax.")]
 
 
-def test_sharding_package_holds_only_the_process_sharder_module() -> None:
-    modules = sorted(module.name for module in pkgutil.iter_modules(datarax.sharding.__path__))
+def test_the_pipeline_placement_is_the_one_sharding_module() -> None:
+    names = _module_names()
 
-    assert modules == ["jax_process_sharder"]
+    assert "datarax.pipeline.placement" in names  # the walk reaches the pipeline's modules
+    assert [name for name in names if "shard" in name.lower()] == []
 
 
 def test_core_defines_no_sharder_component() -> None:
@@ -40,10 +40,3 @@ def test_core_defines_no_sharder_component() -> None:
     assert "SharderModule" not in datarax.__all__
     assert "SharderModule" not in datarax.core.__all__
     assert "sharder" not in registry._COMPONENT_TYPES
-
-
-def test_process_sharder_is_a_datarax_module() -> None:
-    sharder = JaxProcessSharderModule()
-
-    assert isinstance(sharder, DataraxModule)
-    assert sharder.shard_data(list(range(8))) == list(range(8))

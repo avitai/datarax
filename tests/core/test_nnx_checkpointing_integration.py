@@ -17,7 +17,6 @@ from datarax.core.config import DataraxModuleConfig
 from datarax.core.module import DataraxModule
 from datarax.samplers.range_sampler import RangeSampler, RangeSamplerConfig
 from datarax.samplers.shuffle_sampler import ShuffleSampler, ShuffleSamplerConfig
-from datarax.sharding import JaxProcessSharderModule
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 
 
@@ -143,9 +142,8 @@ class TestNNXCheckpointingIntegration:
             lambda rngs: RangeSampler(RangeSamplerConfig(start=0, stop=5, step=1), rngs=rngs),
             lambda rngs: ShuffleSampler(ShuffleSamplerConfig(dataset_size=5), rngs=rngs),
             lambda rngs: DefaultBatcher(DefaultBatcherConfig(), rngs=rngs),
-            lambda rngs: JaxProcessSharderModule(rngs=rngs),
         ],
-        ids=["range_sampler", "shuffle_sampler", "batcher", "process_sharder"],
+        ids=["range_sampler", "shuffle_sampler", "batcher"],
     )
     def test_every_module_type_round_trips(self, tmp_path, build):
         """Each Datarax module type restores into a freshly built instance."""

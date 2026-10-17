@@ -137,8 +137,9 @@ source's records are named by their position in the stream.
 2.  **Batchers**: Group individual elements into a `Batch`.
 3.  **Samplers**: Generate sequences of indices for data retrieval.
 
-Record sharding across JAX processes is `JaxProcessSharderModule`, a `DataraxModule` in
-`datarax.sharding`; device meshes and batch placement come from `substrax`.
+A pipeline given a `sharding` places its batches on that data mesh, which may span JAX
+processes: each process reads and places its rows of every global batch. Device meshes and the
+placement of other arrays come from `substrax`.
 
 ### Usage Example
 

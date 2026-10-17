@@ -45,6 +45,11 @@ class TestHostResources:
         with pytest.raises(ValueError, match="worker_bytes"):
             HostResources(ram_budget_bytes=1 << 30, max_workers=1, worker_bytes=-1)
 
+    @pytest.mark.parametrize("share", [0, -1])
+    def test_a_dev_shm_share_below_one_byte_is_refused(self, share: int) -> None:
+        with pytest.raises(ValueError, match="shm_budget_bytes"):
+            HostResources(ram_budget_bytes=1, max_workers=1, shm_budget_bytes=share)
+
     def test_the_cpus_available_are_the_process_s_affinity(self) -> None:
         if hasattr(os, "sched_getaffinity"):
             assert available_cpus() == len(os.sched_getaffinity(0))

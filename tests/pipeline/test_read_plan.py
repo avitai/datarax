@@ -55,7 +55,7 @@ from tests.test_common.worker_reads import png_source, resources, write_png_reco
 _MiB = 1 << 20
 
 
-def _terms(**changes: int | None) -> HostTerms:
+def _terms(**changes: int | bool | None) -> HostTerms:
     """Terms of a worker read: E = 1 MiB, F = 300 MiB, P = 1 MiB, d = 1, 16 CPUs, ample shm."""
     base = HostTerms(
         unit_bytes=_MiB,
@@ -223,6 +223,13 @@ class TestWorkerPlan:
             terms,
         )
         assert plan.workers == 2
+
+    def test_a_dev_shm_share_below_one_worker_s_units_is_refused_naming_the_share(self) -> None:
+        terms = _terms(shm_free_bytes=4 * _MiB, shm_share=True)
+        resources = HostResources(ram_budget_bytes=16 << 30, max_workers=1)
+        with pytest.raises(ValueError, match=f"shm_budget_bytes={4 * _MiB}") as refused:
+            budget_plan(resources, HostReadPath.PROCESSES, terms)
+        assert str(8 * _MiB) in str(refused.value)
 
     def test_no_dev_shm_to_measure_is_no_bound(self) -> None:
         cap = min(2, available_cpus())
@@ -452,6 +459,8 @@ class TestMeasureTerms:
         resources: HostResources,
         read: Callable[[], Any],
         first_unit: Callable[[Any], Callable[[], Any]],
+        *,
+        spans_processes: bool = False,
     ) -> HostTerms:
         return measure_terms(
             unit_bytes=3 * _MiB,
@@ -462,6 +471,7 @@ class TestMeasureTerms:
             read=read,
             first_unit=first_unit,
             settings=JaxSettings.current(),
+            spans_processes=spans_processes,
         )
 
     @pytest.mark.parametrize("path", [HostReadPath.THREADS, HostReadPath.ONE_THREAD])
@@ -541,6 +551,57 @@ class TestMeasureTerms:
         )
         assert terms.worker_bytes == 5 * _MiB
 
+    @pytest.mark.parametrize("spans_processes", [False, True])
+    @pytest.mark.parametrize(
+        ("free", "bound", "is_share"),
+        [(64 * _MiB, 9 * _MiB, True), (5 * _MiB, 5 * _MiB, False), (None, 9 * _MiB, True)],
+        ids=["share-below-free", "free-below-share", "no-dev-shm"],
+    )
+    def test_a_dev_shm_share_and_the_free_space_bound_the_workers_by_the_smaller(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        spans_processes: bool,
+        free: int | None,
+        bound: int,
+        is_share: bool,
+    ) -> None:
+        monkeypatch.setattr(host_workers, "shm_free_bytes", lambda: free)
+        share = HostResources(
+            ram_budget_bytes=1 << 40, max_workers=1, worker_bytes=_MiB, shm_budget_bytes=9 * _MiB
+        )
+        terms = self._measure(
+            HostReadPath.PROCESSES,
+            share,
+            _Footprint,
+            lambda value: value,
+            spans_processes=spans_processes,
+        )
+        assert (terms.shm_free_bytes, terms.shm_share) == (bound, is_share)
+
+    def test_without_a_share_the_free_space_bounds_one_process_s_workers(self) -> None:
+        budget = HostResources(ram_budget_bytes=1 << 40, max_workers=1, worker_bytes=_MiB)
+        terms = self._measure(HostReadPath.PROCESSES, budget, _Footprint, lambda value: value)
+        assert (terms.shm_free_bytes, terms.shm_share) == (host_workers.shm_free_bytes(), False)
+
+    def test_workers_under_a_mesh_spanning_processes_need_a_share(self) -> None:
+        budget = HostResources(ram_budget_bytes=1 << 40, max_workers=1, worker_bytes=_MiB)
+        with pytest.raises(ValueError, match=r"HostResources\(shm_budget_bytes="):
+            self._measure(
+                HostReadPath.PROCESSES,
+                budget,
+                _Footprint,
+                lambda value: value,
+                spans_processes=True,
+            )
+
+    @pytest.mark.parametrize("path", [HostReadPath.THREADS, HostReadPath.ONE_THREAD])
+    def test_threads_under_a_mesh_spanning_processes_need_no_share(
+        self, path: HostReadPath
+    ) -> None:
+        budget = HostResources(ram_budget_bytes=1 << 40, max_workers=1)
+        terms = self._measure(path, budget, _Footprint, lambda value: value, spans_processes=True)
+        assert terms.shm_free_bytes is None
+
 
 @pytest.fixture(scope="module")
 def png_paths(tmp_path_factory: pytest.TempPathFactory) -> list[str]:
@@ -575,7 +636,13 @@ class TestHostStageMeasuresFromABareSource:
 
         def read() -> Any:
             return stage._read(  # noqa: SLF001
-                source, pipe.epoch_plan, shuffle=True, key=key, chunk=None, settings=settings
+                source,
+                pipe.epoch_plan,
+                shuffle=True,
+                key=key,
+                chunk=None,
+                settings=settings,
+                rows=None,
             )
 
         measured = measure_terms(
@@ -587,6 +654,7 @@ class TestHostStageMeasuresFromABareSource:
             read=read,
             first_unit=lambda value: value,
             settings=JaxSettings.current(),
+            spans_processes=False,
         )
         _same_terms_but_resident(measured, planned)
         direct = stage._terms(  # noqa: SLF001
@@ -600,6 +668,7 @@ class TestHostStageMeasuresFromABareSource:
             path=HostReadPath.PROCESSES,
             resources=budget,
             settings=JaxSettings.current(),
+            sharding=None,
         )
         _same_terms_but_resident(direct, planned)
         pipe.close()
@@ -623,6 +692,7 @@ class TestHostStageMeasuresFromABareSource:
             path=HostReadPath.THREADS,
             resources=budget,
             settings=JaxSettings.current(),
+            sharding=None,
         )
         _same_terms_but_resident(direct, planned)
 

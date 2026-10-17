@@ -24,8 +24,11 @@ bytes:
 Workers ``k`` for a GIL-bound read is the largest count with::
 
     M_main + O + C + (d + 1) E + k (F + P + r E + S) + k (2o + 2) E  <=  ram_budget_bytes
-    k (2o + 2) E + (d + 1) E                                          <=  free bytes of /dev/shm
+    k (2o + 2) E + (d + 1) E                                          <=  the /dev/shm bytes
     k  <=  max_workers  <=  the CPUs available
+
+where the ``/dev/shm`` bytes are the smaller of the caller's share
+(``HostResources.shm_budget_bytes``) and the free bytes measured, or the free bytes without a share.
 
 A GIL-free read runs on ``min(4, max_workers, CPUs - 1)`` threads reading
 ``b = max(16, 2 x threads)`` units ahead, whatever the budget: read threads that outrun the
@@ -156,7 +159,11 @@ class HostTerms:
         working_bytes: ``S``, the source's working set in a worker beyond its buffers.
         worker_read_buffer: ``r``, units a worker reads ahead of its queue.
         worker_buffer: ``o``, a worker's output buffer.
-        shm_free_bytes: Free bytes of ``/dev/shm``, or ``None`` where there is none to measure.
+        shm_free_bytes: The ``/dev/shm`` bytes the workers' units may take: the smaller of the
+            caller's share (``HostResources.shm_budget_bytes``) and the free bytes measured, or
+            ``None`` with no share and none to measure.
+        shm_share: Whether ``shm_free_bytes`` is the caller's share, the smaller bound, rather
+            than the free bytes measured.
         cpus: The CPUs this process may run on.
     """
 
@@ -171,6 +178,7 @@ class HostTerms:
     worker_read_buffer: int = 0
     worker_buffer: int = WORKER_BUFFER
     shm_free_bytes: int | None = None
+    shm_share: bool = False
     cpus: int = 1
 
 
@@ -361,11 +369,16 @@ def _worker_plan(resources: HostResources, terms: HostTerms) -> HostPlan:
     if terms.shm_free_bytes is not None:
         room = (terms.shm_free_bytes - at_device) // in_queues
         if room < 1:
+            if terms.shm_share:
+                held = f"this process's /dev/shm share, shm_budget_bytes={terms.shm_free_bytes},"
+                way_out = "raise HostResources.shm_budget_bytes"
+            else:
+                held = f"/dev/shm has {terms.shm_free_bytes} bytes free,"  # nosec B108
+                way_out = "enlarge /dev/shm (Docker: --shm-size)"
             raise ValueError(
-                f"/dev/shm has {terms.shm_free_bytes} bytes free, below the "  # nosec B108
-                f"{in_queues + at_device} bytes one worker's units take there ({2 * o + 2} units "
-                f"of E={e} bytes in its queues and d={d} + 1 at the device): enlarge /dev/shm "
-                "(Docker: --shm-size) or read smaller units"
+                f"{held} below the {in_queues + at_device} bytes one worker's units take there "
+                f"({2 * o + 2} units of E={e} bytes in its queues and d={d} + 1 at the device): "
+                f"{way_out} or read smaller units"
             )
         k = min(k, room)
     k = min(k, resources.max_workers)
@@ -425,6 +438,7 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     read: Callable[[], Any],
     first_unit: Callable[[Any], Callable[[], Any]],
     settings: JaxSettings,
+    spans_processes: bool,
 ) -> HostTerms:
     """What a run's reads cost, measured: ``E``, ``O``, ``M_main``, and for processes ``P, S, F``.
 
@@ -434,7 +448,10 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     process once and never added on top; ``P`` is that read as it pickles, ``S`` what it declares
     (:class:`~datarax.core.host_resources.WorkerFootprint`), and ``F``, unless the caller gives
     it, the peak of one probe worker reading the run's first unit under the run's settings. A
-    thread plan builds and pickles nothing.
+    thread plan builds and pickles nothing. The workers' units in ``/dev/shm`` are bounded by the
+    smaller of the caller's share and the free bytes measured, or by the free bytes without a
+    share; under a mesh spanning processes the share is required, since every process on a
+    machine measures the same free bytes and would plan against all of them.
 
     Args:
         unit_bytes: ``E``, one unit's host bytes.
@@ -447,9 +464,14 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
         first_unit: Turns that read into a call reading the run's first unit, which the probe
             worker makes; called once, only when the probe runs.
         settings: The run's JAX settings, which the probe worker is set up with.
+        spans_processes: Whether the run's sharding spans other processes' devices.
 
     Returns:
         The terms.
+
+    Raises:
+        ValueError: If worker processes read under a mesh spanning processes without a
+            ``/dev/shm`` share.
     """
     terms = HostTerms(
         unit_bytes=unit_bytes,
@@ -459,6 +481,14 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     )
     if path is not HostReadPath.PROCESSES:
         return dataclasses.replace(terms, main_bytes=host_workers.resident_bytes())
+    share = resources.shm_budget_bytes
+    if share is None and spans_processes:
+        raise ValueError(
+            "worker processes read this run under a sharding spanning other processes' "
+            "devices, and every process on a machine sees the same free /dev/shm: give each "
+            "process its share, HostResources(shm_budget_bytes=...), e.g. the free bytes over "
+            "the processes on the machine"
+        )
     worker_read = read()
     read_bytes = host_workers.pickled_bytes(worker_read)
     footprint = worker_read if isinstance(worker_read, WorkerFootprint) else None
@@ -473,8 +503,23 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
         working_bytes=0 if footprint is None else footprint.working_bytes(),
         worker_bytes=worker_bytes,
         worker_buffer=WORKER_BUFFER,
-        shm_free_bytes=host_workers.shm_free_bytes(),
+        **_shm_bound(share),
     )
+
+
+def _shm_bound(share: int | None) -> dict[str, Any]:
+    """The ``/dev/shm`` bound of a worker plan: the smaller of ``share`` and the free bytes.
+
+    Args:
+        share: The caller's share of ``/dev/shm``, or ``None``.
+
+    Returns:
+        ``shm_free_bytes`` and ``shm_share`` for :class:`HostTerms`.
+    """
+    free = host_workers.shm_free_bytes()
+    if share is None or (free is not None and free < share):
+        return {"shm_free_bytes": free, "shm_share": False}
+    return {"shm_free_bytes": share, "shm_share": True}
 
 
 __all__ = [

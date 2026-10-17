@@ -108,8 +108,6 @@ class StructuralModule(DataraxModule):
 
         - Batcher: list[Element] -> list[Batch]
         - Sampler: int -> list[int]
-        - Sharder: Batch -> Sharded[Batch]
-        - Splitter: Dataset -> tuple[Dataset, Dataset]
 
         Args:
             input: Input to process (type varies by processor)

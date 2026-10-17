@@ -16,7 +16,7 @@ Complete auto-generated API documentation for all Datarax modules. Each page is 
 | [Checkpoint](../checkpoint/index.md) | Pipeline state saving and restoration |
 | [Config](../config/index.md) | Configuration loading, schema, environment, registry |
 | [Samplers](../samplers/index.md) | Data sampling strategies (sequential, shuffle, range, epoch-aware) |
-| [Sharding](../sharding/index.md) | Array and per-process sharding modules |
+| [Sharding](../sharding/index.md) | A pipeline's batches on a data mesh, within or across processes |
 | [Batching](../batching/index.md) | Batch assembly and collation |
 | [Control](../control/index.md) | Prefetching and iteration control |
 | [Performance](../performance/index.md) | Roofline (calibrax), goodput, synchronization |

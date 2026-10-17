@@ -101,12 +101,18 @@ pipeline = (
 )
 # Then add callbacks for metrics collection
 
-# Level 4: Add sharding for distributed execution
+# Level 4: Place each batch on a data mesh
 mesh = DeviceMeshManager.create_data_parallel_mesh()
-sharding = create_data_parallel_sharding(mesh)
+pipeline = Pipeline(
+    source=source,
+    stages=[normalizer, augmenter],
+    batch_size=32,
+    rngs=nnx.Rngs(0),
+    sharding=create_data_parallel_sharding(mesh),
+)
 with jax.set_mesh(mesh):
-    for batch in pipeline:
-        sharded_batch = place_batch_on_shards(batch, sharding)
+    for batch in pipeline:  # each batch arrives on the mesh
+        ...
 ```
 
 **Application in Documentation**:
@@ -843,14 +849,14 @@ Use this reference when creating migration sections:
 | Sequential | `SequentialSampler` | Default order | `SequentialSamplerModule` |
 | Shuffled | `RandomSampler` | `.shuffle()` | `Pipeline(..., shuffle=True)` |
 | Subset | `SubsetRandomSampler` | `.take()` | `RangeSampler` |
-| Distributed | `DistributedSampler` | `tf.distribute` | `JaxProcessSharder` |
+| Distributed | `DistributedSampler` | `tf.distribute` | `Pipeline(..., sharding=...)` |
 
 #### Distribution
 
 | Concept | PyTorch | TensorFlow | Datarax |
 |---------|---------|------------|---------|
 | Multi-device | `DistributedDataParallel` | `tf.distribute.Strategy` | `Mesh` + `NamedSharding` |
-| Data parallelism | `DistributedSampler` | `MirroredStrategy` | `JaxProcessSharder` |
+| Data parallelism | `DistributedSampler` | `MirroredStrategy` | `Pipeline(..., sharding=...)` |
 
 ### When to Include Migration Sections
 
