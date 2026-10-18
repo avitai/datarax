@@ -69,7 +69,9 @@ class NoiseOperatorConfig(ModalityOperatorConfig):
         pepper_value: Value for pepper pixels (None=auto-detect). Default: None
 
         # Poisson mode parameters:
-        lam_scale: Scale factor for Poisson lambda. Higher=more noise. Default: 1.0
+        lam_scale: Scale of the Poisson rate. Counts are drawn at rate pixel * lam_scale (pixels in
+            [0, 1] units) and divided by lam_scale, so the output's variance is pixel / lam_scale:
+            a higher lam_scale draws less noise. Default: 1.0
 
         # Common parameters:
         clip_range: Range for clipping output values. Default: (0.0, 1.0)
@@ -160,6 +162,10 @@ class NoiseOperator(ModalityOperator):
     - Salt & Pepper: Random pixels → salt_value or pepper_value
     - Poisson: output = Poisson(input * lam_scale) / lam_scale. A Poisson draw is an integer
       count, so this mode passes no gradient to its input; Gaussian and salt-and-pepper noise do.
+
+    Every draw is loop-free, so a GPU queues the batch program without the host waiting on it:
+    the counts come from JAX's loop-free Poisson sampler, and the [0, 1] or [0, 255] range is
+    told by a select on the image's maximum.
 
     Draws per-record noise from the record's own key. ``eval()``, or
     ``nnx.view(operator, deterministic=True)``, returns the record unchanged.
@@ -275,16 +281,10 @@ class NoiseOperator(ModalityOperator):
         if self.config.salt_prob == 0.0 and self.config.pepper_prob == 0.0:
             return value
 
-        # Determine salt and pepper values (auto-detect if None)
-        if self.config.salt_value is None:
-            # Auto-detect based on image max value
-            salt_val = jax.lax.cond(
-                jnp.max(value) > 1.5,
-                lambda: 255.0,  # [0, 255] range
-                lambda: 1.0,  # [0, 1] range
-            )
-        else:
-            salt_val = self.config.salt_value
+        # Salt is the top of the image's range unless the config names it.
+        salt_val = (
+            self._range_max(value) if self.config.salt_value is None else self.config.salt_value
+        )
 
         pepper_val = 0.0 if self.config.pepper_value is None else self.config.pepper_value
 
@@ -305,30 +305,38 @@ class NoiseOperator(ModalityOperator):
         value: jax.Array,
         key: jax.Array | None,
     ) -> jax.Array:
-        """Apply Poisson noise to image."""
+        """Apply Poisson noise to an image in [0, 1] or [0, 255].
+
+        Counts are drawn at rate pixel * lam_scale in [0, 1] units, divided by lam_scale and
+        returned in the image's range.
+        """
         # Ensure image is non-negative for Poisson
         value = jnp.maximum(value, 0)
 
         poisson_rng = require_key(key, self)
+        top = self._range_max(value)
+        lam = value * self.config.lam_scale / top
+        return self._counts(poisson_rng, lam) * top / self.config.lam_scale
 
-        # Apply Poisson noise based on image range
-        return jax.lax.cond(
-            jnp.max(value) > 1.5,
-            lambda: self._poisson_255_range(value, poisson_rng),
-            lambda: self._poisson_01_range(value, poisson_rng),
-        )
+    @staticmethod
+    def _range_max(image: jax.Array) -> jax.Array:
+        """The top of the image's value range, 255 or 1, told by its maximum, in its dtype.
 
-    def _poisson_255_range(self, image: jax.Array, rng: jax.Array) -> jax.Array:
-        """Apply Poisson noise to [0, 255] range image."""
-        lam = image * self.config.lam_scale / 255.0
-        return self._counts(rng, lam) * 255.0 / self.config.lam_scale
-
-    def _poisson_01_range(self, image: jax.Array, rng: jax.Array) -> jax.Array:
-        """Apply Poisson noise to [0, 1] range image."""
-        lam = image * self.config.lam_scale
-        return self._counts(rng, lam) / self.config.lam_scale
+        A select, not ``lax.cond``: on a GPU a ``conditional`` copies its branch index to the host
+        and waits for it, which would make the host wait for the device on every batch.
+        """
+        return jnp.where(jnp.max(image) > 1.5, 255.0, 1.0).astype(image.dtype)
 
     @staticmethod
     def _counts(rng: jax.Array, lam: jax.Array) -> jax.Array:
-        """Poisson counts of rate ``lam``, drawn as integers, in ``lam``'s dtype."""
-        return jax.random.poisson(rng, lam=lam, shape=lam.shape).astype(lam.dtype)
+        """Poisson counts of rate ``lam``, drawn as integers, in ``lam``'s dtype.
+
+        Drawn with JAX's loop-free sampler (``method="approximate"``). Below a rate of 7 it
+        inverts the Poisson cdf over 20 terms, exact but for the mass past 19 and float32
+        rounding: within 2e-7 in total variation for rates up to 3. Above 7 it uses the
+        Peizer-Pratt normal approximation, within 1e-4. The rejection sampler JAX uses by default
+        lowers to ``while`` loops that make the host wait for the device on a GPU, and takes only
+        threefry2x32 keys; this one takes a key of any implementation.
+        """
+        draws = jax.random.poisson(rng, lam=lam, shape=lam.shape, method="approximate")
+        return draws.astype(lam.dtype)

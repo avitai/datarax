@@ -294,7 +294,7 @@ MixUp batch:
   Image shape: (32, 32, 32, 3)
   Labels (unchanged integers): [8 9 4 7 5 6 5 8]
   Partner of each record: [ 4 21 14  3 28 29 24 27]
-  Mixing ratio λ: 0.014
+  Mixing ratio λ: 0.260
 ```
 
 ### Visualize MixUp Results
@@ -438,7 +438,7 @@ print(f"  Fraction of each image kept, λ: {float(cutmix_batch.batch_state[MIX_L
 ```
 CutMix batch:
   Image shape: (32, 32, 32, 3)
-  Fraction of each image kept, λ: 0.453
+  Fraction of each image kept, λ: 0.768
 ```
 
 ### Visualize CutMix Results

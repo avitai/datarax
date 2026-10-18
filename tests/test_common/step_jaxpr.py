@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -49,10 +50,37 @@ def compiled_step(pipeline: Pipeline) -> str:
     as a conditional on a constant in the lowered StableHLO and is resolved by the compiler.
     """
     step, arguments = _one_batch(pipeline)
-    text = jax.jit(step).lower(*arguments).compile().as_text()
+    return compiled_text(step, *arguments)
+
+
+def compiled_text(function: Callable[..., Any], *arguments: Any) -> str:
+    """The optimized HLO of ``jax.jit(function)`` over ``arguments``, for the default platform."""
+    text = jax.jit(function).lower(*arguments).compile().as_text()
     if text is None:
-        raise RuntimeError("the backend gave no text for the compiled step")
+        raise RuntimeError("the backend gave no text for the compiled program")
     return text
+
+
+_WHILE = re.compile(r"\bwhile\(")
+_CONDITIONAL = re.compile(r"\bconditional\(")
+
+
+def host_round_trips(hlo: str) -> list[str]:
+    """The instructions of an optimized HLO module that make the host wait for the device on GPU.
+
+    XLA's GPU runtime runs a ``while`` whose trip count it has not proved by copying the loop
+    predicate to the host and waiting for it on every iteration, and a ``conditional`` by copying
+    its branch index the same way (``WhileThunk`` and ``ConditionalThunk``); a loop annotated with
+    a ``known_trip_count`` runs with no copy. The CPU compiler annotates trip counts and keeps
+    conditionals as the GPU compiler does, so the count holds on any backend. Whole instruction
+    lines are matched: a tuple-typed ``while`` carries ``/*index=*/`` comments before its opcode.
+    """
+    return [
+        line.strip()
+        for line in hlo.splitlines()
+        if _CONDITIONAL.search(line)
+        or (_WHILE.search(line) is not None and "known_trip_count" not in line)
+    ]
 
 
 def sub_jaxprs(jaxpr: Jaxpr) -> list[Jaxpr]:
