@@ -215,8 +215,12 @@ print(f"steps per epoch: {STEPS_PER_EPOCH}, the last one of {LAST_BATCH} records
 The reference's `ResNet18()` is `ResNet(PreActBlock, [2, 2, 2, 2])` from its `models/resnet.py`:
 a 3 x 3 stem convolution followed by batch norm and ReLU, four stages of two pre-activation
 blocks (64, 128, 256, 512 channels; strides 1, 2, 2, 2), 4 x 4 average pooling and a linear head.
-A pre-activation block applies batch norm and ReLU before each convolution; when the shape
-changes, its 1 x 1 projection shortcut reads the pre-activated input. All convolutions are
+A pre-activation block applies batch norm and ReLU before each convolution, and its shortcut
+reads that pre-activated input: the block adds `relu(bn(x))` itself when the shape is unchanged
+(the reference's empty `nn.Sequential` shortcut applied to it) and a 1 x 1 projection of it when
+the shape changes. This is the reference's code, not the identity mapping that adds `x`; with the
+reference's weights copied in, this model's output matches the reference's to float32 rounding
+(about 1e-6 relative, train and eval mode). All convolutions are
 bias-free with padding 1 on both sides. Initialization follows PyTorch's defaults, which the
 reference uses: convolution and linear weights uniform with variance 1 / (3 fan_in), the linear
 bias uniform in plus or minus 1 / sqrt(fan_in), batch norm with PyTorch's momentum 0.1 (NNX's
@@ -268,7 +272,7 @@ class PreActBlock(nnx.Module):
 
     def __call__(self, x: jax.Array) -> jax.Array:
         out = nnx.relu(self.bn1(x))
-        shortcut = x if self.shortcut is None else self.shortcut(out)
+        shortcut = out if self.shortcut is None else self.shortcut(out)
         out = self.conv1(out)
         out = self.conv2(nnx.relu(self.bn2(out)))
         return out + shortcut
