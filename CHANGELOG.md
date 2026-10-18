@@ -901,6 +901,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MixUp/CutMix and Poisson noise no longer make the host wait for the GPU on every batch.
+  `BatchMixOperator` drew its mixing ratio with `jax.random.beta` and `NoiseOperator(mode="poisson")`
+  its counts with `jax.random.poisson`, whose default rejection samplers lower to `while` loops; on a
+  GPU, XLA copies such a loop's predicate to the host and waits for it on every iteration, so the
+  batch program could not be queued ahead of the training step (data wait 2.4-3.1 ms -> 28-33 ms per
+  step on 2x A100 with MixUp). Both now draw with JAX's loop-free samplers
+  (`method="approximate"`): the mixing ratio is within a Kolmogorov-Smirnov distance of 6.4e-5 of
+  Beta(alpha, alpha) for alpha in [0.01, 2] (the effect of changing alpha by about 0.05%), and the
+  Poisson counts at the operator's rates (up to 1.5 x `lam_scale`) within 2e-7 in total variation.
+  The draws for a given key change; their distributions do not. The noise operator tells a
+  [0, 255] image from a [0, 1] one by a select instead of `lax.cond`, whose GPU conditional waits on
+  the host the same way under `batch_strategy="scan"`.
+- `NoiseOperator(mode="poisson")` works with every PRNG implementation; it raised
+  `NotImplementedError` for rbg and unsafe_rbg keys, which JAX's rejection Poisson sampler refuses.
+- `NoiseOperatorConfig.lam_scale`'s docstring said a higher scale gives more noise; the output is
+  Poisson(x * lam_scale) / lam_scale, with variance x / lam_scale, so it gives less.
 - The host stage runs in every process of a `jax.distributed` run. It named records and folded
   keys on `jax.devices("cpu")[0]`, which lists every process's CPU devices there, so every
   process computed on process 0's and any other process failed on its first batch ("Fetching

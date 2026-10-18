@@ -565,32 +565,34 @@ class TestNoiseOperatorPoissonTransformations:
         assert result_images.shape == (4, 32, 32, 3)
         assert not jnp.allclose(result_images, images)
 
-    def test_poisson_different_scales(self):
-        """Test Poisson noise with different lambda scales."""
-        # Low scale (less noise)
-        config_low = NoiseOperatorConfig(
-            field_key="image",
-            mode="poisson",
-            lam_scale=0.1,
+    def test_a_larger_lam_scale_draws_less_noise(self):
+        """The output is Poisson(x * lam_scale) / lam_scale, whose variance is x / lam_scale."""
+        data = {"image": jnp.full((128, 128, 3), 0.5)}
+        variances = {}
+        for lam_scale in (1.0, 4.0):
+            config = NoiseOperatorConfig(
+                field_key="image", mode="poisson", lam_scale=lam_scale, clip_range=None
+            )
+            operator = NoiseOperator(config, rngs=nnx.Rngs(0))
+            result = operator.apply(Element(data, state={}), key=jax.random.key(0)).data["image"]
+            variances[lam_scale] = float(jnp.var(result))
+            # 49,152 pixels: the sample variance's relative error is about 1%.
+            assert variances[lam_scale] == pytest.approx(0.5 / lam_scale, rel=0.1)
+        assert variances[4.0] < variances[1.0]
+
+    @pytest.mark.parametrize("impl", ["threefry2x32", "rbg", "unsafe_rbg"])
+    def test_poisson_draws_from_a_key_of_any_implementation(self, impl: str):
+        """The counts come from the key of whichever PRNG implementation the caller uses."""
+        operator = NoiseOperator(
+            NoiseOperatorConfig(field_key="image", mode="poisson"), rngs=nnx.Rngs(0)
         )
-        operator_low = NoiseOperator(config_low, rngs=nnx.Rngs(0))
-
-        # High scale (more noise)
-        config_high = NoiseOperatorConfig(
-            field_key="image",
-            mode="poisson",
-            lam_scale=10.0,
-        )
-        operator_high = NoiseOperator(config_high, rngs=nnx.Rngs(0))
-
-        data = {"image": jnp.ones((32, 32, 3)) * 0.5}
-        state = {}
-
-        result_low = operator_low.apply(Element(data, state=state), key=jax.random.key(0)).data
-        result_high = operator_high.apply(Element(data, state=state), key=jax.random.key(0)).data
-
-        assert result_low["image"].shape == (32, 32, 3)
-        assert result_high["image"].shape == (32, 32, 3)
+        data = {"image": jnp.full((32, 32, 3), 0.5)}
+        key = jax.random.key(0, impl=impl)
+        result = operator.apply(Element(data, state={}), key=key).data["image"]
+        # Counts at rate 0.5, clipped to [0, 1]: a pixel is 1 with probability 1 - e^-0.5 = 0.39,
+        # and 3,072 pixels put the mean within 0.01 of it.
+        assert jnp.all((result == 0.0) | (result == 1.0))
+        assert 0.3 < float(jnp.mean(result)) < 0.5
 
     def test_poisson_01_range(self):
         """Test Poisson noise with [0, 1] range images."""
