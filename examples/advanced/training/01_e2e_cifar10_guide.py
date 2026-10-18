@@ -15,10 +15,10 @@
 | Metadata | Value |
 |----------|-------|
 | **Level** | Advanced |
-| **Runtime** | QUICK_MODE ~2 min (CPU); full run (200 epochs) ~45 min on one A100 |
+| **Runtime** | QUICK_MODE ~15 s (CPU); full run (200 epochs) ~20 min on one A100 |
 | **Prerequisites** | MixUp/CutMix tutorial, Operators tutorial |
 | **Format** | Python + Jupyter |
-| **Memory** | ~4 GB RAM |
+| **Memory** | ~2 GB RAM (QUICK_MODE) |
 
 ## Overview
 
