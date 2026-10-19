@@ -48,8 +48,8 @@ python examples/advanced/training/01_e2e_cifar10_guide.py
 
 The code below is the script as committed, with `QUICK_MODE = True`. The outputs and figures
 come from one full run with `QUICK_MODE = False`, the only line changed, on one NVIDIA
-A100-SXM4-80GB with jax 0.11.1 and flax 0.12.9. The 200 epochs took 20 minutes. A second
-full run that also set `USE_MIXUP = False` gives the ERM row of the results table.
+A100-SXM4-80GB with jax 0.11.1 and flax 0.12.9. The 200 epochs took about 18 minutes. A
+second full run that also set `USE_MIXUP = False` gives the ERM rows of the results table.
 
 ## Setup
 
@@ -74,6 +74,7 @@ import numpy as np
 import optax
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
+from substrax.testing.compiles import compiled_programs
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
@@ -353,8 +354,7 @@ and 150 as the reference steps it; optax counts steps, so the boundaries are tho
 
 The MixUp loss is the reference's `mixup_criterion`: lambda times the cross-entropy against each
 record's label plus (1 - lambda) times the cross-entropy against its partner's. Training accuracy
-weighs the two the same way. Both are summed on the device and read once an epoch, so the loop
-never waits for the device mid-epoch.
+weighs the two the same way. Both are summed on the device and read once an epoch.
 
 ```python
 def learning_rate_schedule() -> optax.Schedule:
@@ -444,20 +444,39 @@ whole test set in eval mode, as the reference does every epoch. The script check
 epoch that each training record was served once and that evaluation left batch norm's running
 statistics unchanged. The log prints the first epoch, every 20th and the last 10.
 
+The loop keeps one step in flight: after dispatching a step it waits for the step before, so the
+device runs one step while the pipeline serves the next batch. The time the loop spends waiting
+for the pipeline is the data wait. Each epoch line prints its median per step beside the median
+step time; while the wait stays well below the step, the data path keeps the device busy. The
+script also counts what jax compiles during training: each step function once per batch shape,
+which for the full run is the 128-record batch and the 80-record last one, and one test shape.
+
 ```python
-history = {"train_loss": [], "train_acc": [], "test_loss": [], "test_acc": [], "samples_s": []}
+history = {
+    "train_loss": [], "train_acc": [], "test_loss": [], "test_acc": [], "samples_s": [],
+    "data_wait_ms": [], "step_ms": [],
+}  # fmt: skip
 predictions = test_labels = np.zeros(0, np.int64)
-with closing(train_pipeline), closing(test_pipeline):
+with closing(train_pipeline), closing(test_pipeline), compiled_programs() as compiled:
     for epoch in range(EPOCHS):
         if epoch:
             train_pipeline.reset()
         model.train()
         loss_sum, correct_sum, records = jnp.zeros(()), jnp.zeros(()), 0
-        begin = time.perf_counter()
+        waits, steps, in_flight = [], [], None
+        begin = mark = time.perf_counter()
         for batch in train_pipeline:
+            served = time.perf_counter()
             batch_loss, batch_correct = train_step(model, optimizer, batch)
+            if in_flight is not None:
+                jax.block_until_ready(in_flight)
+            in_flight = batch_loss
             loss_sum, correct_sum = loss_sum + batch_loss, correct_sum + batch_correct
             records += batch["label"].shape[0]
+            now = time.perf_counter()
+            waits.append(served - mark)
+            steps.append(now - mark)
+            mark = now
         train_loss, train_acc = float(loss_sum) / records, 100.0 * float(correct_sum) / records
         seconds = time.perf_counter() - begin
         assert records == TRAIN_RECORDS, "every training record is served once an epoch"
@@ -467,40 +486,56 @@ with closing(train_pipeline), closing(test_pipeline):
             np.array_equal, trained, jax.device_get(nnx.state(model, nnx.BatchStat))
         )
         assert all(jax.tree.leaves(unchanged)), "evaluation leaves batch norm's statistics alone"
-        values = (train_loss, train_acc, test_loss, test_acc, records / seconds)
+        data_wait_ms = 1e3 * statistics.median(waits)
+        step_ms = 1e3 * statistics.median(steps)
+        values = (
+            train_loss, train_acc, test_loss, test_acc, records / seconds, data_wait_ms, step_ms
+        )  # fmt: skip
         for key, value in zip(history, values, strict=True):
             history[key].append(value)
         if epoch == 0 or (epoch + 1) % 20 == 0 or epoch >= EPOCHS - 10:
             print(
                 f"epoch {epoch + 1:3d}: train loss {train_loss:.4f}  train acc {train_acc:6.2f}%  "
                 f"test loss {test_loss:.4f}  test acc {test_acc:6.2f}%  "
-                f"({records / seconds:,.0f} samples/s)"
+                f"({records / seconds:,.0f} samples/s; data wait {data_wait_ms:.2f} ms "
+                f"of a {step_ms:.2f} ms step)"
             )
+
+# Each step function compiles once per batch shape it sees, and never again.
+train_shapes = len({BATCH_SIZE, LAST_BATCH})
+test_shapes = len({TEST_BATCH_SIZE, TEST_RECORDS % TEST_BATCH_SIZE or TEST_BATCH_SIZE})
+compiles = {name: compiled.count(f"jit({name})") for name in ("train_step", "eval_step")}
+assert compiles == {"train_step": train_shapes, "eval_step": test_shapes}, compiles
+print(
+    f"compiled during training: train_step {compiles['train_step']}x, "
+    f"eval_step {compiles['eval_step']}x (once per batch shape)"
+)
 ```
 
 **Terminal Output:**
 
 ```text
-epoch   1: train loss 2.0590  train acc  24.96%  test loss 1.7210  test acc  38.79%  (1,178 samples/s)
-epoch  20: train loss 1.1073  train acc  67.41%  test loss 0.5277  test acc  87.90%  (11,333 samples/s)
-epoch  40: train loss 0.9932  train acc  70.33%  test loss 0.5069  test acc  88.48%  (10,285 samples/s)
-epoch  60: train loss 1.0043  train acc  69.48%  test loss 0.4704  test acc  86.79%  (11,365 samples/s)
-epoch  80: train loss 0.9620  train acc  71.01%  test loss 0.4138  test acc  91.45%  (11,345 samples/s)
-epoch 100: train loss 0.9259  train acc  72.14%  test loss 0.3658  test acc  90.41%  (11,340 samples/s)
-epoch 120: train loss 0.7678  train acc  75.66%  test loss 0.2966  test acc  95.09%  (11,328 samples/s)
-epoch 140: train loss 0.7879  train acc  74.38%  test loss 0.2661  test acc  95.34%  (11,337 samples/s)
-epoch 160: train loss 0.7782  train acc  74.74%  test loss 0.2781  test acc  95.68%  (11,318 samples/s)
-epoch 180: train loss 0.7474  train acc  75.47%  test loss 0.2550  test acc  95.82%  (11,373 samples/s)
-epoch 191: train loss 0.7122  train acc  76.74%  test loss 0.2534  test acc  95.69%  (11,362 samples/s)
-epoch 192: train loss 0.7161  train acc  76.67%  test loss 0.2739  test acc  95.56%  (11,075 samples/s)
-epoch 193: train loss 0.7525  train acc  75.00%  test loss 0.2416  test acc  95.73%  (11,093 samples/s)
-epoch 194: train loss 0.7284  train acc  75.93%  test loss 0.2485  test acc  95.64%  (11,388 samples/s)
-epoch 195: train loss 0.7291  train acc  76.27%  test loss 0.2374  test acc  95.87%  (8,377 samples/s)
-epoch 196: train loss 0.7946  train acc  72.89%  test loss 0.2295  test acc  95.83%  (11,057 samples/s)
-epoch 197: train loss 0.7551  train acc  74.93%  test loss 0.2496  test acc  95.72%  (9,452 samples/s)
-epoch 198: train loss 0.7570  train acc  74.62%  test loss 0.2634  test acc  95.61%  (11,107 samples/s)
-epoch 199: train loss 0.7311  train acc  76.08%  test loss 0.2773  test acc  95.65%  (11,125 samples/s)
-epoch 200: train loss 0.7145  train acc  76.63%  test loss 0.2449  test acc  95.86%  (11,388 samples/s)
+epoch   1: train loss 2.0570  train acc  25.37%  test loss 1.8455  test acc  37.64%  (1,520 samples/s; data wait 1.00 ms of a 10.92 ms step)
+epoch  20: train loss 1.1031  train acc  67.63%  test loss 0.5059  test acc  88.72%  (10,987 samples/s; data wait 1.03 ms of a 10.91 ms step)
+epoch  40: train loss 0.9910  train acc  70.36%  test loss 0.5325  test acc  88.45%  (10,932 samples/s; data wait 1.18 ms of a 10.92 ms step)
+epoch  60: train loss 0.9994  train acc  69.51%  test loss 0.4583  test acc  87.59%  (11,277 samples/s; data wait 1.15 ms of a 10.92 ms step)
+epoch  80: train loss 0.9606  train acc  71.04%  test loss 0.4317  test acc  91.14%  (11,175 samples/s; data wait 1.13 ms of a 10.92 ms step)
+epoch 100: train loss 0.9241  train acc  72.17%  test loss 0.3524  test acc  91.18%  (11,287 samples/s; data wait 1.08 ms of a 10.91 ms step)
+epoch 120: train loss 0.7671  train acc  75.69%  test loss 0.2973  test acc  95.31%  (11,274 samples/s; data wait 1.10 ms of a 10.92 ms step)
+epoch 140: train loss 0.7882  train acc  74.28%  test loss 0.2697  test acc  95.44%  (11,282 samples/s; data wait 1.21 ms of a 10.93 ms step)
+epoch 160: train loss 0.7781  train acc  74.75%  test loss 0.2761  test acc  95.82%  (11,312 samples/s; data wait 1.16 ms of a 10.91 ms step)
+epoch 180: train loss 0.7466  train acc  75.34%  test loss 0.2503  test acc  95.90%  (11,308 samples/s; data wait 1.15 ms of a 10.91 ms step)
+epoch 191: train loss 0.7121  train acc  76.76%  test loss 0.2498  test acc  96.06%  (11,319 samples/s; data wait 1.08 ms of a 10.93 ms step)
+epoch 192: train loss 0.7148  train acc  76.66%  test loss 0.2697  test acc  95.84%  (11,274 samples/s; data wait 1.16 ms of a 10.92 ms step)
+epoch 193: train loss 0.7495  train acc  74.99%  test loss 0.2348  test acc  95.95%  (10,563 samples/s; data wait 1.11 ms of a 10.93 ms step)
+epoch 194: train loss 0.7302  train acc  75.96%  test loss 0.2454  test acc  95.87%  (10,914 samples/s; data wait 1.09 ms of a 10.92 ms step)
+epoch 195: train loss 0.7300  train acc  76.28%  test loss 0.2317  test acc  96.03%  (11,308 samples/s; data wait 1.16 ms of a 10.92 ms step)
+epoch 196: train loss 0.7929  train acc  72.97%  test loss 0.2271  test acc  95.93%  (11,317 samples/s; data wait 1.18 ms of a 10.92 ms step)
+epoch 197: train loss 0.7553  train acc  74.99%  test loss 0.2486  test acc  95.90%  (11,024 samples/s; data wait 1.07 ms of a 10.89 ms step)
+epoch 198: train loss 0.7564  train acc  74.63%  test loss 0.2587  test acc  95.74%  (10,874 samples/s; data wait 1.17 ms of a 10.93 ms step)
+epoch 199: train loss 0.7296  train acc  76.11%  test loss 0.2696  test acc  95.84%  (10,960 samples/s; data wait 1.04 ms of a 10.92 ms step)
+epoch 200: train loss 0.7139  train acc  76.65%  test loss 0.2419  test acc  95.91%  (11,264 samples/s; data wait 1.12 ms of a 10.92 ms step)
+compiled during training: train_step 2x, eval_step 1x (once per batch shape)
 ```
 
 ## Results
@@ -521,18 +556,22 @@ print(f"published (mixup-cifar10, Table 5, median of the last 10): {published:.2
 **Terminal Output:**
 
 ```text
-test error, median of the last 10 epochs: 4.30%
-test error, final epoch: 4.14%   best epoch: 4.11%
+test error, median of the last 10 epochs: 4.09%
+test error, final epoch: 4.09%   best epoch: 3.88%
 published (mixup-cifar10, Table 5, median of the last 10): 4.24%
 ```
 
 | run | median test error, last 10 epochs | final epoch | best epoch | published (Table 5) |
 |---|---|---|---|---|
-| MixUp, alpha 1 (this page) | 4.30% | 4.14% | 4.11% | 4.24% |
-| ERM (`USE_MIXUP = False`) | 5.35% | 5.25% | 5.25% | 5.53% |
+| MixUp, alpha 1 (outputs on this page) | 4.09% | 4.09% | 3.88% | 4.24% |
+| MixUp, alpha 1, second run | 4.30% | 4.14% | 4.11% | 4.24% |
+| ERM (`USE_MIXUP = False`) | 5.71% | 5.57% | 5.54% | 5.53% |
+| ERM, second run | 5.35% | 5.25% | 5.25% | 5.53% |
 
-Both runs land within 0.2 points of the paper's medians. MixUp lowers the error by 1.05
-points here and by 1.29 in the paper.
+The second run of each repeats the same training with the same seeds; on the GPU the
+results differ from run to run, by 0.21 points for MixUp and 0.36 for
+ERM here. Every run lands within 0.2 points of the paper's median. MixUp lowers the
+median error by 1.62 and 1.05 points in the two pairs, and by 1.29 in the paper.
 
 ### Training curves
 
@@ -610,16 +649,16 @@ for name, accuracy in zip(CLASSES, per_class, strict=True):
 ```text
 Saved: docs/assets/images/examples/e2e-confusion-matrix.png
 Saved: docs/assets/images/examples/e2e-per-class-accuracy.png
-    airplane:  96.70%
-  automobile:  98.60%
-        bird:  95.40%
-         cat:  91.70%
-        deer:  95.30%
+    airplane:  96.90%
+  automobile:  98.40%
+        bird:  94.70%
+         cat:  91.50%
+        deer:  95.70%
          dog:  92.50%
-        frog:  96.90%
-       horse:  97.70%
+        frog:  97.60%
+       horse:  97.50%
         ship:  97.30%
-       truck:  96.50%
+       truck:  97.00%
 ```
 
 ![Test confusion matrix](../../../assets/images/examples/e2e-confusion-matrix.png)
@@ -629,7 +668,8 @@ Saved: docs/assets/images/examples/e2e-per-class-accuracy.png
 ### Throughput
 
 Training samples per second in each epoch, the data path and the train step together. The
-first epoch includes compilation.
+first epoch includes compilation. Below the figure, the medians over the epochs after the
+first: throughput, and the data wait beside the step time.
 
 ```python
 figure, axis = plt.subplots(figsize=(9, 3.5))
@@ -642,13 +682,20 @@ plt.close()
 print(f"Saved: {output_dir / 'e2e-throughput-during-training.png'}")
 steady = history["samples_s"][1:] or history["samples_s"]
 print(f"median training throughput after the first epoch: {statistics.median(steady):,.0f} /s")
+steady_wait = history["data_wait_ms"][1:] or history["data_wait_ms"]
+steady_step = history["step_ms"][1:] or history["step_ms"]
+print(
+    f"median data wait after the first epoch: {statistics.median(steady_wait):.2f} ms "
+    f"of a {statistics.median(steady_step):.2f} ms step"
+)
 ```
 
 **Terminal Output:**
 
 ```text
 Saved: docs/assets/images/examples/e2e-throughput-during-training.png
-median training throughput after the first epoch: 11,139 /s
+median training throughput after the first epoch: 11,041 /s
+median data wait after the first epoch: 1.12 ms of a 10.92 ms step
 ```
 
 ![Training throughput by epoch](../../../assets/images/examples/e2e-throughput-during-training.png)
