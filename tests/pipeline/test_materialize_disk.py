@@ -14,6 +14,7 @@ once build it once.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -365,19 +366,30 @@ class TestReuseAndRebuild:
     ) -> None:
         directory = tmp_path / "copy"
         self._build(png_paths, directory)
-        inodes = {p.name: p.stat().st_ino for p in directory.iterdir() if p.suffix == ".npy"}
         if why == "no manifest":
             (directory / MANIFEST).unlink()
         decoded = tmp_path / "decoded.log"
 
-        self._build(
-            png_paths, directory, decoder=PngDecoder(log=str(decoded)), rebuild=why == "rebuild"
-        )
+        # The old files are held open across the rebuild, as a reader's maps hold them: a freed
+        # inode's number is handed to the next file created (ext4), so numbers compared after
+        # the old files are released would say nothing.
+        with contextlib.ExitStack() as held:
+            old = {
+                p.name: held.enter_context(p.open("rb"))
+                for p in directory.iterdir()
+                if p.suffix == ".npy"
+            }
+            inodes = {name: os.fstat(handle.fileno()).st_ino for name, handle in old.items()}
+            self._build(
+                png_paths, directory, decoder=PngDecoder(log=str(decoded)), rebuild=why == "rebuild"
+            )
+            unlinked = {name: os.fstat(handle.fileno()).st_nlink for name, handle in old.items()}
 
         assert len(logged(decoded)) == _RECORDS
         after = {p.name: p.stat().st_ino for p in directory.iterdir() if p.suffix == ".npy"}
         assert after.keys() == inodes.keys()
         assert all(after[name] != inodes[name] for name in inodes)
+        assert set(unlinked.values()) == {0}  # the old files were unlinked, not rewritten
 
     def test_a_reader_keeps_the_old_rows_and_one_opening_mid_rebuild_is_refused(
         self, png_paths: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
