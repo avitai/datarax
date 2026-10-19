@@ -16,9 +16,12 @@ the training process's Grain worker processes. Which runs it follows the read, a
 pipeline: a read that holds the GIL (``HostRead.GIL_BOUND``) is decoded by the workers a RAM budget
 admits (``host_resources``), and only from two of them, since one worker is slower than the
 calling thread; a GIL-free read (columns, memory maps) on the calling thread, which outpaces any
-worker count. Without a budget, the calling thread decodes. Workers write a copy's rows in place
-and send back only each unit's provenance and digest, so no row crosses ``/dev/shm``; for RAM they
-send each unit's decoded arrays, which the training process copies into its columns.
+worker count. Without a budget, the calling thread decodes. Workers write a copy's fixed rows in
+place and send back each unit's provenance and digest, so no fixed row crosses ``/dev/shm``; a
+ragged field's total is known only once decoded, so its values and offsets are sent back and the
+training process appends them in unit order. For RAM workers send each unit's decoded arrays,
+which the training process copies into its columns; a source holding a ragged field is written
+into a copy only.
 
 Nothing is placed on a device and nothing is traced: the result is a source for a ``Pipeline``,
 whose host stage reads it. The argument is never changed.
@@ -45,6 +48,7 @@ from datarax.core.data_source import (
     SourceIdentified,
 )
 from datarax.core.host_resources import HostResources
+from datarax.core.ragged import RaggedColumn
 from datarax.pipeline import host_workers
 from datarax.pipeline.host_workers import (
     check_all_arrived,
@@ -73,7 +77,16 @@ from datarax.sources.decoded_copy._files import (
 )
 from datarax.sources.decoded_copy._layout import ColumnLayout, unit_count, UNIT_RECORDS, unit_rows
 from datarax.sources.decoded_copy._manifest import identity_differences, read_manifest
-from datarax.sources.decoded_copy._units import first_read, unit_digest, UnitRead, write_unit
+from datarax.sources.decoded_copy._units import (
+    first_read,
+    in_layout_order,
+    ragged_parts,
+    read_unit,
+    refuse_ragged_in_memory,
+    unit_digest,
+    UnitRead,
+    write_unit,
+)
 from datarax.sources.memory_source import MemorySource
 from datarax.sources.streaming_disk_source import StreamingDiskSource
 
@@ -127,11 +140,13 @@ def materialize(  # noqa: DOC503 - begin_copy raises the OSError
         ValueError: If the budget is below what the build holds, ``directory`` is on a networked
             or FUSE filesystem or holds files no copy writes, or a record is unlike the first.
         OSError: If the copy's files cannot be reserved (a full disk).
+        NotImplementedError: If a source holding a ragged field is asked into RAM.
     """
     _refuse_unbuildable(source)
     if unit_records < 1:
         raise ValueError(f"unit_records is at least 1; got {unit_records}")
     if directory is None:
+        refuse_ragged_in_memory(source)
         return _into_memory(source, host_resources, unit_records)
     if not isinstance(source, SourceIdentified):
         raise TypeError(
@@ -173,7 +188,7 @@ def _refuse_unbuildable(source: DataSourceModule) -> None:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _WriteUnit:
-    """A worker's task for a copy: write a unit's rows in place; send back what proves it.
+    """A worker's task for a copy: write a unit's fixed rows in place; send back the rest.
 
     Attributes:
         source: The source.
@@ -183,19 +198,20 @@ class _WriteUnit:
     source: DataSourceModule
     files: CopyFiles
 
-    def __call__(self, unit: int, read: UnitRead | None = None) -> tuple[int, Any, bytes]:
-        """Write ``unit`` (``read`` if given): its index, provenance as plain dicts, digest."""
+    def __call__(
+        self, unit: int, read: UnitRead | None = None
+    ) -> tuple[int, Any, bytes, dict[str, RaggedColumn]]:
+        """Write ``unit`` (``read`` if given): its index, provenance, digest, ragged fields."""
+        rows = self.files.unit_rows(unit)
+        layout = self.files.layout
+        read = read or read_unit(self.source, rows, with_provenance=True)
         with self.files.rows(unit) as out:
             provenance = write_unit(
-                self.source,
-                self.files.unit_rows(unit),
-                out,
-                layout=self.files.layout,
-                with_provenance=True,
-                read=read,
+                self.source, rows, out, layout=layout, with_provenance=True, read=read
             )
-            digest = unit_digest(out)
-        return unit, crossing_provenance(provenance, unit), digest
+            ragged = ragged_parts(read, layout)
+            digest = unit_digest(in_layout_order(layout, out, ragged))
+        return unit, crossing_provenance(provenance, unit), digest, ragged
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -218,7 +234,7 @@ class _DecodeUnit:
         """Decode ``unit`` (``read`` if given): its index, rows of every column, provenance."""
         rows = unit_rows(unit, self.layout.length, self.unit_records)
         out = {
-            c.name: np.empty((len(rows), *c.shape), np.dtype(c.dtype)) for c in self.layout.columns
+            c.name: np.empty((len(rows), *c.shape), np.dtype(c.dtype)) for c in self.layout.fixed
         }
         provenance = write_unit(
             self.source, rows, out, layout=self.layout, with_provenance=True, read=read
@@ -462,10 +478,11 @@ def _write_copy(
     with begin_copy(directory, layout, unit_records=unit_records) as files:
         task = _WriteUnit(source, files)
         digests: list[bytes] = []
-        with files.provenance() as provenance:
+        with files.provenance() as provenance, files.ragged() as appended:
             first = task(0, unit_zero)
             digests.append(first[2])
             provenance.write(first[1] or ())
+            appended.write(first[3])
             workers = _workers(
                 source,
                 resources,
@@ -479,9 +496,10 @@ def _write_copy(
                 if workers
                 else (lambda: (task(unit) for unit in range(1, files.units)))
             )
-            for _, records, digest in answers():
+            for _, records, digest, ragged in answers():
                 digests.append(digest)
                 provenance.write(records or ())
+                appended.write(ragged)
         finish_copy(files, unit_digests=digests, identity=identity)
 
 

@@ -44,13 +44,12 @@ from datarax.core.element_batch import Batch, Element
 from datarax.core.host_values import HostColumns, HostProvenance, HostRagged
 from datarax.core.index_words import low_words, to_words
 from datarax.core.ragged import (
-    column_lengths,
+    field_lengths,
     is_ragged,
     ragged_column,
-    ragged_lengths,
     RaggedColumn,
-    take_column,
-    take_ragged,
+    refuse_unpacked_read,
+    take_field,
     varies_along_first_axis_only,
 )
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
@@ -608,6 +607,17 @@ class EagerSource(DataSourceModule):
         """
         return self._ragged_names
 
+    @property
+    def field_names(self) -> tuple[str, ...]:  # noqa: DOC502 - the base refuses
+        """Every numeric field the ragged read serves, by path: the columns, then the ragged.
+
+        Raises:
+            NotImplementedError: If the source does not serve the ragged read.
+        """
+        if not self._READS_RAGGED:
+            return super().field_names
+        return (*field_names(self.data), *self._ragged_names)
+
     def lengths(self, indices: ArrayLike, field: str) -> np.ndarray:  # noqa: DOC502 - checks raise
         """Each named record's length in ``field``: its array's along the first axis, a scalar 1.
 
@@ -624,11 +634,7 @@ class EagerSource(DataSourceModule):
         """
         if not self._READS_RAGGED:
             return super().lengths(indices, field)
-        rows = host_rows(record_words(indices), self.length)
-        held = self._field(field)
-        if isinstance(held, RaggedColumn):
-            return ragged_lengths(held, rows)
-        return column_lengths(held, rows)
+        return field_lengths(self._field(field), host_rows(record_words(indices), self.length))
 
     def get_ragged(  # noqa: DOC502 - the checks it calls raise
         self, indices: ArrayLike, field: str
@@ -652,11 +658,7 @@ class EagerSource(DataSourceModule):
         """
         if not self._READS_RAGGED:
             return super().get_ragged(indices, field)
-        rows = host_rows(record_words(indices), self.length)
-        held = self._field(field)
-        if isinstance(held, RaggedColumn):
-            return take_ragged(held, rows)
-        return take_column(held, rows)
+        return take_field(self._field(field), host_rows(record_words(indices), self.length))
 
     def _field(self, field: str) -> RaggedColumn | np.ndarray:
         """The ragged field or column named ``field``.
@@ -684,7 +686,7 @@ class EagerSource(DataSourceModule):
             )
         return columns[field]
 
-    def _refuse_unpacked(self) -> None:
+    def _refuse_unpacked(self) -> None:  # noqa: DOC502 - refuse_unpacked_read raises
         """Refuse an unpacked read of a source holding a ragged field, naming the field and fixes.
 
         It reads the plain field names only, never the holder: a traced path reads a stand-in of
@@ -693,13 +695,7 @@ class EagerSource(DataSourceModule):
         Raises:
             ValueError: If the source holds a ragged field.
         """
-        if not self._ragged_names:
-            return
-        raise ValueError(
-            f"field {self._ragged_names[0]!r} is ragged (its records differ in length along their "
-            "first axis), but a batch's shapes are static: pack records with segment ids, or pad "
-            "the field to a fixed length along its first axis and keep its mask or length in data"
-        )
+        refuse_unpacked_read(self._ragged_names)
 
     @property
     def length(self) -> int:

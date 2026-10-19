@@ -145,13 +145,64 @@ def take_column(column: np.ndarray, rows: np.ndarray) -> tuple[np.ndarray, np.nd
     return values, offsets
 
 
+def field_lengths(field: RaggedColumn | np.ndarray, rows: np.ndarray) -> np.ndarray:
+    """The lengths of records ``rows`` of a field, ragged or a fixed column.
+
+    Args:
+        field: The field.
+        rows: Row numbers, any order, repeats allowed.
+
+    Returns:
+        int64 ``(n,)``.
+    """
+    if isinstance(field, RaggedColumn):
+        return ragged_lengths(field, rows)
+    return column_lengths(field, rows)
+
+
+def take_field(field: RaggedColumn | np.ndarray, rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Records ``rows`` of a field, ragged or a fixed column, as values and offsets.
+
+    Args:
+        field: The field.
+        rows: Row numbers, any order, repeats allowed.
+
+    Returns:
+        Their cells, record after record, and their int64 offsets from 0.
+    """
+    if isinstance(field, RaggedColumn):
+        return take_ragged(field, rows)
+    return take_column(field, rows)
+
+
+def refuse_unpacked_read(ragged: Sequence[str]) -> None:
+    """Refuse an unpacked read of a source holding the ragged fields ``ragged``, naming one.
+
+    Args:
+        ragged: The source's ragged fields, by name.
+
+    Raises:
+        ValueError: If there is one, naming it, packing and padding.
+    """
+    if not ragged:
+        return
+    raise ValueError(
+        f"field {ragged[0]!r} is ragged (its records differ in length along their first axis), "
+        "but a batch's shapes are static: pack records with segment ids, or pad the field to a "
+        "fixed length along its first axis and keep its mask or length in data"
+    )
+
+
 __all__ = [
     "RaggedColumn",
     "column_lengths",
+    "field_lengths",
     "is_ragged",
     "ragged_column",
     "ragged_lengths",
+    "refuse_unpacked_read",
     "take_column",
+    "take_field",
     "take_ragged",
     "varies_along_first_axis_only",
 ]

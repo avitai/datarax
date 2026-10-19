@@ -2,7 +2,9 @@
 
 Workers write their units' rows straight into the copy's reserved ``.partial`` files (shared
 memory maps of one local file), and send back only each unit's provenance and digest: no row
-crosses ``/dev/shm`` and no worker flushes a map; the training process fsyncs each file once.
+crosses ``/dev/shm`` and no worker flushes a map; the training process fsyncs each file once. A
+ragged field's values and offsets are sent back for the training process to append, while the
+fixed rows beside them are written in place.
 The files are the same whatever wrote them. A complete copy of the same source is returned as it
 is, wherever the directory was moved; a changed source, a copy without its manifest, or
 ``rebuild=True`` writes it again, its manifest unlinked first, so a reader opening it meanwhile is
@@ -33,6 +35,7 @@ from datarax.pipeline import host_workers, materialization, materialize
 from datarax.sources import from_tfds, open_decoded_copy, StreamingDiskSource
 from datarax.sources.decoded_copy._layout import MANIFEST
 from tests.test_common.decoded_copies import every_record, write_copy
+from tests.test_common.ragged_sources import IdentifiedRaggedSource, RAGGED, ragged_records
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.tfds_golden import digests, EAGER_BUILD
 from tests.test_common.worker_reads import (
@@ -129,12 +132,38 @@ class TestWritingInPlace:
         )
 
         assert len(crossing.elements) == -(-_RECORDS // _UNIT) - 1
-        for unit, provenance, digest in crossing.elements:
+        for unit, provenance, digest, ragged in crossing.elements:
+            assert ragged == {}  # a source without a ragged field sends none
             leaves = jax.tree.leaves((unit, provenance, digest))
             assert not any(isinstance(leaf, np.ndarray) for leaf in leaves)
             assert len(digest) == 32
             size = host_workers.pickled_bytes((unit, provenance, digest))
             assert size <= host_workers.pickled_bytes(provenance) + 128
+
+    @pytest.mark.skipif(not PROCESS_COUNTS, reason="fewer than two CPUs: no worker processes")
+    def test_workers_send_back_a_ragged_field_and_write_its_fixed_rows_in_place(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        crossing = _Crossing(monkeypatch)
+        records = ragged_records(_RECORDS)
+
+        materialize(
+            IdentifiedRaggedSource(records),
+            host_resources=resources(PROCESS_COUNTS[0]),
+            directory=tmp_path / "copy",
+            unit_records=_UNIT,
+        )
+
+        assert len(crossing.elements) == -(-_RECORDS // _UNIT) - 1
+        for unit, provenance, digest, ragged in crossing.elements:
+            rows = records[unit * _UNIT : (unit + 1) * _UNIT]
+            assert sorted(ragged) == sorted(RAGGED)
+            np.testing.assert_array_equal(
+                ragged["tokens"].values, np.concatenate([r["tokens"] for r in rows])
+            )
+            assert ragged["tokens"].offsets[0] == 0
+            leaves = jax.tree.leaves((unit, provenance, digest))
+            assert not any(isinstance(leaf, np.ndarray) for leaf in leaves)  # no fixed row
 
     @pytest.mark.skipif(not PROCESS_COUNTS, reason="fewer than two CPUs: no worker processes")
     @pytest.mark.skipif(

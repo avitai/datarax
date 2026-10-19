@@ -269,7 +269,9 @@ holding a ragged field refuses every unpacked read (`get_batch`, indexing, itera
 `element_spec`), naming the field. Packing reads such a source through
 `source.lengths(indices, field)` and `source.get_ragged(indices, field)`, which return each
 record's length and the records' values with their offsets, for any field: a column's records
-count its row length, and a scalar counts 1. Other sources refuse a field whose shape varies,
+count its row length, and a scalar counts 1; `source.field_names` names every field. A
+[decoded copy](../sources/decoded_copy.md) of such a source keeps the ragged field on disk as
+values and offsets and serves the same read. Other sources refuse a field whose shape varies,
 and so does every source when the records differ past their first axis, which packing cannot
 join: pad the field (with its mask or length in `data`).
 
