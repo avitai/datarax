@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.pack_plan`: `plan_rows` packs a source's variable-length records into rows of a
+  static length by first fit (each record, in a given order, into the leftmost row with room;
+  a row holds at most `max_segments` records), a window of `window` records at a time (default
+  4096; no row spans two windows, so planning holds one window), the same rows as
+  Megatron-Bridge's `first_fit` and NeMo-RL's `FirstFitPacker` on the same order. Several packed
+  fields each have their own row length and a record goes only where every field fits; a record
+  longer than its row is refused naming it, the field, its length and the row length. The plan is
+  a directory read through a memory map (`PackPlan.open`, `PackPlan.take`): the records in row
+  order and each row's start, 8 bytes a record and 8 a row boundary; a plan of another version
+  is refused naming both.
+- `batch_ops.pack_rows`: planned rows' records side by side, each packed field `f` as `f`, its
+  `f_segment_ids` (from 1, 0 in unused cells), `f_positions` (restarting in each record) and
+  `f_segment_indices` (`(R, max_segments, 2)` uint32 identities, `PADDING_INDEX` in unused
+  slots), host NumPy.
 - `Pipeline(..., sharding=NamedSharding(mesh, P("data")))` (and `Pipeline.from_dag`,
   `Pipeline.from_arrays`): iteration places each batch on the data mesh, rows on the sharding and
   `batch_state` replicated, through substrax `place_batch_on_shards` with the

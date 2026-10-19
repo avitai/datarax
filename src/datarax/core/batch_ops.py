@@ -3,8 +3,8 @@
 Inside a compiled step they trace into the step and fuse with what consumes them, so a slice or a
 concatenation costs no copy of its own. On a host batch of NumPy arrays the construction and
 regrouping operations (``from_arrays``, ``from_stacked``, ``element``, ``slice_rows``, ``take``,
-``split``, ``as_chunk``, ``concatenate``, ``stack``) stay on the host, slices and reshapes as NumPy
-views, until the batch is placed. The padding operations (``mask``, ``compact``,
+``split``, ``as_chunk``, ``concatenate``, ``stack``, ``pack_rows``) stay on the host, slices and
+reshapes as NumPy views, until the batch is placed. The padding operations (``mask``, ``compact``,
 ``record_count``) are step operations and use ``jax.numpy``. Called eagerly on device arrays every
 operation works, one dispatch per leaf.
 
@@ -378,6 +378,148 @@ def shardings(batch: Batch, row: Sharding, replicated: Sharding) -> Batch:
     return per_record.replace(batch_state=jax.tree.map(lambda _: replicated, batch.batch_state))
 
 
+def _row_slots(
+    identities: np.ndarray, row_starts: np.ndarray, max_segments: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Each record's row and slot, and the rows' identities ``(R, S, 2)`` padded per slot.
+
+    Args:
+        identities: The records' identities, ``(count, 2)`` uint32 words, row after row.
+        row_starts: Each row's first record and the end.
+        max_segments: The slots a row has.
+
+    Returns:
+        Each record's row, each record's slot in its row, and the rows' slot identities.
+
+    Raises:
+        ValueError: If the row starts do not cover the records, or a row holds more than
+            ``max_segments`` records, naming the row.
+    """
+    count = identities.shape[0]
+    if row_starts[0] != 0 or row_starts[-1] != count:
+        raise ValueError(f"row starts {row_starts[[0, -1]].tolist()} do not cover {count} records")
+    held = np.diff(row_starts)
+    crowded = np.nonzero(held > max_segments)[0]
+    if crowded.size:
+        row = int(crowded[0])
+        raise ValueError(
+            f"row {row} holds {int(held[row])} records, more than max_segments {max_segments}"
+        )
+    row_of = np.repeat(np.arange(len(held)), held)
+    slot = np.arange(count) - np.repeat(row_starts[:-1], held)
+    slots = np.broadcast_to(np.asarray(PADDING_INDEX, np.uint32), (len(held), max_segments, 2))
+    slots = slots.copy()
+    slots[row_of, slot] = identities
+    return row_of, slot, slots
+
+
+def _pack_field(  # noqa: PLR0913 - one field's values and the rows' layout
+    field: str,
+    values: np.ndarray,
+    offsets: np.ndarray,
+    row_starts: np.ndarray,
+    row_of: np.ndarray,
+    slot: np.ndarray,
+    row_length: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One field's packed values, segment ids and positions, ``(R, row_length, ...)``.
+
+    Args:
+        field: The field's name, for the refusals.
+        values: The records' segments concatenated along axis 0.
+        offsets: The segment boundaries, one more than the records.
+        row_starts: Each row's first record and the end.
+        row_of: Each record's row.
+        slot: Each record's slot in its row.
+        row_length: The field's row length.
+
+    Returns:
+        The packed values, the segment ids and the positions.
+
+    Raises:
+        ValueError: If the offsets do not name one segment per record, or a row's segments are
+            longer than ``row_length``, naming the row and the field.
+    """
+    if offsets.shape != (len(row_of) + 1,):
+        raise ValueError(
+            f"offsets of {field!r} name {len(offsets) - 1} records; the identities name "
+            f"{len(row_of)}"
+        )
+    lengths = np.diff(offsets)
+    before = np.concatenate([[0], np.cumsum(lengths)])
+    row_base = before[row_starts[:-1]]
+    used = before[row_starts[1:]] - row_base
+    over = np.nonzero(used > row_length)[0]
+    if over.size:
+        row = int(over[0])
+        raise ValueError(
+            f"row {row}'s {field!r} holds {int(used[row])} cells, more than its row length "
+            f"{row_length}"
+        )
+    position = np.arange(offsets[0], offsets[-1]) - np.repeat(offsets[:-1], lengths)
+    cell_row = np.repeat(row_of, lengths)
+    cell = np.repeat(before[:-1] - np.repeat(row_base, np.diff(row_starts)), lengths) + position
+    rows = len(row_starts) - 1
+    packed = np.zeros((rows, row_length, *values.shape[1:]), values.dtype)
+    packed[cell_row, cell] = values[offsets[0] : offsets[-1]]
+    segment_ids = np.zeros((rows, row_length), np.int32)
+    segment_ids[cell_row, cell] = np.repeat(slot + 1, lengths)
+    positions = np.zeros((rows, row_length), np.int32)
+    positions[cell_row, cell] = position
+    return packed, segment_ids, positions
+
+
+def pack_rows(  # noqa: PLR0913 - the records' segments and the rows' layout
+    values: Mapping[str, np.ndarray],
+    offsets: Mapping[str, np.ndarray],
+    identities: np.ndarray,
+    row_starts: np.ndarray,
+    *,
+    row_lengths: Mapping[str, int],
+    max_segments: int,
+) -> dict[str, np.ndarray]:
+    """Lay planned rows' records side by side, each field at its own row length (design D9).
+
+    The records are given row after row, as a pack plan's ``take`` returns them. Each packed
+    field ``f`` becomes ``f`` ``(R, row length, ...)``, the records' values in order and zeros
+    after them; ``f_segment_ids`` ``(R, row length)`` int32 numbering a row's records from 1, 0 in
+    unused cells; ``f_positions`` ``(R, row length)`` int32 counting from 0 inside each record;
+    and ``f_segment_indices`` ``(R, max_segments, 2)`` uint32, the records' identities in slot
+    order and ``PADDING_INDEX`` in unused slots. A zero-length record holds a slot and no cell.
+    Host NumPy throughout, as every host batch construction.
+
+    Args:
+        values: Each packed field's values, the records' segments concatenated along axis 0.
+        offsets: Each packed field's segment boundaries, one more than the records (int64).
+        identities: The records' identities as ``(count, 2)`` uint32 words.
+        row_starts: Each row's first record and the end, ``R + 1`` of them.
+        row_lengths: Each packed field's row length.
+        max_segments: The slots a row has.
+
+    Returns:
+        The packed leaves of every field, keyed as above.
+    """
+    identities = np.asarray(identities, np.uint32)
+    row_starts = np.asarray(row_starts, np.int64)
+    row_of, slot, slots = _row_slots(identities, row_starts, max_segments)
+    out: dict[str, np.ndarray] = {}
+    for field, row_length in row_lengths.items():
+        packed, segment_ids, positions = _pack_field(
+            field,
+            np.asarray(values[field]),
+            np.asarray(offsets[field], np.int64),
+            row_starts,
+            row_of,
+            slot,
+            row_length,
+        )
+        out[field] = packed
+        out[f"{field}_segment_ids"] = segment_ids
+        out[f"{field}_positions"] = positions
+        out[f"{field}_segment_indices"] = slots.copy()
+    return out
+
+
 __all__ = [
     "compact",
     "concatenate",
@@ -385,6 +527,7 @@ __all__ = [
     "from_arrays",
     "from_stacked",
     "mask",
+    "pack_rows",
     "record_count",
     "shardings",
     "slice_rows",
