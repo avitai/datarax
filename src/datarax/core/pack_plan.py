@@ -11,9 +11,13 @@ field and goes only where every field fits, as Grain's ``length_struct`` packing
 
 Records are planned a window of ``window`` consecutive records of the order at a time, and a
 row's records always come from one window, so planning holds one window's lengths and rows,
-never the dataset's: host memory grows with the window, not with the records. Small windows
-cost little fill: rows of 2048 over lognormal lengths fill 0.9969 unwindowed, 0.9951 at a window
-of 4096.
+never the dataset's: host memory grows with the window, not with the records. The window and
+the segment cap are the caller's choice, with no default. A wider window fills rows better, but
+reorders more records: WLB-LLM (arXiv 2503.17924, section 3.3) finds that final training loss
+rises as the packing window spans more global batches. How much fill a window buys depends on
+the lengths and the row length. Rows of 2048 over one lognormal length distribution (a probe,
+not a rule) fill 0.9812, 0.9916, 0.9951, 0.9962 and 0.9967 at windows of 256, 1024, 4096,
+16384 and 65536 records, and 0.9969 unwindowed.
 
 The plan is a directory read through a memory map, whatever the source keeps its records in:
 
@@ -38,9 +42,6 @@ import numpy as np
 
 PLANNER_VERSION = 1
 """The plan layout and algorithm this module writes and reads; a plan of another is refused."""
-
-DEFAULT_WINDOW = 4096
-"""Records planned together: rows of 2048 over lognormal lengths fill 0.9951 (0.9969 unwindowed)."""
 
 PLAN_META = "plan.json"
 
@@ -222,7 +223,7 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
     lengths_of: Callable[[np.ndarray], Mapping[str, np.ndarray]],
     row_lengths: Mapping[str, int],
     max_segments: int,
-    window: int = DEFAULT_WINDOW,
+    window: int,
     directory: str | os.PathLike[str],
 ) -> PackPlan:
     """Plan ``length`` records into rows a window at a time and write the plan to ``directory``.
@@ -233,7 +234,8 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
         lengths_of: Each packed field's length for the given records.
         row_lengths: Each packed field's row length.
         max_segments: The most records a row holds.
-        window: The records planned together; no row spans two windows.
+        window: The records planned together; no row spans two windows. No default: see the
+            module docstring for what a window trades.
         directory: Where the plan is written (created if absent; a plan there is replaced).
 
     Returns:
@@ -280,7 +282,6 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
 
 
 __all__ = [
-    "DEFAULT_WINDOW",
     "PLAN_META",
     "PLANNER_VERSION",
     "PackPlan",

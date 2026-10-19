@@ -10,6 +10,7 @@ start, 8 bytes per record and 8 per row boundary.
 
 from __future__ import annotations
 
+import inspect
 import json
 import tracemalloc
 from collections.abc import Mapping, Sequence
@@ -18,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from datarax.core import pack_plan
 from datarax.core.pack_plan import first_fit, PackPlan, plan_rows, PLANNER_VERSION
 
 
@@ -290,6 +292,12 @@ class TestFirstFitIsTheFieldsFirstFit:
 
 
 class TestWindows:
+    @pytest.mark.parametrize("name", ["window", "max_segments"])
+    def test_the_window_and_the_segment_cap_are_the_caller_s_choice(self, name: str) -> None:
+        """No default: the window trades fill against how random the order stays (WLB-LLM)."""
+        assert inspect.signature(plan_rows).parameters[name].default is inspect.Parameter.empty
+        assert not hasattr(pack_plan, "DEFAULT_WINDOW")
+
     @pytest.mark.parametrize(
         ("count", "window"), [(1000, 64), (1000, 1000), (1000, 3000), (999, 100)]
     )
