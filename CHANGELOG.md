@@ -356,7 +356,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference), SGD 0.1 with momentum 0.9 and coupled weight decay 1e-4, the rate divided by 10
   after epochs 100 and 150, batch 128 for 200 epochs, pad-4 crop and flip, MixUp with alpha 1
   and the reference's loss, and the full test set evaluated in eval mode every epoch, reporting
-  the median test error of the last 10 epochs. It replaces a small custom network trained with
+  the median test error of the last 10 epochs. Each epoch prints the median data wait per step
+  beside the median step time, and the script asserts that each step function compiles once per
+  batch shape. It replaces a small custom network trained with
   AdamW, and fixes what that version got wrong: batch norm never left training mode (test data
   normalized itself and entered the running statistics), each step ran a second forward pass,
   accuracy averaged batch means, a test slice was reported as validation, and the script trained

@@ -70,6 +70,7 @@ import numpy as np
 import optax
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
+from substrax.testing.compiles import compiled_programs
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
@@ -332,8 +333,7 @@ and 150 as the reference steps it; optax counts steps, so the boundaries are tho
 
 The MixUp loss is the reference's `mixup_criterion`: lambda times the cross-entropy against each
 record's label plus (1 - lambda) times the cross-entropy against its partner's. Training accuracy
-weighs the two the same way. Both are summed on the device and read once an epoch, so the loop
-never waits for the device mid-epoch.
+weighs the two the same way. Both are summed on the device and read once an epoch.
 """
 
 
@@ -426,22 +426,41 @@ Each epoch trains on one shuffled pass over the training set in train mode, then
 whole test set in eval mode, as the reference does every epoch. The script checks after every
 epoch that each training record was served once and that evaluation left batch norm's running
 statistics unchanged. The log prints the first epoch, every 20th and the last 10.
+
+The loop keeps one step in flight: after dispatching a step it waits for the step before, so the
+device runs one step while the pipeline serves the next batch. The time the loop spends waiting
+for the pipeline is the data wait. Each epoch line prints its median per step beside the median
+step time; while the wait stays well below the step, the data path keeps the device busy. The
+script also counts what jax compiles during training: each step function once per batch shape,
+which for the full run is the 128-record batch and the 80-record last one, and one test shape.
 """
 
 # %%
-history = {"train_loss": [], "train_acc": [], "test_loss": [], "test_acc": [], "samples_s": []}
+history = {
+    "train_loss": [], "train_acc": [], "test_loss": [], "test_acc": [], "samples_s": [],
+    "data_wait_ms": [], "step_ms": [],
+}  # fmt: skip
 predictions = test_labels = np.zeros(0, np.int64)
-with closing(train_pipeline), closing(test_pipeline):
+with closing(train_pipeline), closing(test_pipeline), compiled_programs() as compiled:
     for epoch in range(EPOCHS):
         if epoch:
             train_pipeline.reset()
         model.train()
         loss_sum, correct_sum, records = jnp.zeros(()), jnp.zeros(()), 0
-        begin = time.perf_counter()
+        waits, steps, in_flight = [], [], None
+        begin = mark = time.perf_counter()
         for batch in train_pipeline:
+            served = time.perf_counter()
             batch_loss, batch_correct = train_step(model, optimizer, batch)
+            if in_flight is not None:
+                jax.block_until_ready(in_flight)
+            in_flight = batch_loss
             loss_sum, correct_sum = loss_sum + batch_loss, correct_sum + batch_correct
             records += batch["label"].shape[0]
+            now = time.perf_counter()
+            waits.append(served - mark)
+            steps.append(now - mark)
+            mark = now
         train_loss, train_acc = float(loss_sum) / records, 100.0 * float(correct_sum) / records
         seconds = time.perf_counter() - begin
         assert records == TRAIN_RECORDS, "every training record is served once an epoch"
@@ -451,15 +470,30 @@ with closing(train_pipeline), closing(test_pipeline):
             np.array_equal, trained, jax.device_get(nnx.state(model, nnx.BatchStat))
         )
         assert all(jax.tree.leaves(unchanged)), "evaluation leaves batch norm's statistics alone"
-        values = (train_loss, train_acc, test_loss, test_acc, records / seconds)
+        data_wait_ms = 1e3 * statistics.median(waits)
+        step_ms = 1e3 * statistics.median(steps)
+        values = (
+            train_loss, train_acc, test_loss, test_acc, records / seconds, data_wait_ms, step_ms
+        )  # fmt: skip
         for key, value in zip(history, values, strict=True):
             history[key].append(value)
         if epoch == 0 or (epoch + 1) % 20 == 0 or epoch >= EPOCHS - 10:
             print(
                 f"epoch {epoch + 1:3d}: train loss {train_loss:.4f}  train acc {train_acc:6.2f}%  "
                 f"test loss {test_loss:.4f}  test acc {test_acc:6.2f}%  "
-                f"({records / seconds:,.0f} samples/s)"
+                f"({records / seconds:,.0f} samples/s; data wait {data_wait_ms:.2f} ms "
+                f"of a {step_ms:.2f} ms step)"
             )
+
+# Each step function compiles once per batch shape it sees, and never again.
+train_shapes = len({BATCH_SIZE, LAST_BATCH})
+test_shapes = len({TEST_BATCH_SIZE, TEST_RECORDS % TEST_BATCH_SIZE or TEST_BATCH_SIZE})
+compiles = {name: compiled.count(f"jit({name})") for name in ("train_step", "eval_step")}
+assert compiles == {"train_step": train_shapes, "eval_step": test_shapes}, compiles
+print(
+    f"compiled during training: train_step {compiles['train_step']}x, "
+    f"eval_step {compiles['eval_step']}x (once per batch shape)"
+)
 
 # %% [markdown]
 """
@@ -550,7 +584,8 @@ for name, accuracy in zip(CLASSES, per_class, strict=True):
 ### Throughput
 
 Training samples per second in each epoch, the data path and the train step together. The
-first epoch includes compilation.
+first epoch includes compilation. Below the figure, the medians over the epochs after the
+first: throughput, and the data wait beside the step time.
 """
 
 # %%
@@ -564,6 +599,12 @@ plt.close()
 print(f"Saved: {output_dir / 'e2e-throughput-during-training.png'}")
 steady = history["samples_s"][1:] or history["samples_s"]
 print(f"median training throughput after the first epoch: {statistics.median(steady):,.0f} /s")
+steady_wait = history["data_wait_ms"][1:] or history["data_wait_ms"]
+steady_step = history["step_ms"][1:] or history["step_ms"]
+print(
+    f"median data wait after the first epoch: {statistics.median(steady_wait):.2f} ms "
+    f"of a {statistics.median(steady_step):.2f} ms step"
+)
 
 # %% [markdown]
 """
