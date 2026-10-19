@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `datarax.core.pack_plan`: `plan_rows` packs a source's variable-length records into rows of a
   static length by first fit (each record, in a given order, into the leftmost row with room;
-  a row holds at most `max_segments` records), a window of `window` records at a time (default
-  4096; no row spans two windows, so planning holds one window), the same rows as
+  a row holds at most `max_segments` records), a window of `window` records at a time (both the
+  caller's choice, with no default; no row spans two windows, so planning holds one window), the
+  same rows as
   Megatron-Bridge's `first_fit` and NeMo-RL's `FirstFitPacker` on the same order. Several packed
   fields each have their own row length and a record goes only where every field fits; a record
   longer than its row is refused naming it, the field, its length and the row length. The plan is
