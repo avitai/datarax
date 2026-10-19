@@ -10,7 +10,7 @@ import enum
 import inspect
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, cast, Protocol, runtime_checkable
+from typing import Any, cast, NoReturn, Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -466,6 +466,77 @@ class DataSourceModule(StructuralModule):
                 f"{what}: an arrival ordinal names no record it can find again. A stream naming "
                 "records by arrival hands each record's provenance out beside each batch it serves."
             )
+
+    @property
+    def ragged_fields(self) -> tuple[str, ...]:
+        """The fields whose records differ in length along their first axis: none on this base.
+
+        A source holding such a field serves it through :meth:`get_ragged`, which packing plans
+        and packs from, and refuses every unpacked read.
+        """
+        return ()
+
+    def lengths(self, indices: ArrayLike, field: str) -> np.ndarray:  # noqa: DOC502 - refuses
+        """Each named record's length in ``field``, which packing plans rows from.
+
+        A record's length is its array's along the first axis, a scalar counting 1, as Grain's
+        packer counts it. This base refuses it (see :meth:`get_ragged`).
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            field: A field's name.
+
+        Returns:
+            int64 ``(n,)``, on a source that serves the ragged read.
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: If the source does not read ragged records.
+        """
+        del indices, field
+        self._refuse_ragged_read()
+
+    def get_ragged(  # noqa: DOC502 - refuses
+        self, indices: ArrayLike, field: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The named records of ``field`` as one values array and int64 offsets, on the host.
+
+        The read packing packs rows from (``datarax.core.ragged`` holds the layout). This base
+        refuses it: an indexed source that does not hold ragged records names the sources that
+        do, and a stream names why it cannot be packed.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            field: A field's name.
+
+        Returns:
+            The records' cells, record after record, and their offsets, on a source that serves it.
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: If the source does not read ragged records.
+        """
+        del indices, field
+        self._refuse_ragged_read()
+
+    def _refuse_ragged_read(self) -> NoReturn:
+        """Refuse the ragged read, naming why for a stream and what reads it for an indexed source.
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: Otherwise.
+        """
+        name, kind = type(self).__name__, self.record_identity
+        if kind is not RecordIdentity.INDEXED:
+            raise TypeError(
+                f"{name} is a stream ({kind.name}): packing plans a run's rows over an indexed "
+                "source's records before serving them, which a stream read forward does not give"
+            )
+        raise NotImplementedError(
+            f"{name} does not read ragged records, which packing plans and packs rows from; "
+            "MemorySource and HFEagerSource do. Reading this source's records for packing is "
+            "open work."
+        )
 
     def index_space(self) -> int:
         """How many record indices the source names; its indices run from 0 to one below it.
