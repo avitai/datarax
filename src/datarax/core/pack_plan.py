@@ -281,6 +281,7 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
 
 __all__ = [
     "DEFAULT_WINDOW",
+    "PLAN_META",
     "PLANNER_VERSION",
     "PackPlan",
     "first_fit",

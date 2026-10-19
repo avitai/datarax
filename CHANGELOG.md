@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Grain's packer counts them), ArrayRecord and TFDS sources refuse it as open work, and a stream
   refuses it naming why. A source holding a ragged field refuses every unpacked read, naming the
   field, packing and padding.
+- Decoded copies of sources holding ragged fields (copy format 2): `materialize(source,
+  directory=...)` stores a ragged field as `column-<i>.values.npy` and int64
+  `column-<i>.offsets.npy`, the training process appending each unit's values in unit order (the
+  workers write the fixed columns in place), the content digest covering both. The copy, a
+  `StreamingDiskSource` holding `DiskRagged` fields, serves the ragged read (`lengths` from the
+  offsets alone, `get_ragged`) and refuses every unpacked read. Pack plans planned over a copy
+  are kept in it, `plan-<digest>/`, and removed by a rebuild. `source.field_names` names every
+  field the ragged read serves (HF datasets' `column_names`).
 - `batch_ops.pack_rows`: planned rows' records side by side, each packed field `f` as `f`, its
   `f_segment_ids` (from 1, 0 in unused cells), `f_positions` (restarting in each record) and
   `f_segment_indices` (`(R, max_segments, 2)` uint32 identities, `PADDING_INDEX` in unused
@@ -372,6 +380,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ArrayRecordSourceModule.source_identity()`.
 
 ### Changed
+
+- The decoded copy's format is 2: a copy of format 1 is refused naming the rebuild, and
+  `materialize` rebuilds it. A source holding a ragged field is refused into RAM (`materialize`
+  without `directory`), naming the decoded copy.
 
 - A field whose records differ past their first axis is refused naming padding only (packing
   joins records along the first axis), and a field varying along its first axis in a source that
@@ -943,6 +955,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A decoded copy's build that fails on a full disk raises its `OSError` (`ENOSPC`, naming the
+  directory, the field and the bytes free) instead of the `RuntimeError` array_record's
+  provenance writer raised when it then failed to close; the close's error is kept as a note.
 - MixUp/CutMix and Poisson noise no longer make the host wait for the GPU on every batch.
   `BatchMixOperator` drew its mixing ratio with `jax.random.beta` and `NoiseOperator(mode="poisson")`
   its counts with `jax.random.poisson`, whose default rejection samplers lower to `while` loops; on a

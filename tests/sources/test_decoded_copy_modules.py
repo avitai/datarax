@@ -2,8 +2,9 @@
 
 ``decoded_copy`` is a package whose one public name is ``open_decoded_copy``, what users call.
 Its internal modules hold the copy's layout (``_layout``: file names, the column layout, units),
-reading and writing a unit (``_units``), the files and the lock (``_files``) and the manifest
-(``_manifest``); ``datarax.pipeline.materialization`` imports them directly. The provenance codec
+reading and writing a unit (``_units``), the files and the lock (``_files``), the manifest
+(``_manifest``) and the pack plans kept in the copy (``_plans``); ``datarax.pipeline`` imports
+them directly. The provenance codec
 is ``_disk_provenance``, below both the package and ``StreamingDiskSource``, which reads it.
 """
 
@@ -15,7 +16,7 @@ import pytest
 
 import datarax.sources
 from datarax.sources import _disk_provenance, decoded_copy, streaming_disk_source
-from datarax.sources.decoded_copy import _files, _layout, _manifest, _units
+from datarax.sources.decoded_copy import _files, _layout, _manifest, _plans, _units
 
 
 _HOMES: dict[ModuleType, tuple[str, ...]] = {
@@ -28,6 +29,7 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
         "PROVENANCE",
         "PARTIAL",
         "COLUMN",
+        "PLAN",
         "DIGEST",
         "LayoutColumn",
         "ColumnLayout",
@@ -36,17 +38,25 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
     ),
     _units: (
         "read_unit",
+        "fixed_rows",
         "first_read",
         "source_layout",
         "write_unit",
         "refuse_other_fields",
+        "ragged_parts",
         "checked",
+        "checked_ragged",
+        "in_layout_order",
+        "raw_bytes",
         "unit_digest",
         "content_digest",
+        "refuse_ragged_in_memory",
         "build_in_memory",
     ),
     _files: (
         "REFUSED_FILESYSTEMS",
+        "free_bytes",
+        "close_files",
         "ProvenanceWriter",
         "CopyLock",
         "refuse_unsupported_filesystem",
@@ -56,12 +66,19 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
         "fsync_file",
         "clear_copy",
         "CopyFiles",
+        "column_names",
+        "RaggedWriter",
         "reserve",
+        "npy_header",
         "create_column",
+        "create_files",
         "begin_copy",
+        "complete_values_headers",
+        "manifest_column",
         "finish_copy",
     ),
     _manifest: ("flat", "as_json", "identity_differences", "read_manifest", "verify_content"),
+    _plans: ("plan_directory", "copy_plan"),
     _disk_provenance: (
         "DiskProvenance",
         "PROVENANCE_ENCODING",

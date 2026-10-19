@@ -40,11 +40,12 @@ layers =
     datarax.sources._tfrecord
 
 [importlinter:contract:decoded-copy]
-name = The decoded copy's manifest over its files over its units over its layout
+name = The decoded copy's plans over its manifest over its files over its units over its layout
 type = layers
 containers =
     datarax.sources.decoded_copy
 layers =
+    _plans
     _manifest
     _files
     _units

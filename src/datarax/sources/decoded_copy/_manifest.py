@@ -10,10 +10,11 @@ from typing import Any
 
 import numpy as np
 
+from datarax.core.ragged import RaggedColumn
 from datarax.sources._field_paths import by_field
 from datarax.sources.decoded_copy._layout import COPY_FORMAT, MANIFEST, unit_count, unit_rows
 from datarax.sources.decoded_copy._units import content_digest, unit_digest
-from datarax.sources.streaming_disk_source import DiskColumn
+from datarax.sources.streaming_disk_source import DiskColumn, DiskRagged
 
 
 def flat(value: Any) -> dict[str, Any]:
@@ -76,23 +77,51 @@ def read_manifest(directory: str | os.PathLike[str]) -> dict[str, Any]:
     return manifest
 
 
+def _mapped(column: DiskColumn) -> np.ndarray:
+    """A read-only memory map of ``column``."""
+    return np.memmap(
+        column.file,
+        dtype=np.dtype(column.dtype),
+        mode="r",
+        offset=column.offset,
+        shape=column.shape,
+    )
+
+
+def _unit_of(held: np.ndarray | RaggedColumn, rows: range) -> np.ndarray | RaggedColumn:
+    """Records ``rows`` of a field as the writer digested them, a ragged field's offsets from 0."""
+    if not isinstance(held, RaggedColumn):
+        return held[rows.start : rows.stop]
+    offsets = np.asarray(held.offsets[rows.start : rows.stop + 1])
+    return RaggedColumn(values=held.values[offsets[0] : offsets[-1]], offsets=offsets - offsets[0])
+
+
 def verify_content(
-    directory: Path, manifest: Mapping[str, Any], columns: Sequence[DiskColumn]
+    directory: Path, manifest: Mapping[str, Any], fields: Sequence[DiskColumn | DiskRagged]
 ) -> None:
-    """Refuse a copy whose columns' bytes do not give its content digest (a full read)."""
+    """Refuse a copy whose fields' bytes do not give its content digest (a full read).
+
+    Args:
+        directory: The copy's directory, for the refusal.
+        manifest: Its manifest.
+        fields: Its fields on disk, in the manifest's order.
+
+    Raises:
+        ValueError: If the digest differs: a file was changed.
+    """
     length, unit_records = manifest["length"], manifest["unit_records"]
-    maps = [
-        np.memmap(c.file, dtype=np.dtype(c.dtype), mode="r", offset=c.offset, shape=c.shape)
-        for c in columns
-    ]
+    maps: dict[str, np.ndarray | RaggedColumn] = {
+        field.name: (
+            RaggedColumn(values=_mapped(field.values), offsets=_mapped(field.offsets))
+            if isinstance(field, DiskRagged)
+            else _mapped(field)
+        )
+        for field in fields
+    }
     digests = []
     for unit in range(unit_count(length, unit_records)):
         rows = unit_rows(unit, length, unit_records)
-        digests.append(
-            unit_digest(
-                {c.name: m[rows.start : rows.stop] for c, m in zip(columns, maps, strict=True)}
-            )
-        )
+        digests.append(unit_digest({name: _unit_of(held, rows) for name, held in maps.items()}))
     del maps
     found = content_digest(digests)
     if found != manifest["content"]["digest"]:

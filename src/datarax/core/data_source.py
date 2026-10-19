@@ -476,6 +476,20 @@ class DataSourceModule(StructuralModule):
         """
         return ()
 
+    @property
+    def field_names(self) -> tuple[str, ...]:  # noqa: DOC502 - refuses
+        """Every numeric field the ragged read serves, by path (``"text/tokens"``).
+
+        A source reading its records for packing names them, as HF datasets'
+        ``Dataset.column_names`` does, since a source holding a ragged field serves no batch whose
+        structure would name them. This base refuses it (see :meth:`get_ragged`).
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: If the source does not read ragged records.
+        """
+        self._refuse_ragged_read()
+
     def lengths(self, indices: ArrayLike, field: str) -> np.ndarray:  # noqa: DOC502 - refuses
         """Each named record's length in ``field``, which packing plans rows from.
 
