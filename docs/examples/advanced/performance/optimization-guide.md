@@ -627,5 +627,5 @@ Measure each change with the profiling steps above, on the hardware you deploy o
 ## Next Steps
 
 - [Distributed Training](../distributed/sharding-guide.md) - Scale across devices
-- [End-to-End Training](../training/e2e-cifar10-guide.md) - Apply optimizations
+- [End-to-End Training](../training/e2e-cifar10-guide.md) - Train PreAct ResNet-18 with MixUp on CIFAR-10, the MixUp paper's recipe
 - [API Reference: Benchmarking](../../../benchmarking/index.md) - Built-in tools

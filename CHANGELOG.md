@@ -350,6 +350,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
+  notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
+  at `eaff31ab`: PreAct ResNet-18 with PyTorch's initialization (11,171,274 parameters, as the
+  reference), SGD 0.1 with momentum 0.9 and coupled weight decay 1e-4, the rate divided by 10
+  after epochs 100 and 150, batch 128 for 200 epochs, pad-4 crop and flip, MixUp with alpha 1
+  and the reference's loss, and the full test set evaluated in eval mode every epoch, reporting
+  the median test error of the last 10 epochs. Each epoch prints the median data wait per step
+  beside the median step time, and the script asserts that each step function compiles once per
+  batch shape. It replaces a small custom network trained with
+  AdamW, and fixes what that version got wrong: batch norm never left training mode (test data
+  normalized itself and entered the running statistics), each step ran a second forward pass,
+  accuracy averaged batch means, a test slice was reported as validation, and the script trained
+  a second model after the first. `QUICK_MODE` (the default) is a smoke run that claims no
+  accuracy.
 - The comparison guide `examples/comparison/03_sharding_guide.py` (with its notebook and page) is
   one program every process runs, joined by the coordinator, process count and index on its
   command line, or run as one process: each process prints its rows of a global batch under

@@ -327,5 +327,5 @@ total batch of 128.*
 
 - [Performance Guide](../performance/optimization-guide.md) - Further optimization
 - [Checkpointing](../checkpointing/checkpoint-quickref.md) - Distributed checkpoints
-- [End-to-End Training](../training/e2e-cifar10-guide.md) - Complete distributed training
+- [End-to-End Training](../training/e2e-cifar10-guide.md) - Train PreAct ResNet-18 with MixUp on CIFAR-10, the MixUp paper's recipe
 - [API Reference: Sharding](../../../sharding/index.md) - Complete API
