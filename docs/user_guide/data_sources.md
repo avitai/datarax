@@ -261,9 +261,17 @@ An in-memory source holds its records as host NumPy columns and keeps no iterati
 pipeline owns the order, the position and the epoch, and checkpoints them. A list of records is
 turned into columns once, at construction: numbers become columns, and strings and other
 objects become each record's provenance, kept beside the columns and never part of a batch.
-Every record must hold the same numeric fields with the same shapes; a field whose shape varies
-is refused, naming the field, so pad it to a fixed length (with its mask or length in `data`) or
-pack records with segment ids.
+Every record must hold the same numeric fields. A field whose records share one shape is a
+column. In `MemorySource` and `HFEagerSource`, a field whose records differ in length along their
+first axis only (token sequences, point sets) is a ragged field: `source.ragged_fields` names it,
+and it is held as one values array and int64 offsets. A batch's shapes are static, so a source
+holding a ragged field refuses every unpacked read (`get_batch`, indexing, iteration,
+`element_spec`), naming the field. Packing reads such a source through
+`source.lengths(indices, field)` and `source.get_ragged(indices, field)`, which return each
+record's length and the records' values with their offsets, for any field: a column's records
+count its row length, and a scalar counts 1. Other sources refuse a field whose shape varies,
+and so does every source when the records differ past their first axis, which packing cannot
+join: pad the field (with its mask or length in `data`).
 
 The columns are host data, not NNX state: a split or a checkpoint of the pipeline carries none
 of them, and sources that differ only in their data share one graph definition and one compiled

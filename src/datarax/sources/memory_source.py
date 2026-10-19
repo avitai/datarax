@@ -21,10 +21,11 @@ from datarax.config.registry import register_component
 from datarax.core.block_order import BlockOrder
 from datarax.core.config import StructuralConfig
 from datarax.core.element_batch import Element
+from datarax.core.ragged import is_ragged, ragged_column, RaggedColumn
 from datarax.sources.eager_source import (
     EagerSource,
     is_array_leaf,
-    parts_of_records,
+    ragged_parts_of_records,
     stack_records,
 )
 from datarax.sources.source_ops import partition_length, resolve_wrapped_indices
@@ -66,7 +67,7 @@ class MemorySourceConfig(StructuralConfig):
         super().__post_init__()
 
 
-type _Parts = tuple[PyTree, tuple[dict[str, Any], ...]]
+type _Parts = tuple[PyTree, tuple[dict[str, Any], ...], dict[str, RaggedColumn]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,8 +140,7 @@ class MemorySource(EagerSource):
         if isinstance(data, _HeldColumns):
             self._store(data.columns, data.provenance)
             return
-        columns, provenance = _parts(data)
-        self._store(columns, provenance)
+        self._store(*_parts(data))
 
     @classmethod
     def of_columns(  # noqa: DOC502 - _store raises
@@ -249,39 +249,43 @@ class MemorySource(EagerSource):
 
 
 def _parts(data: Mapping[str, Any] | Sequence[Any] | np.ndarray | jax.Array) -> _Parts:
-    """The columns and provenance ``data`` holds.
+    """The columns, provenance and ragged fields ``data`` holds.
 
     Args:
         data: A mapping of columns, an array, or a sequence of records.
 
     Returns:
-        The host columns and one provenance mapping per record (or none).
+        The host columns, one provenance mapping per record (or none), and the ragged fields.
     """
     if isinstance(data, Mapping):
         return _parts_of_columns(data)
     if isinstance(data, np.ndarray | jax.Array):
-        return np.asarray(data), ()
+        return np.asarray(data), (), {}
     return _parts_of_records(data)
 
 
 def _parts_of_columns(data: Mapping[str, Any]) -> _Parts:
     """A mapping of columns: numeric columns stay columns, the others become provenance.
 
-    A value without rows (a scalar) is every record's; a string is a value, not a column.
+    A value without rows (a scalar) is every record's; a string is a value, not a column. A
+    column of per-record arrays differing along their first axis only is a ragged field.
 
     Args:
         data: The mapping of columns.
 
     Returns:
-        The host columns and one provenance mapping per record (or none).
+        The host columns, one provenance mapping per record (or none), and the ragged fields.
     """
     length = _record_count(data)
     columns: dict[str, Any] = {}
+    ragged: dict[str, RaggedColumn] = {}
     provenance_columns: dict[str, Sequence[Any]] = {}
     for key, value in data.items():
         column = _column(key, value, length)
         if column is None:
             provenance_columns[key] = list(value) if _has_rows(value) else [value] * length
+        elif isinstance(column, RaggedColumn):
+            ragged[key] = column
         else:
             columns[key] = column
     provenance = (
@@ -289,7 +293,7 @@ def _parts_of_columns(data: Mapping[str, Any]) -> _Parts:
         if provenance_columns
         else ()
     )
-    return columns, provenance
+    return columns, provenance, ragged
 
 
 def _record_count(data: Mapping[str, Any]) -> int:
@@ -321,8 +325,13 @@ def _record_count(data: Mapping[str, Any]) -> int:
     return next(iter(lengths.values()))
 
 
-def _column(key: str, value: Any, length: int) -> np.ndarray | None:
-    """``value`` as a host column of ``length`` rows, or ``None`` when it is provenance.
+def _column(key: str, value: Any, length: int) -> np.ndarray | RaggedColumn | None:  # noqa: DOC502
+    """``value`` as a host column of ``length`` rows, a ragged field, or ``None`` for provenance.
+
+    A column of per-record arrays (a list, a tuple, or an object array holding them) is stacked
+    when the arrays share one shape, and is a ragged field when they differ along their first
+    axis only; arrays differing past it are refused by :func:`stack_records`. A column whose rows
+    are not all numeric (text, other objects) is provenance.
 
     Args:
         key: The column's name.
@@ -330,22 +339,64 @@ def _column(key: str, value: Any, length: int) -> np.ndarray | None:
         length: The record count.
 
     Returns:
-        The host column, or ``None`` for a non-numeric value.
+        The host column, the ragged field, or ``None`` for a non-numeric value.
+
+    Raises:
+        ValueError: If the column's arrays differ in more than their first axis.
     """
     if not _has_rows(value):
         if not is_array_leaf(value):
             return None
         scalar = np.asarray(value)
         return np.broadcast_to(scalar, (length, *scalar.shape))
-    if isinstance(value, np.ndarray | jax.Array):
-        return np.asarray(value) if is_array_leaf(value) else None
-    if all(is_array_leaf(row) for row in value):
-        return stack_records([{key: np.asarray(row)} for row in value])[key]
-    return None
+    if isinstance(value, np.ndarray | jax.Array) and is_array_leaf(value):
+        return np.asarray(value)
+    rows = _numeric_rows(value)
+    return None if rows is None else _rows_column(key, rows)
+
+
+def _numeric_rows(value: Any) -> list[np.ndarray] | None:
+    """The per-record arrays of a column of rows, or ``None`` when a row is not numeric.
+
+    Args:
+        value: A list, a tuple or an array of rows; a non-object array of a non-numeric dtype
+            (text) is provenance.
+
+    Returns:
+        The rows as host arrays, or ``None`` for provenance.
+    """
+    if isinstance(value, np.ndarray | jax.Array) and np.asarray(value).dtype != object:
+        return None
+    if not all(is_array_leaf(row) for row in value):
+        return None
+    return [np.asarray(row) for row in value]
+
+
+def _rows_column(  # noqa: DOC502 - stack_records raises
+    key: str, rows: list[np.ndarray]
+) -> np.ndarray | RaggedColumn:
+    """Per-record arrays as one column when their shapes agree, or a ragged field.
+
+    Args:
+        key: The column's name.
+        rows: One array per record.
+
+    Returns:
+        The stacked column, or the ragged field when the arrays differ along their first axis
+        only.
+
+    Raises:
+        ValueError: If the arrays differ in more than their first axis.
+    """
+    if is_ragged([row.shape for row in rows]):
+        return ragged_column(rows)
+    return stack_records([{key: row} for row in rows])[key]
 
 
 def _has_rows(value: Any) -> bool:
     """Whether ``value`` is a column (one row per record) rather than a single value.
+
+    A list or tuple always is, whatever its rows hold; an array is when it has an axis.
 
     Args:
         value: The value.
@@ -353,23 +404,28 @@ def _has_rows(value: Any) -> bool:
     Returns:
         Whether it has rows.
     """
+    if isinstance(value, list | tuple):
+        return True
     return hasattr(value, "__len__") and not isinstance(value, str | bytes) and np.ndim(value) > 0
 
 
-def _parts_of_records(records: Sequence[Any]) -> _Parts:  # noqa: DOC502 - from parts_of_records
+def _parts_of_records(records: Sequence[Any]) -> _Parts:  # noqa: DOC502 - ragged_parts_of_records
     """A sequence of records: numeric values stacked into columns, the rest provenance.
+
+    A field whose records differ along their first axis only is a ragged field.
 
     Args:
         records: The records.
 
     Returns:
-        The host columns and one provenance mapping per record (or none).
+        The host columns, one provenance mapping per record (or none), and the ragged fields.
 
     Raises:
-        ValueError: If an ``Element`` carries an index or state, no record holds a number, or the
-            records' numeric fields or shapes differ (see :func:`parts_of_records`).
+        ValueError: If an ``Element`` carries an index or state, no record holds a number, the
+            records' numeric fields differ, or a field differs past its first axis (see
+            :func:`~datarax.sources.eager_source.ragged_parts_of_records`).
     """
-    return parts_of_records(
+    return ragged_parts_of_records(
         [_record_data(record, position) for position, record in enumerate(records)]
     )
 

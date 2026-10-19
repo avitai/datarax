@@ -355,7 +355,12 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
 
         batch = source.get_batch(to_words(np.arange(32)))  # records 0..31 as a Batch
         ```
+
+    Packing does not read its records yet: the ragged read is refused, naming the sources that
+    hold ragged fields.
     """
+
+    _READS_RAGGED = False
 
     def __init__(  # noqa: DOC503 - _array_record_builder raises the FileNotFoundError
         self,

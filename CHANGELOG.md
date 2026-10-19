@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a directory read through a memory map (`PackPlan.open`, `PackPlan.take`): the records in row
   order and each row's start, 8 bytes a record and 8 a row boundary; a plan of another version
   is refused naming both.
+- Ragged fields: `MemorySource` (a column of per-record arrays, or a list of records) and
+  `HFEagerSource` (an Arrow list column, at its declared dtype) hold a field whose records differ
+  in length along their first axis as one values array and int64 offsets
+  (`datarax.core.ragged.RaggedColumn`), named by `source.ragged_fields`. Every source has the
+  ragged read packing uses, `lengths(indices, field)` and `get_ragged(indices, field)`: an
+  in-memory source serves every field (a column's records count its row length, a scalar 1, as
+  Grain's packer counts them), ArrayRecord and TFDS sources refuse it as open work, and a stream
+  refuses it naming why. A source holding a ragged field refuses every unpacked read, naming the
+  field, packing and padding.
 - `batch_ops.pack_rows`: planned rows' records side by side, each packed field `f` as `f`, its
   `f_segment_ids` (from 1, 0 in unused cells), `f_positions` (restarting in each record) and
   `f_segment_indices` (`(R, max_segments, 2)` uint32 identities, `PADDING_INDEX` in unused
@@ -364,6 +373,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A field whose records differ past their first axis is refused naming padding only (packing
+  joins records along the first axis), and a field varying along its first axis in a source that
+  does not hold ragged fields names the sources that do (`MemorySource`, `HFEagerSource`). A
+  `MemorySource` column holding per-record arrays as an object array was kept as provenance, and
+  a list of per-record arrays of different lengths failed in NumPy; both are ragged fields now.
 - The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
   notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
   at `eaff31ab`: PreAct ResNet-18 with PyTorch's initialization (11,171,274 parameters, as the
