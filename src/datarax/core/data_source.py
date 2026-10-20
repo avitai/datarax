@@ -15,6 +15,7 @@ from typing import Any, cast, NoReturn, Protocol, runtime_checkable
 import jax
 import numpy as np
 from jax.typing import ArrayLike
+from typing_extensions import TypeIs
 
 from datarax.core.block_order import BlockOrder, order_positions
 from datarax.core.element_batch import Batch, PADDING_INDEX
@@ -140,7 +141,28 @@ NO_PROVENANCE: Mapping[str, Any] = MappingProxyType({})
 """The provenance of a record that carries nothing but arrays."""
 
 type Provenance = tuple[Mapping[str, Any], ...]
-"""One immutable mapping per record: its strings and objects, beside the batch."""
+"""One immutable mapping per record, in row order, beside the batch: its strings and objects."""
+
+type SlotProvenance = tuple[Mapping[str, Any], ...]
+"""A packed row's provenance: its records' mappings in slot order, empty past its records."""
+
+type PackedProvenance = tuple[SlotProvenance, ...]
+"""One entry per packed row, in row order, beside the batch: its slots' provenance."""
+
+type UnitProvenance = Provenance | PackedProvenance
+"""A unit's provenance as the host stage carries it: per record, or per packed row."""
+
+
+def is_packed_provenance(provenance: UnitProvenance) -> TypeIs[PackedProvenance]:
+    """Whether a unit's provenance is per packed row (its entries are slot tuples), not per record.
+
+    Args:
+        provenance: A unit's provenance; an empty one is per record.
+
+    Returns:
+        ``True`` when its entries are tuples of slot mappings.
+    """
+    return bool(provenance) and isinstance(provenance[0], tuple)
 
 
 class RecordIdentity(enum.Enum):
@@ -231,6 +253,27 @@ class IndexedHostReadWithProvenance(Protocol):
         Returns:
             The records as a host ``Batch``, and one mapping of strings and objects per record,
             in row order.
+        """
+        ...
+
+
+@runtime_checkable
+class PackedRowProvenance(Protocol):
+    """An indexed read whose units are packed rows of records, each row's provenance its slots'.
+
+    A row names no record, so its source refuses :meth:`DataSourceModule.provenance` and serves
+    each row's records' mappings, in slot order, by the row's index
+    (``datarax.pipeline.packed_rows.PackedRows``).
+    """
+
+    def row_provenance(self, indices: ArrayLike) -> PackedProvenance:
+        """The provenance of the rows ``indices`` names: each row's slots' mappings.
+
+        Args:
+            indices: uint32 ``(n, 2)`` row indices.
+
+        Returns:
+            One tuple of mappings per row, one per slot, empty past the row's records.
         """
         ...
 

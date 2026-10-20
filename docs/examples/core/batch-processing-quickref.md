@@ -143,7 +143,8 @@ Source (yields elements) --> Pipeline (groups into batches via batch_size) --> Y
 ```
 
 - `batch_size=32` groups 32 elements into each batch
-- No batch holds padding. With a random-access source (`MemorySource` and the other indexed
+- No batch holds a padding row (a packed row's unused cells are padding inside it, marked by
+  its segment ids). With a random-access source (`MemorySource` and the other indexed
   sources) and `num_elements % batch_size != 0`, the batch reaching the end of an epoch is
   completed from the head of the next epoch's order, so each epoch serves every record once;
   iterating a fixed number of epochs ends with a short batch. `drop_last=True` instead skips

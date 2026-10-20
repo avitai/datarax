@@ -39,6 +39,8 @@ def test_the_configuration_names_the_batch_rule_length_epochs_key_order_and_shar
     pipe = _pipeline()
     configuration = run_configuration(pipe)
     assert configuration == {
+        "packing": None,  # a pipeline that does not pack
+        "packing_lengths": None,
         "batch_size": 4,
         "length": 10,
         "drop_last": False,

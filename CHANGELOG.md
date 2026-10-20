@@ -37,6 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offsets alone, `get_ragged`) and refuses every unpacked read. Pack plans planned over a copy
   are kept in it, `plan-<digest>/`, and removed by a rebuild. `source.field_names` names every
   field the ragged read serves (HF datasets' `column_names`).
+- `Pipeline(..., packing=Packing(lengths, max_segments, window))` (and `Pipeline.from_dag`):
+  a source holding ragged fields is served as packed rows of a static length. Its records are
+  planned once into rows by windowed first fit over the planning order (the pipeline's cipher with
+  `shuffle=True`, else the stored order), and the rows are the indexed unit the pipeline orders
+  each epoch, batches, counts and resumes; each process plans the same rows. Every field is
+  packed, so `lengths` names each one; no argument has a default. A row is named `(2**31, row)`
+  and its provenance is one tuple per row of its records' mappings in slot order, empty past its
+  records (`data_source.PackedProvenance`, served by `PackedRows.row_provenance`; a row's index
+  looks up no record's provenance). `Pipeline` is generic over the type of its `packing`
+  argument: `raw_batches(with_provenance=True)` gives `Pipeline[None]` (a bare `Pipeline`) one
+  mapping per record and `Pipeline[Packing]` each row's slots. The plan is kept in a
+  decoded copy (`plan-<digest>/`, reused by every pipeline built alike) or in a temporary directory
+  removed with the pipeline (`Pipeline.pack_plan`). `step()`, `scan`, `session()`, stages and
+  `block_order` are refused with packing, naming why.
 - `batch_ops.pack_rows`: planned rows' records side by side, each packed field `f` as `f`, its
   `f_segment_ids` (from 1, 0 in unused cells), `f_positions` (restarting in each record) and
   `f_segment_indices` (`(R, max_segments, 2)` uint32 identities, `PADDING_INDEX` in unused
@@ -382,9 +396,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Pipeline.get_state()` is version 4: its fingerprint names the packing and the SHA-256 of the
+  lengths a packed pipeline's rows were planned from (`packing`, `packing_lengths`, `None`
+  without packing), checked first; a state of version 3 is refused naming both versions.
+- `pack_plan`'s plans are version 2: `plan.json` records the SHA-256 of the lengths planned
+  (`PackPlan.lengths_digest`), and a plan pickles as its directory.
 - The decoded copy's format is 2: a copy of format 1 is refused naming the rebuild, and
   `materialize` rebuilds it. A source holding a ragged field is refused into RAM (`materialize`
   without `directory`), naming the decoded copy.
+- `typing-extensions>=4.10.0` is a declared dependency (TypeVar defaults and `TypeIs` on
+  Python 3.12).
 
 - A field whose records differ past their first axis is refused naming padding only (packing
   joins records along the first axis), and a field varying along its first axis in a source that

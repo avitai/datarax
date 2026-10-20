@@ -21,7 +21,7 @@ from datarax.core.element_batch import ArrayValue
 from datarax.core.index_words import from_words
 from datarax.operators import ElementOperator
 from datarax.operators.batch_mix_operator import BatchMixOperator
-from datarax.pipeline import Pipeline
+from datarax.pipeline import Packing, Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 
 
@@ -90,6 +90,36 @@ def pipeline(
     )
 
 
+PACKING = Packing(lengths={"tokens": 16, "value": 4}, max_segments=4, window=16)
+"""How :func:`packed_pipeline` packs :func:`ragged_records`."""
+
+
+def ragged_records() -> list[dict[str, Any]]:
+    """:data:`LENGTH` records whose tokens spell their index, of 1 to 7 tokens each."""
+    return [
+        {
+            "tokens": (100 * record + np.arange(1 + record % 7)).astype(np.int32),
+            "value": np.float32(record),
+            "name": name(record),
+        }
+        for record in range(LENGTH)
+    ]
+
+
+def packed_pipeline(*, sharding: NamedSharding | None = None, seed: int = 0) -> Pipeline[Packing]:
+    """One shuffled epoch of :func:`ragged_records` packed into rows, placed by ``sharding``."""
+    return Pipeline(
+        source=MemorySource(MemorySourceConfig(), ragged_records()),
+        stages=[],
+        batch_size=BATCH_SIZE,
+        rngs=nnx.Rngs(seed),
+        shuffle=True,
+        num_epochs=1,
+        sharding=sharding,
+        packing=PACKING,
+    )
+
+
 def shards(array: jax.Array) -> dict[str, list[Any]]:
     """This process's rows of a placed array, keyed by the global row each shard starts at."""
     return {
@@ -124,9 +154,12 @@ def rng_counts(module: nnx.Module) -> list[int]:
 __all__ = [
     "BATCH_SIZE",
     "LENGTH",
+    "PACKING",
     "draw_stages",
+    "packed_pipeline",
     "pipeline",
     "record_shards",
+    "ragged_records",
     "records",
     "rng_counts",
     "rows_on_every_device",

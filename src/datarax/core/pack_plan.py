@@ -23,7 +23,10 @@ The plan is a directory read through a memory map, whatever the source keeps its
 
 - ``records.bin``: every record's index, uint64, rows one after another;
 - ``row_starts.bin``: int64, row ``r`` holding ``records[row_starts[r]:row_starts[r + 1]]``;
-- ``plan.json``: the layout and counts, written last, so a directory without it holds no plan.
+- ``plan.json``: the layout, the counts and a SHA-256 of the lengths planned, written last, so a
+  directory without it holds no plan.
+
+A plan pickles as its directory, so a copy sent to a worker process maps the same files.
 
 Planning a source of ``N`` records into ``R`` rows writes ``8 N + 8 (R + 1)`` bytes.
 """
@@ -31,16 +34,18 @@ Planning a source of ``N`` records into ``R`` rows writes ``8 N + 8 (R + 1)`` by
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 import numpy as np
 
 
-PLANNER_VERSION = 1
+PLANNER_VERSION = 2
 """The plan layout and algorithm this module writes and reads; a plan of another is refused."""
 
 PLAN_META = "plan.json"
@@ -145,6 +150,8 @@ class PackPlan:
         row_lengths: Each packed field's row length.
         max_segments: The most records a row holds.
         window: The records planned together.
+        lengths_digest: The SHA-256 of the lengths planned, window after window, each window's
+            fields in name order, as hex: which lengths the rows were planned from.
         records: Every record's index, rows one after another (uint64, memory-mapped).
         row_starts: Each row's start into ``records``, ``rows + 1`` of them (int64,
             memory-mapped).
@@ -156,8 +163,13 @@ class PackPlan:
     row_lengths: Mapping[str, int]
     max_segments: int
     window: int
+    lengths_digest: str
     records: np.ndarray
     row_starts: np.ndarray
+
+    def __reduce__(self) -> tuple[Any, tuple[str]]:
+        """Pickle as the plan's directory: a copy opens the same files, carrying no row."""
+        return PackPlan.open, (str(self.directory),)
 
     @classmethod
     def open(cls, directory: str | os.PathLike[str]) -> PackPlan:  # noqa: DOC503 - read_text raises the FileNotFoundError
@@ -187,6 +199,7 @@ class PackPlan:
             row_lengths=MappingProxyType(dict(meta["row_lengths"])),
             max_segments=meta["max_segments"],
             window=meta["window"],
+            lengths_digest=meta["lengths_digest"],
             records=_mapped(directory / RECORDS, np.uint64, meta["length"]),
             row_starts=_mapped(directory / ROW_STARTS, np.int64, meta["rows"] + 1),
         )
@@ -252,6 +265,7 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
     (directory / PLAN_META).unlink(missing_ok=True)
     rows = 0
     placed = 0
+    digest = hashlib.sha256()
     with (
         (directory / RECORDS).open("wb") as records_file,
         (directory / ROW_STARTS).open("wb") as starts_file,
@@ -259,8 +273,12 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
         starts_file.write(np.zeros(1, np.int64).tobytes())
         for start in range(0, length, window):
             records = np.asarray(records_at(start, min(start + window, length)), np.uint64)
+            lengths = lengths_of(records)
+            for field in sorted(lengths):
+                digest.update(field.encode())
+                digest.update(np.ascontiguousarray(lengths[field], np.int64).tobytes())
             members, row_starts = first_fit(
-                records, lengths_of(records), row_lengths=row_lengths, max_segments=max_segments
+                records, lengths, row_lengths=row_lengths, max_segments=max_segments
             )
             records_file.write(members.tobytes())
             starts_file.write((row_starts[1:] + placed).tobytes())
@@ -276,6 +294,7 @@ def plan_rows(  # noqa: PLR0913 - the plan's inputs, all keyword-only
         "row_lengths": dict(row_lengths),
         "max_segments": max_segments,
         "window": window,
+        "lengths_digest": digest.hexdigest(),
     }
     (directory / PLAN_META).write_text(json.dumps(meta, sort_keys=True))
     return PackPlan.open(directory)

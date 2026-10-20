@@ -201,12 +201,16 @@ class StreamingDiskSourceConfig(StructuralConfig):
             arrays.
         content_digest: The content digest of the decoded copy the columns are, or ``None`` for
             columns that are no copy; part of the source's identity.
+        copy_directory: The decoded copy's directory when the columns are one, where the pack
+            plans planned over it are kept; ``None`` otherwise. Not part of the identity: a
+            copy moved elsewhere is still the same copy.
     """
 
     columns: tuple[DiskColumn, ...] = ()
     ragged: tuple[DiskRagged, ...] = ()
     provenance: DiskProvenance | None = None
     content_digest: str | None = None
+    copy_directory: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the config.

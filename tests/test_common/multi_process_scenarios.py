@@ -60,6 +60,22 @@ def placement(process: int, args: Sequence[str]) -> dict[str, Any]:
     return {"units": _units(built.pipeline(sharding=built.rows_on_every_device()))}
 
 
+def packed(process: int, args: Sequence[str]) -> dict[str, Any]:
+    """Every unit of one packed epoch: this process's rows, their names and their tokens."""
+    del process, args
+    pipe = built.packed_pipeline(sharding=built.rows_on_every_device())
+    return {
+        "units": [
+            {
+                "shape": list(unit["tokens"].shape),
+                "rows": built.record_shards(unit.indices),
+                "tokens": built.shards(unit["tokens"]),
+            }
+            for unit in pipe.raw_batches()
+        ]
+    }
+
+
 def draws(process: int, args: Sequence[str]) -> dict[str, Any]:
     """Every processed batch's draws as this process holds them, then the streams' counts."""
     del process, args
@@ -183,6 +199,7 @@ def shm(process: int, args: Sequence[str]) -> dict[str, Any]:
 
 SCENARIOS: dict[str, Callable[[int, Sequence[str]], dict[str, Any]]] = {
     "placement": placement,
+    "packed": packed,
     "draws": draws,
     "compiles": compiles,
     "chunks": chunks,

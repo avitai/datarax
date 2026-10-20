@@ -27,7 +27,7 @@ import platform
 import resource
 import signal
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from multiprocessing import connection
 from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
@@ -46,7 +46,7 @@ from absl import flags
 # jax.distributed.initialize refuses a late start with the same call.
 from jax._src import xla_bridge
 
-from datarax.core.data_source import Provenance
+from datarax.core.data_source import is_packed_provenance, UnitProvenance
 from datarax.core.prng import host_device
 
 
@@ -281,22 +281,23 @@ def check_all_arrived(received: int, total: int | None) -> None:
         )
 
 
-def crossing_provenance(provenance: Provenance | None, unit: int) -> Provenance | None:
+def crossing_provenance(provenance: UnitProvenance | None, unit: int) -> UnitProvenance | None:
     """A unit's provenance as plain dicts a worker can send, checked to pickle.
 
     Args:
-        provenance: One read-only mapping per record, or ``None``.
+        provenance: One read-only mapping per record (a tuple of them per packed row), or
+            ``None``.
         unit: The unit's place in the run, named when a value cannot cross.
 
     Returns:
-        One ``dict`` per record, or ``None``.
+        One ``dict`` per record (a tuple of them per packed row), or ``None``.
 
     Raises:
         TypeError: If a record's provenance holds a value no pickler copies, naming the unit.
     """
     if provenance is None:
         return None
-    plain = tuple(dict(record) for record in provenance)
+    plain = _as_plain(provenance)
     try:
         ForkingPickler.dumps(plain)  # as the worker's queue pickles it
     except (TypeError, AttributeError, PicklingError) as error:
@@ -308,18 +309,38 @@ def crossing_provenance(provenance: Provenance | None, unit: int) -> Provenance 
     return plain
 
 
-def received_provenance(provenance: Provenance | None) -> Provenance | None:
+def received_provenance(provenance: UnitProvenance | None) -> UnitProvenance | None:
     """A unit's provenance from a worker, as the read-only mappings a thread read serves.
 
     Args:
-        provenance: One mapping per record, as sent, or ``None``.
+        provenance: One mapping per record (a tuple of them per packed row), as sent, or
+            ``None``.
 
     Returns:
-        One read-only mapping per record, or ``None``.
+        One read-only mapping per record (a tuple of them per packed row), or ``None``.
     """
     if provenance is None:
         return None
-    return tuple(MappingProxyType(dict(record)) for record in provenance)
+    return _converted(provenance, _read_only)
+
+
+def _as_plain(provenance: UnitProvenance) -> UnitProvenance:
+    """A unit's provenance as plain dicts: per record, or per packed row's slots."""
+    return _converted(provenance, dict)
+
+
+def _read_only(mapping: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A mapping's read-only copy, as a thread read serves provenance."""
+    return MappingProxyType(dict(mapping))
+
+
+def _converted(
+    provenance: UnitProvenance, convert: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+) -> UnitProvenance:
+    """``provenance`` with ``convert`` applied to every record's mapping, in its unit's form."""
+    if is_packed_provenance(provenance):
+        return tuple(tuple(convert(slot) for slot in row) for row in provenance)
+    return tuple(convert(record) for record in provenance)
 
 
 class _ByteCounter(io.RawIOBase):
