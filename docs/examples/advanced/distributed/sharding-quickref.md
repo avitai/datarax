@@ -185,7 +185,7 @@ Batch 1:
 
 An evaluation over 1,000 records ends on a short batch, whose rows the `"data"` axis cannot split.
 The pipeline places it whole on every device (`PartitionSpec()`), so every record is evaluated
-once and no batch holds padding. A step over it compiles once more, on the first pass:
+once and no batch holds a padding row. A step over it compiles once more, on the first pass:
 
 ```python
 evaluation = Pipeline(

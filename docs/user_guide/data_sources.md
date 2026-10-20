@@ -275,6 +275,26 @@ values and offsets and serves the same read. Other sources refuse a field whose 
 and so does every source when the records differ past their first axis, which packing cannot
 join: pad the field (with its mask or length in `data`).
 
+`Pipeline(..., packing=Packing(lengths={"tokens": 2048, "label": 16}, max_segments=16,
+window=16384))` serves such a source as rows of a static length. The records are planned into
+rows once, by first fit over `window` consecutive records of the planning order (the pipeline's
+cipher with `shuffle=True`, else the stored order), and the rows are what the pipeline orders
+(a new order each epoch), batches, counts (`len`, `batches_left`) and resumes. Every field is
+packed, so `lengths` names each one with its row length (a scalar field takes one cell a record),
+and none of the three arguments has a default: the row lengths and `max_segments` fix the batch's
+shapes, and a wider window fills rows better but rearranges more of the order (WLB-LLM, arXiv
+2503.17924, finds final loss rising as the packing window spans more global batches). A batch
+holds each field as `(batch_size, row length)` with `<field>_segment_ids` (records numbered from
+1, 0 in unused cells), `<field>_positions` (restarting in each record) and
+`<field>_segment_indices` (each slot's record identity, `PADDING_INDEX` when empty); a row is
+named `(2**31, row)`, and `raw_batches(with_provenance=True)` gives each row a tuple of its
+records' mappings in slot order, empty past its records, matching `<field>_segment_indices` slot
+for slot. A pipeline is typed by its `packing` argument (`Pipeline[None]` or `Pipeline[Packing]`),
+so the provenance's form is known statically. The plan is kept in a decoded
+copy for every pipeline built alike, or in a temporary directory removed with the pipeline.
+Packing is served by iteration: `step()`, `scan` and `session()` refuse it, and so do stages and
+`block_order`.
+
 The columns are host data, not NNX state: a split or a checkpoint of the pipeline carries none
 of them, and sources that differ only in their data share one graph definition and one compiled
 program. A compiled program takes the columns' device copy, uploaded once, as an argument.

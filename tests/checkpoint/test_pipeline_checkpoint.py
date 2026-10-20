@@ -125,7 +125,7 @@ def test_the_state_is_the_cursor_without_parameters_or_data() -> None:
     leaves = jax.tree_util.tree_flatten_with_path(state)[0]
     paths = {jax.tree_util.keystr(path) for path, _ in leaves}
 
-    assert state["version"] == 3
+    assert state["version"] == 4
     assert state["position"] == 12
     assert not any("dag" in path or "factor" in path or "_position" in path for path in paths)
     assert not any(getattr(leaf, "shape", ())[:1] == (_RECORDS,) for _, leaf in leaves)

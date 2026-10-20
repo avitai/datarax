@@ -119,6 +119,7 @@ def open_decoded_copy(  # noqa: DOC503 - _column raises the FileNotFoundError
             ragged=tuple(f for f in fields if isinstance(f, DiskRagged)),
             provenance=provenance,
             content_digest=manifest["content"]["digest"],
+            copy_directory=str(root),
         )
     )
 

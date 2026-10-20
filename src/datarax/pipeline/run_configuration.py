@@ -11,9 +11,11 @@ differs between them is refused in every process (:func:`refuse_differing_proces
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -28,11 +30,65 @@ SESSION_VERSION = 2
 """The layout of ``PipelineIterator.get_state()``, named when a pipeline refuses it."""
 
 
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True, eq=True)
+class Packing:
+    """How a pipeline packs a source's variable-length records into rows of a static length.
+
+    Every field the source names (``source.field_names``) is packed: its records' cells side by
+    side in a row of ``lengths[field]`` cells (a scalar field takes one cell a record), at most
+    ``max_segments`` records a row. Rows are planned once by first fit, a window of ``window``
+    consecutive records of the planning order at a time (``datarax.core.pack_plan``). None of
+    the three has a default: the row lengths and the segment cap fix the batch's shapes, and a
+    wider window fills rows better but rearranges more of the order (see ``pack_plan``).
+
+    Attributes:
+        lengths: Each packed field's row length, by field path (``"text/tokens"``).
+        max_segments: The most records a row holds; a row's identities are
+            ``(max_segments, 2)``.
+        window: The records of the planning order planned together; no row spans two windows.
+    """
+
+    lengths: Mapping[str, int]
+    max_segments: int
+    window: int
+
+    def __post_init__(self) -> None:
+        """Hold the lengths read-only, sorted by field, and refuse a layout no row can take.
+
+        Raises:
+            ValueError: If no field is named, or a row length, the segment cap or the window is
+                below 1.
+        """
+        if not self.lengths:
+            raise ValueError("packing names at least one field and its row length")
+        small = {name: n for name, n in self.lengths.items() if n < 1}
+        if small:
+            raise ValueError(f"a row holds at least one cell of each field; got {small}")
+        for name, value in (("max_segments", self.max_segments), ("window", self.window)):
+            if value < 1:
+                raise ValueError(f"{name} must be at least 1; got {value}")
+        object.__setattr__(self, "lengths", MappingProxyType(dict(sorted(self.lengths.items()))))
+
+    def __hash__(self) -> int:
+        """One hash per layout: the lengths, the segment cap and the window."""
+        return hash((tuple(self.lengths.items()), self.max_segments, self.window))
+
+    def as_plain(self) -> dict[str, Any]:
+        """The layout as plain values, as a state's fingerprint records it."""
+        return {
+            "lengths": dict(self.lengths),
+            "max_segments": self.max_segments,
+            "window": self.window,
+        }
+
+
 def run_configuration(pipeline: Any) -> dict[str, Any]:
     """The configuration a state is only valid for: batch rule, length, epochs, key, order, shard.
 
     ``shard`` is :func:`~datarax.core.data_source.shard_identity`: a worker's shard serves other
-    records at the same position, so a state saved on one shard is refused by every other.
+    records at the same position, so a state saved on one shard is refused by every other. A
+    packed pipeline's state also names its packing and the SHA-256 of the lengths its rows were
+    planned from (``packing_lengths``): another packing, or other records, plan other rows.
 
     Args:
         pipeline: The pipeline whose state it is.
@@ -41,7 +97,11 @@ def run_configuration(pipeline: Any) -> dict[str, Any]:
         The configuration, as plain values.
     """
     plan: EpochPlan = pipeline.epoch_plan
+    # The packing comes first: another packing plans other rows, so a length differing with it
+    # is its consequence, and a refusal names the first field that differs.
     return {
+        "packing": None if pipeline.packing is None else pipeline.packing.as_plain(),
+        "packing_lengths": None if pipeline.packing is None else pipeline.pack_plan.lengths_digest,
         "batch_size": plan.batch_size,
         "length": plan.length,
         "drop_last": plan.drop_last,
@@ -154,6 +214,7 @@ def plain_state(value: Any) -> Any:
 
 __all__ = [
     "SESSION_VERSION",
+    "Packing",
     "plain_state",
     "refuse_another_configuration",
     "refuse_differing_processes",

@@ -4,7 +4,8 @@
 same rule to its passes (:mod:`datarax.sources.stream_iterator`). :func:`batch_records`
 names the records a batch of an indexed source holds by that rule, each row by its own epoch's
 order; the compiled session traces it, and :class:`HostNaming` runs it on the CPU device for the
-host stage. No batch holds padding.
+host stage. No batch holds a padding row (a packed row's unused cells are padding inside it,
+segment id 0).
 Under
 ``drop_last`` the records short of a full batch are skipped and the next batch starts the
 next epoch, tf.data's and Grain's ``batch(drop_remainder=True).repeat()``. Otherwise a batch
