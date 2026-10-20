@@ -70,25 +70,29 @@ from __future__ import annotations
 
 import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, Literal, overload
+from typing import Any, Generic, Literal, overload
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import NamedSharding
 from substrax.typing import CheckpointState
+from typing_extensions import TypeVar
 
 from datarax.core import batch_ops
 from datarax.core.block_order import BlockOrder
 from datarax.core.data_source import (
     DataSourceModule,
     known_length,
+    PackedProvenance,
     Provenance,
     RecordIdentity,
     shard_identity,
 )
 from datarax.core.element_batch import Batch
 from datarax.core.host_resources import HostResources
+from datarax.core.host_values import HostValue
+from datarax.core.pack_plan import PackPlan
 from datarax.core.prng import naming_key_data, NAMING_PRNG_IMPL
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
@@ -100,8 +104,10 @@ from datarax.pipeline.iteration import (
     source_columns,
     staged_view,
 )
+from datarax.pipeline.packed_rows import PackedRows, plan_packing, refuse_unpackable
 from datarax.pipeline.placement import check_sharding
 from datarax.pipeline.read_plan import HostPlan
+from datarax.pipeline.run_configuration import Packing
 from datarax.sources.eager_source import bind_columns, eager_sources
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.typing import DataDict
@@ -113,9 +119,16 @@ from datarax.typing import DataDict
 # outside the pipeline and keyed weakly by it: no split of the pipeline carries it, filling it
 # changes no graph definition, and no program takes it off the module while JAX traces. A
 # pipeline merged inside a transform is a new object, with its own entry for that trace.
-_SCAN_BODIES: weakref.WeakKeyDictionary[Pipeline, dict[tuple[Any, ...], Callable[..., Any]]] = (
-    weakref.WeakKeyDictionary()
-)
+_SCAN_BODIES: weakref.WeakKeyDictionary[
+    Pipeline[Any], dict[tuple[Any, ...], Callable[..., Any]]
+] = weakref.WeakKeyDictionary()
+
+# The type of a pipeline's ``packing`` argument, which decides its unit and so its provenance's
+# form: ``Pipeline[None]`` serves records, ``Pipeline[Packing]`` packed rows. The default makes a
+# bare ``Pipeline`` an unpacked one; covariance lets code taking either pipeline take
+# ``Pipeline[Packing | None]``.
+_Packing_co = TypeVar("_Packing_co", bound=Packing | None, default=None, covariant=True)
+_Packing = TypeVar("_Packing", bound=Packing | None, default=None)
 
 
 def _check_block_order(
@@ -146,6 +159,44 @@ def _check_block_order(
         )
 
 
+def _served_by_iteration(call: str) -> str:
+    """Why ``call`` refuses a packed pipeline: its rows are planned and laid out on the host."""
+    return (
+        f"{call} serves batches through the compiled step, which reads records by index; a "
+        "pipeline with packing serves planned rows, laid out on the host, by iteration: "
+        "`for batch in pipe` or `pipe.raw_batches()`"
+    )
+
+
+def _refuse_packing_with(
+    packing: Packing | None, *, dag: OperatorDag, block_order: BlockOrder | None
+) -> None:
+    """Refuse what a packed pipeline does not serve yet: stages and a block order.
+
+    Args:
+        packing: The packing asked for, or ``None``.
+        dag: The pipeline's stages.
+        block_order: The block order asked for, or ``None``.
+
+    Raises:
+        ValueError: If packing is asked for with stages or with a block order, naming why.
+    """
+    if packing is None:
+        return
+    if dag.order:
+        raise ValueError(
+            "a packed batch holds several records in each row, which the operators' per-record "
+            "map does not take apart: serving operators on packed batches is open work; build "
+            "the packed pipeline with stages=[]"
+        )
+    if block_order is not None:
+        raise ValueError(
+            "block_order reads blocks of consecutive records, but a packed row's records come "
+            "from the cipher-ordered planning pass, so a block of rows is not a block of records: "
+            "build the packed pipeline without block_order"
+        )
+
+
 def _placed_by_iteration(call: str) -> str:
     """Why ``call`` refuses a pipeline holding a sharding: only iteration places batches."""
     return (
@@ -155,8 +206,13 @@ def _placed_by_iteration(call: str) -> str:
     )
 
 
-class Pipeline(nnx.Module):
+class Pipeline(nnx.Module, Generic[_Packing_co]):
     """JAX-native data pipeline with scan-based epoch iteration.
+
+    Generic over the type of its ``packing`` argument, which the constructor infers:
+    ``Pipeline[None]`` (a bare ``Pipeline``) serves records, and ``raw_batches`` gives their
+    :data:`~datarax.core.data_source.Provenance`; ``Pipeline[Packing]`` serves packed rows, and
+    gives each row's :data:`~datarax.core.data_source.PackedProvenance`.
 
     Args (linear constructor):
         source: A ``DataSourceModule`` exposing ``record_indices_at`` and
@@ -173,7 +229,7 @@ class Pipeline(nnx.Module):
             pipeline owns the order: it passes its epoch key to ``record_indices_at`` when
             ``True`` and ``None`` (the sequential order) otherwise.
         drop_last: What a batch reaching the end of an epoch holds when the source's
-            length is not a multiple of ``batch_size``; no batch holds padding.
+            length is not a multiple of ``batch_size``; no batch holds a padding row.
             ``False`` (the default) completes it from the head of the next epoch's order,
             tf.data's and Grain's ``repeat().batch()``: every epoch serves each record
             once. ``True`` skips the records short of a full batch and starts the next
@@ -237,6 +293,7 @@ class Pipeline(nnx.Module):
         host_resources: HostResources | None = None,
         block_order: BlockOrder | None = None,
         sharding: NamedSharding | None = None,
+        packing: _Packing_co = None,
     ) -> None:
         """Initialize the module.
 
@@ -257,6 +314,10 @@ class Pipeline(nnx.Module):
                 global order (see the class docstring).
             sharding: The rows' sharding on a data mesh, or ``None`` for the default device
                 (see the class docstring).
+            packing: How a source holding variable-length records packs them into rows of a
+                static length (:class:`~datarax.pipeline.run_configuration.Packing`), or
+                ``None``. The records are planned into rows once, and the rows are what the
+                pipeline orders, batches, counts and resumes (see :attr:`pack_plan`).
 
         Raises:
             ValueError: If ``num_epochs`` is neither ``None`` nor at least 1, the source
@@ -265,15 +326,35 @@ class Pipeline(nnx.Module):
                 ``shuffle`` or for a source that is not ``INDEXED`` or has no length, or the
                 sharding cannot place this pipeline's batches (more than the rows, an
                 ``AbstractMesh``, Explicit axes, or a ``batch_size`` it cannot split; across
-                processes, a stream source or one serving a worker's shard).
-            TypeError: If ``sharding`` is not a ``NamedSharding``.
+                processes, a stream source or one serving a worker's shard), or packing is
+                asked for with stages, a block order, or a field it does not name.
+            TypeError: If ``sharding`` is not a ``NamedSharding``, or packing is asked of a
+                stream.
+            NotImplementedError: If packing is asked of a source that does not read ragged
+                records.
         """
         super().__init__()
         _check_block_order(source, shuffle=shuffle, block_order=block_order)
-        check_sharding(sharding, batch_size, source)
+        self.dag = self._build_dag(stages, nodes, edges, sink)
+        _refuse_packing_with(packing, dag=self.dag, block_order=block_order)
+        if packing is not None:
+            refuse_unpackable(source, packing)
+        self.packing = packing
+        self.source = source
+        self.rngs = rngs
+        # The epoch key is derived from this base and the epoch counter, so
+        # iterator state (position, epoch, rng counts) reproduces every slice. It is a naming
+        # key (NAMING_PRNG_IMPL), whatever impl the caller's streams draw with.
+        self._epoch_key_base: nnx.Variable[jax.Array] = nnx.Variable(naming_key_data(rngs()))
+        # The rows a packed pipeline serves, held on the host and out of NNX state. Their count
+        # is kept as a plain value beside the holder: the epoch plan the compiled step traces
+        # reads it, and a traced path reads no holder.
+        self._packed = HostValue(self._packed_rows(source, packing, shuffle=shuffle))
+        self._packed_length = None if self._packed.value is None else len(self._packed.value)
+        check_sharding(sharding, batch_size, self.read_source)
         # Refuses an epoch rule no pipeline can serve.
         EpochPlan(
-            length=known_length(source),
+            length=known_length(self.read_source),
             batch_size=batch_size,
             drop_last=drop_last,
             num_epochs=num_epochs,
@@ -286,19 +367,51 @@ class Pipeline(nnx.Module):
         self.host_resources = host_resources
         self.sharding = sharding
 
-        self.dag = self._build_dag(stages, nodes, edges, sink)
-        self.source = source
         self.batch_size = batch_size
-        self.rngs = rngs
         self._position: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
         self._epoch: nnx.Variable[jax.Array] = nnx.Variable(jnp.zeros((), dtype=jnp.int32))
-        # The epoch key is derived from this base and the epoch counter, so
-        # iterator state (position, epoch, rng counts) reproduces every slice. It is a naming
-        # key (NAMING_PRNG_IMPL), whatever impl the caller's streams draw with.
-        self._epoch_key_base: nnx.Variable[jax.Array] = nnx.Variable(naming_key_data(rngs()))
         # Where host-stage iteration stands and the Grain iterator of its current run, held on
         # the host and out of NNX state, so the graph definition does not move as it advances.
         self._host = HostStageHolder(HostStage(end_epoch=num_epochs))
+
+    def _packed_rows(
+        self, source: DataSourceModule, packing: Packing | None, *, shuffle: bool
+    ) -> PackedRows | None:
+        """Plan ``source``'s records into rows once: the packed source the host stage reads.
+
+        Args:
+            source: The pipeline's source.
+            packing: The packing asked for, or ``None``.
+            shuffle: Whether the planning order is the pipeline's cipher (else sequential).
+
+        Returns:
+            The rows as an indexed source, or ``None`` without packing.
+        """
+        if packing is None:
+            return None
+        key = self._epoch_key_base.get_value() if shuffle else None
+        plan, temporary = plan_packing(
+            source, packing, None if key is None else jax.device_get(key)
+        )
+        return PackedRows(source, packing, plan, temporary=temporary)
+
+    @property
+    def read_source(self) -> DataSourceModule:
+        """What the host stage reads: the packed rows with packing, else the source."""
+        packed = self._packed.value
+        return self.source if packed is None else packed
+
+    @property
+    def pack_plan(self) -> PackPlan:
+        """The rows a packed pipeline serves, read through memory maps.
+
+        Raises:
+            ValueError: If the pipeline does not pack.
+        """
+        packed = self._packed.value
+        if packed is None:
+            raise ValueError("this pipeline does not pack: build it with packing=Packing(...)")
+        return packed.plan
 
     @staticmethod
     def _build_dag(
@@ -334,7 +447,7 @@ class Pipeline(nnx.Module):
 
     @classmethod
     def from_dag(  # noqa: DOC502
-        cls,
+        cls: type[Pipeline[_Packing]],
         *,
         source: DataSourceModule,
         nodes: Mapping[str, nnx.Module],
@@ -348,7 +461,8 @@ class Pipeline(nnx.Module):
         host_resources: HostResources | None = None,
         block_order: BlockOrder | None = None,
         sharding: NamedSharding | None = None,
-    ) -> Pipeline:
+        packing: _Packing = None,
+    ) -> Pipeline[_Packing]:
         """Build a Pipeline whose stages execute in user-specified topological order.
 
         Args:
@@ -372,6 +486,8 @@ class Pipeline(nnx.Module):
                 class docstring).
             sharding: The rows' sharding on a data mesh, or ``None`` for the default device
                 (see the class docstring).
+            packing: How variable-length records pack into rows, or ``None`` (see the
+                constructor).
 
         Raises:
             ValueError: If ``edges`` describes a cycle, references
@@ -393,11 +509,12 @@ class Pipeline(nnx.Module):
             host_resources=host_resources,
             block_order=block_order,
             sharding=sharding,
+            packing=packing,
         )
 
     @classmethod
     def from_arrays(  # noqa: DOC502 - the source and the constructor raise
-        cls,
+        cls: type[Pipeline[None]],
         data: Mapping[str, Any],
         *,
         batch_size: int,
@@ -522,7 +639,7 @@ class Pipeline(nnx.Module):
         so a length or batch size changed since construction is what it reports.
         """
         return EpochPlan(
-            length=known_length(self.source),
+            length=known_length(self.source) if self.packing is None else self._packed_length,
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_epochs=self.num_epochs,
@@ -571,13 +688,15 @@ class Pipeline(nnx.Module):
         self._epoch[...] = epoch
 
     def get_state(self) -> CheckpointState:
-        """Where iteration stands: the host stage's cursor, version 3, and what it is valid for.
+        """Where iteration stands: the host stage's cursor, version 4, and what it is valid for.
 
-        ``{"version": 3, "kind", "epoch", "position", "run_end_epoch", "stream", "fingerprint"}``:
+        ``{"version": 4, "kind", "epoch", "position", "run_end_epoch", "stream", "fingerprint"}``:
         an indexed source's next batch starts at ``position`` of ``epoch`` and the run stops
         before ``run_end_epoch``; a stream's cursor is ``stream`` (its pass, the records of the
         pass served, the arrival ordinals served and the passes left). The fingerprint names the
-        batch rule, length, epochs, key and order the state fits. It names the batches taken,
+        batch rule, length, epochs, key and order the state fits, and a packed pipeline's packing
+        and the lengths its rows were planned from (a packed pipeline's position counts rows).
+        It names the batches taken,
         whatever the read threads read ahead. Operator parameters and statistics are not in it:
         checkpoint them with the model through ``nnx.state(pipe.dag)``.
 
@@ -625,12 +744,30 @@ class Pipeline(nnx.Module):
 
     @overload
     def raw_batches(
-        self,
+        self: Pipeline[None],
         chunk: int | None = None,
         *,
         max_chunk_bytes: int | None = None,
         with_provenance: Literal[True],
     ) -> Iterator[tuple[Batch, Provenance]]: ...
+
+    @overload
+    def raw_batches(
+        self: Pipeline[Packing],
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: Literal[True],
+    ) -> Iterator[tuple[Batch, PackedProvenance]]: ...
+
+    @overload
+    def raw_batches(
+        self: Pipeline[Packing | None],
+        chunk: int | None = None,
+        *,
+        max_chunk_bytes: int | None = None,
+        with_provenance: Literal[True],
+    ) -> Iterator[tuple[Batch, Provenance | PackedProvenance]]: ...
 
     def raw_batches(  # noqa: DOC502 - the host stage raises
         self,
@@ -638,7 +775,7 @@ class Pipeline(nnx.Module):
         *,
         max_chunk_bytes: int | None = None,
         with_provenance: bool = False,
-    ) -> Iterator[Batch] | Iterator[tuple[Batch, Provenance]]:
+    ) -> Iterator[Batch] | Iterator[tuple[Batch, Provenance | PackedProvenance]]:
         """Unprocessed batches read by the host stage and placed on the device: the E2E form.
 
         The DAG is not applied: pass :attr:`dag` into your differentiated train step and call it
@@ -665,8 +802,9 @@ class Pipeline(nnx.Module):
                 ``K`` remain, then the remaining batches singly, the run's short final batch
                 last.
             max_chunk_bytes: The most bytes a chunk's data may hold; a larger chunk is refused.
-            with_provenance: Whether each unit comes as ``(batch, provenance)``, one mapping of
-                strings and objects per record, in row order.
+            with_provenance: Whether each unit comes as ``(batch, provenance)``: one mapping of
+                strings and objects per record, in row order, or for a packed pipeline one
+                tuple per row of its slots' mappings, empty past its records.
 
         Returns:
             The units.
@@ -729,6 +867,8 @@ class Pipeline(nnx.Module):
         Raises:
             ValueError: If the pipeline holds a sharding (iteration places on a mesh).
         """
+        if self.packing is not None:
+            raise ValueError(_served_by_iteration("step()"))
         if self.sharding is not None:
             raise ValueError(_placed_by_iteration("step()"))
         if columns is None:
@@ -820,6 +960,8 @@ class Pipeline(nnx.Module):
         Raises:
             ValueError: If the pipeline holds a sharding (iteration places on a mesh).
         """
+        if self.packing is not None:
+            raise ValueError(_served_by_iteration("scan"))
         if self.sharding is not None:
             raise ValueError(_placed_by_iteration("scan"))
         n_modules = len(modules)
@@ -909,6 +1051,8 @@ class Pipeline(nnx.Module):
             TypeError: If the source is not ``INDEXED`` (a stream), which a session cannot drive.
             ValueError: If the pipeline holds a sharding (iteration places on a mesh).
         """
+        if self.packing is not None:
+            raise ValueError(_served_by_iteration("session()"))
         if self.sharding is not None:
             raise ValueError(_placed_by_iteration("session()"))
         kind = self.source.record_identity

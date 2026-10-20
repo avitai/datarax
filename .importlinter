@@ -25,7 +25,7 @@ name = Pipeline drives its iteration machinery, which knows nothing of Pipeline
 type = layers
 layers =
     datarax.pipeline.pipeline
-    datarax.pipeline.host_stage | datarax.pipeline.iteration | datarax.pipeline.materialization
+    datarax.pipeline.host_stage | datarax.pipeline.iteration | datarax.pipeline.materialization | datarax.pipeline.packed_rows
     datarax.pipeline.run_configuration | datarax.pipeline.run_units
     datarax.pipeline.epochs | datarax.pipeline.dag_call | datarax.pipeline.read_plan | datarax.pipeline.placement
     datarax.pipeline.host_workers
@@ -40,11 +40,12 @@ layers =
     datarax.sources._tfrecord
 
 [importlinter:contract:decoded-copy]
-name = The decoded copy's manifest over its files over its units over its layout
+name = The decoded copy's plans over its manifest over its files over its units over its layout
 type = layers
 containers =
     datarax.sources.decoded_copy
 layers =
+    _plans
     _manifest
     _files
     _units

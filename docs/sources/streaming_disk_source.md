@@ -18,6 +18,13 @@ Two reads serve it:
 - `get_records(indices)` reads inside a compiled program through `io_callback`, for
   `pipeline.step()`, `scan` and `pipeline.session()`; its output is wrapped in `stop_gradient`.
 
+With `StreamingDiskSourceConfig(ragged=(DiskRagged(values=..., offsets=...),))` the source also
+holds ragged fields, a field whose records differ in length along their first axis stored as its
+values `(T, *inner)` and int64 offsets `(N + 1,)`, as a [decoded copy](decoded_copy.md) of a
+source holding one stores it. It then serves every field through the ragged read packing uses,
+`lengths(indices, field)` (from the offsets alone) and `get_ragged(indices, field)`, names them in
+`field_names`, and refuses `get_batch`, `get_records` and `element_spec`, naming the field.
+
 With `StreamingDiskSourceConfig(provenance=DiskProvenance(file, records))` the source also serves
 its records' provenance (their strings and objects) by index from one ArrayRecord file, as a
 [decoded copy](decoded_copy.md) holds it; `source_identity()` declares its columns (and the copy

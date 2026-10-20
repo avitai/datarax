@@ -55,6 +55,7 @@ from datarax.sources.source_ops import resolve_wrapped_indices as resolve_wrappe
 from datarax.sources.stream_iterator import StreamChunk as StreamChunk
 from datarax.sources.streaming_disk_source import (
     DiskColumn as DiskColumn,
+    DiskRagged as DiskRagged,
     StreamingDiskSource as StreamingDiskSource,
     StreamingDiskSourceConfig as StreamingDiskSourceConfig,
 )

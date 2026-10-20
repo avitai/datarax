@@ -185,13 +185,25 @@ class TestTheEagerSourceReadsArrayRecord:
         assert set(source.data) == {"image", "label"}
         assert source._provenance.value == ()
 
-    def test_a_feature_whose_shape_varies_is_refused_naming_padding_or_packing(
+    def test_a_feature_varying_past_its_first_axis_is_refused_naming_padding(
         self, tfds_fixture: TFDSFixture
     ) -> None:
         config = TFDSEagerConfig(name=RAGGED, split="train", data_dir=str(tfds_fixture.ragged))
 
-        with pytest.raises(ValueError, match="'image'.*pad the field.*pack records"):
+        with pytest.raises(
+            ValueError, match="'image'.*more than their first axis.*pad the field to one shape"
+        ) as refused:
             TFDSEagerSource(config)
+        assert "pack records" not in str(refused.value)
+
+    def test_packing_does_not_read_its_records_yet(self, tfds_fixture: TFDSFixture) -> None:
+        source = _eager(tfds_fixture)
+
+        assert source.ragged_fields == ()
+        with pytest.raises(NotImplementedError, match="TFDSEagerSource.*MemorySource"):
+            source.get_ragged(to_words(np.arange(2, dtype=np.uint64)), "label")
+        with pytest.raises(NotImplementedError, match="TFDSEagerSource.*MemorySource"):
+            source.lengths(to_words(np.arange(2, dtype=np.uint64)), "label")
 
     def test_the_dataset_info_and_repr_name_the_dataset(self, tfds_fixture: TFDSFixture) -> None:
         source = _eager(tfds_fixture)

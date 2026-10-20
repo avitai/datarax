@@ -2,7 +2,11 @@
 
 A decoded copy holds an indexed source's records as they decode, one ``.npy`` file per numeric
 field (its column) and the records' provenance in one ArrayRecord file of UTF-8 JSON, beside a
-``manifest.json`` written last. It is read back by :func:`open_decoded_copy` as a
+``manifest.json`` written last. A ragged field (its records differ in length along their first
+axis) is two ``.npy`` files, its values ``column-k.values.npy`` of ``(T, *inner)`` and its int64
+offsets ``column-k.offsets.npy`` of ``(N + 1,)``, the layout of Megatron-LM's indexed dataset and
+levanter's ``JaggedArrayStore``; a source holding one is read field by field through its ragged
+read, and its copy serves that read alone. It is read back by :func:`open_decoded_copy` as a
 :class:`~datarax.sources.streaming_disk_source.StreamingDiskSource`, which serves what the source
 serves, record for record, from memory maps. The copy is opt-in and has no default directory;
 ``datarax.pipeline.materialize`` writes one, through the training process's Grain workers or on
@@ -21,11 +25,13 @@ Writing a copy follows one protocol:
    so one process writes a copy at a time; the kernel frees it when its holder dies.
 2. :func:`clear_copy` removes an old copy in an order safe for readers: its manifest first, the
    directory fsynced, then its other files; a reader that mapped them keeps their old inodes.
-3. :func:`begin_copy` creates every ``.partial`` file fresh and reserves its full size with
-   ``os.posix_fallocate`` before a row is written, so a full disk is refused in the writing
-   process (a sparse memory map written on a full disk is a ``SIGBUS``).
-4. Each unit's rows are written in place (:meth:`CopyFiles.rows`) and digested
-   (:func:`unit_digest`); the provenance is appended unit by unit (:meth:`CopyFiles.provenance`).
+3. :func:`begin_copy` creates every ``.partial`` file fresh and reserves each fixed column's full
+   size with ``os.posix_fallocate`` before a row is written, so a full disk is refused in the
+   writing process (a sparse memory map written on a full disk is a ``SIGBUS``).
+4. Each unit's fixed rows are written in place (:meth:`CopyFiles.rows`), its ragged fields
+   appended in unit order by the training process (:meth:`CopyFiles.ragged`), and the unit
+   digested (:func:`unit_digest`); the provenance is appended unit by unit
+   (:meth:`CopyFiles.provenance`).
 5. :func:`finish_copy` fsyncs each ``.partial`` once, renames it, fsyncs the directory, and writes
    the manifest through a fsynced ``manifest.json.tmp`` replaced into place, fsyncing the
    directory last. A directory without a manifest is an incomplete copy, refused by every reader.
@@ -39,6 +45,10 @@ source; an edited source or a decoder library of another version does not.
 Rows are written through shared memory maps, which is safe for disjoint writers on a local disk;
 a target on a networked or FUSE filesystem is refused for writing
 (:func:`refuse_unsupported_filesystem`), while a finished copy is read from anywhere.
+
+A copy also keeps the pack plans planned over it (``_plans.copy_plan``): one ``plan-<digest>``
+directory per planning parameters and content, planned once and read by every later run through
+memory maps; rebuilding the copy removes them.
 """
 
 from __future__ import annotations
@@ -56,12 +66,13 @@ from datarax.sources.decoded_copy._manifest import (
 )
 from datarax.sources.streaming_disk_source import (
     DiskColumn,
+    DiskRagged,
     StreamingDiskSource,
     StreamingDiskSourceConfig,
 )
 
 
-def open_decoded_copy(
+def open_decoded_copy(  # noqa: DOC503 - _column raises the FileNotFoundError
     directory: str | os.PathLike[str],
     *,
     identity: Mapping[str, Any] | None = None,
@@ -93,23 +104,9 @@ def open_decoded_copy(
                 f"{root} is a copy of another source than the one given: it differs in "
                 f"{differing}; rebuild it with datarax.pipeline.materialize(..., rebuild=True)"
             )
-    columns = []
-    for entry in manifest["columns"]:
-        path = root / entry["file"]
-        if not path.is_file():
-            raise FileNotFoundError(
-                f"{root}: column {entry['name']!r}'s file {entry['file']} is missing"
-            )
-        size = path.stat().st_size
-        if size != entry["bytes"]:
-            raise ValueError(
-                f"{root}: column {entry['name']!r}'s file {entry['file']} holds {size} bytes, "
-                f"not the {entry['bytes']} its manifest records: rebuild the copy"
-            )
-        column = DiskColumn.from_npy(entry["name"], path)
-        columns.append(column)
+    fields = [_field(root, entry) for entry in manifest["columns"]]
     if verify:
-        verify_content(root, manifest, columns)
+        verify_content(root, manifest, fields)
     stored = manifest["provenance"]
     provenance = (
         None
@@ -118,11 +115,60 @@ def open_decoded_copy(
     )
     return StreamingDiskSource(
         StreamingDiskSourceConfig(
-            columns=tuple(columns),
+            columns=tuple(f for f in fields if isinstance(f, DiskColumn)),
+            ragged=tuple(f for f in fields if isinstance(f, DiskRagged)),
             provenance=provenance,
             content_digest=manifest["content"]["digest"],
+            copy_directory=str(root),
         )
     )
+
+
+def _field(root: Path, entry: Mapping[str, Any]) -> DiskColumn | DiskRagged:
+    """A manifest column's field on disk: a fixed column, or a ragged field's values and offsets.
+
+    Args:
+        root: The copy's directory.
+        entry: The manifest's entry.
+
+    Returns:
+        The field, its files checked against the manifest.
+    """
+    values = _column(root, entry["name"], entry["file"], entry["bytes"])
+    offsets = entry["offsets"]
+    if offsets is None:
+        return values
+    return DiskRagged(
+        values=values, offsets=_column(root, entry["name"], offsets["file"], offsets["bytes"])
+    )
+
+
+def _column(root: Path, name: str, file: str, size: int) -> DiskColumn:
+    """The ``.npy`` file ``file`` of the column ``name``, refused unless it is ``size`` bytes.
+
+    Args:
+        root: The copy's directory.
+        name: The column's field.
+        file: The file's name.
+        size: Its bytes, as the manifest records them.
+
+    Returns:
+        The column.
+
+    Raises:
+        FileNotFoundError: If the file is missing.
+        ValueError: If it holds another number of bytes.
+    """
+    path = root / file
+    if not path.is_file():
+        raise FileNotFoundError(f"{root}: column {name!r}'s file {file} is missing")
+    held = path.stat().st_size
+    if held != size:
+        raise ValueError(
+            f"{root}: column {name!r}'s file {file} holds {held} bytes, not the {size} its "
+            "manifest records: rebuild the copy"
+        )
+    return DiskColumn.from_npy(name, path)
 
 
 __all__ = ["open_decoded_copy"]

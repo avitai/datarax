@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
-from collections.abc import Collection, Iterator, Mapping, Set as AbstractSet
+from collections.abc import Callable, Collection, Iterator, Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -28,6 +28,7 @@ import numpy as np
 
 try:
     import datasets
+    import pyarrow as pa
 except ImportError as error:
     msg = 'datarax.sources.hf_source needs datasets: uv pip install "datarax[data]"'
     raise ImportError(msg) from error
@@ -35,10 +36,16 @@ except ImportError as error:
 from datarax.core.data_source import DataSourceModule, NO_PROVENANCE, RecordIdentity
 from datarax.core.host_values import HostValue
 from datarax.core.prng import key_integer
+from datarax.core.ragged import RaggedColumn
 from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
-from datarax.sources.eager_source import EagerSource, is_array_leaf, stack_records
+from datarax.sources.eager_source import (
+    EagerSource,
+    is_array_leaf,
+    past_first_axis_refusal,
+    stack_records,
+)
 from datarax.sources.stream_iterator import StreamChunk
 
 
@@ -133,6 +140,69 @@ def _hf_column_parts(key: str, values: Any) -> tuple[np.ndarray | None, list[Any
     return None, list(values)
 
 
+def _is_ragged_list(values: Any, arrow_type: pa.DataType) -> bool:
+    """Whether a numpy-formatted column is a list column whose records differ in length.
+
+    HF's numpy format stacks a list column whose records share one shape, and returns an object
+    array of per-record arrays otherwise.
+
+    Args:
+        values: The column as the numpy format gives it.
+        arrow_type: The column's Arrow type.
+
+    Returns:
+        Whether the column is a ragged list column.
+    """
+    return (
+        isinstance(values, np.ndarray)
+        and values.dtype == object
+        and (pa.types.is_list(arrow_type) or pa.types.is_large_list(arrow_type))
+        and all(is_array_leaf(value) for value in values)
+    )
+
+
+def _ragged_of_arrow(  # noqa: DOC503 - past_first_axis_refusal builds one
+    key: str, column: pa.ChunkedArray
+) -> RaggedColumn:
+    """An Arrow list column as a ragged field: its values and offsets, with its declared dtype.
+
+    The offsets are the list array's own, rebased to 0 (a selected or sliced table's start
+    elsewhere); nested lists must hold one length per level past the first, which becomes the
+    field's inner shape.
+
+    Args:
+        key: The column's name.
+        column: The column, one list per record.
+
+    Returns:
+        The ragged field.
+
+    Raises:
+        ValueError: If a record is missing, or a nested level's lengths differ (more than the
+            first axis varies).
+    """
+    array = column.combine_chunks()
+    if array.null_count:
+        raise ValueError(
+            f"field {key!r} has {array.null_count} missing records; a ragged field holds one "
+            "array per record"
+        )
+    offsets = np.asarray(array.offsets, np.int64)
+    values = array.flatten()
+    inner: list[int] = []
+    while pa.types.is_list(values.type) or pa.types.is_large_list(values.type):
+        lengths = np.diff(np.asarray(values.offsets, np.int64))
+        if len(lengths) and (lengths != lengths[0]).any():
+            raise past_first_axis_refusal(key, f"holds records whose level {len(inner) + 1} varies")
+        inner.append(int(lengths[0]) if len(lengths) else 0)
+        values = values.flatten()
+    cells = values.to_numpy(zero_copy_only=False)
+    return RaggedColumn(
+        values=cells.reshape(int(offsets[-1] - offsets[0]), *inner),
+        offsets=offsets - offsets[0],
+    )
+
+
 def _hf_parts(
     loaded: Mapping[str, Any], size: int
 ) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...]]:
@@ -158,6 +228,40 @@ def _hf_parts(
         {key: values[row] for key, values in provenance_columns.items()} for row in range(size)
     )
     return columns, provenance_records if provenance_columns else ()
+
+
+def _hf_eager_parts(
+    loaded: Mapping[str, Any], size: int, arrow: Callable[[], pa.Table]
+) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...], dict[str, RaggedColumn]]:
+    """An eager source's columns, provenance and ragged fields (:func:`_hf_parts` for the rest).
+
+    A list column whose records differ in length is read through Arrow (:func:`_ragged_of_arrow`):
+    its values and offsets, at its declared dtype, without a Python object per record. A stream
+    reads its chunks with :func:`_hf_parts` alone, which refuses such a column.
+
+    Args:
+        loaded: Column name to the column as HF's numpy format gives it.
+        size: The records the columns hold.
+        arrow: The same columns as one Arrow table, read only when an object column is found.
+
+    Returns:
+        The array columns, one mapping per record of its non-array columns (empty when every
+        column is an array), and the ragged fields.
+    """
+    objects = [
+        key
+        for key, values in loaded.items()
+        if isinstance(values, np.ndarray) and values.dtype == object
+    ]
+    table = arrow() if objects else None
+    ragged = {
+        key: _ragged_of_arrow(key, table.column(key))
+        for key in objects
+        if table is not None and _is_ragged_list(loaded[key], table.column(key).type)
+    }
+    rest = {key: values for key, values in loaded.items() if key not in ragged}
+    columns, provenance = _hf_parts(rest, size)
+    return columns, provenance, ragged
 
 
 @dataclass(frozen=True)
@@ -278,8 +382,8 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
 
     def _load_columns(
         self, dataset: Any, config: HFEagerConfig
-    ) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...]]:
-        """The loaded dataset as host NumPy columns and per-record provenance.
+    ) -> tuple[dict[str, np.ndarray], tuple[dict[str, Any], ...], dict[str, RaggedColumn]]:
+        """The loaded dataset as host NumPy columns, per-record provenance and ragged fields.
 
         All HuggingFace work happens here, at init time.
 
@@ -288,8 +392,8 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
             config: Source configuration
 
         Returns:
-            The array columns, and one mapping per record of its non-array columns (empty when
-            every column is an array).
+            The array columns, one mapping per record of its non-array columns (empty when
+            every column is an array), and the ragged fields.
 
         Raises:
             ValueError: If the dataset yields no elements after loading and key filtering.
@@ -302,8 +406,13 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
             )
 
         # The numpy format decodes and stacks each column once, so a numeric column is one
-        # NumPy array, read without per-row work.
-        return _hf_parts(dataset.select_columns(keys).with_format("numpy")[:], len(dataset))
+        # NumPy array, read without per-row work; a ragged list column is read through Arrow.
+        selected = dataset.select_columns(keys)
+        return _hf_eager_parts(
+            selected.with_format("numpy")[:],
+            len(dataset),
+            lambda: selected.with_format("arrow")[:],
+        )
 
 
 # =============================================================================

@@ -10,6 +10,13 @@ RAM budget's worker processes for a read that decodes in Python, each worker wri
 rows in place. It returns a complete copy of the same source already in the directory as it is,
 so every later run, and every other training process on the host, reuses it.
 
+A source holding a ragged field (its records differ in length along their first axis, such as
+token sequences) is copied too: the field is stored as one values file and int64 offsets, the
+layout of Megatron-LM's indexed dataset and levanter's `JaggedArrayStore`, and the copy serves
+the ragged read packing plans and packs from (`lengths`, `get_ragged`). A record's length is read
+from the offsets alone, without decoding, and the pack plans planned over the copy are kept in
+it, one directory per planning parameters, so frontier-scale planning is paid once.
+
 ```python
 from datarax.pipeline import materialize
 from datarax.sources import from_tfds
@@ -35,13 +42,22 @@ source = open_decoded_copy("/data/cifar10-train")
 
 | file | what it holds |
 |---|---|
-| `column-<i>.npy` | one numeric field of every record, at its stored dtype (an int64 label stays int64) |
+| `column-<i>.npy` | one fixed numeric field of every record, at its stored dtype (an int64 label stays int64) |
+| `column-<i>.values.npy` | a ragged field's cells, every record's one after another, `(T, *inner)` |
+| `column-<i>.offsets.npy` | the ragged field's int64 offsets, `(N + 1,)` from 0: record `r` is `values[offsets[r]:offsets[r + 1]]` |
 | `provenance.array_record` | one record per record: its strings and objects as UTF-8 JSON, `bytes` base64-encoded |
-| `manifest.json` | the format, record count, units, each column's field, file, dtype, shape and size, the source's identity, the decoder's libraries and the content digest |
+| `manifest.json` | the format (2), record count, units, each column's field, file, dtype, shape and size (a ragged field's offsets file and size too), the source's identity, the decoder's libraries and the content digest |
 | `.lock` | the writer's lock; it stays in a finished copy |
+| `plan-<digest>/` | a pack plan over the copy, keyed by its content digest, the planner's version and the planning parameters; a rebuild removes it |
 
 A file named `*.partial`, or a directory without `manifest.json`, is a copy being written or
 whose writer stopped: every reader refuses it, naming it incomplete.
+
+A fixed field of a source holding a ragged one is read through the ragged read, as packing reads
+it, and stored as `(N, L, *inner)`: a scalar field as `(N, 1)`. Workers write the fixed columns
+in place; a ragged field's total is known only once decoded, so each worker sends its unit's
+values and offsets back and the training process appends them in unit order. The copy is the same
+file for file whoever decoded it.
 
 ## Identity
 
@@ -54,7 +70,7 @@ the source's files are:
   (`tensorflow-datasets`, `protobuf` with its runtime, `numpy`, `pillow`, `opencv`). A decoder
   of another version decodes to other bytes in general, so it invalidates the copy;
 - a `StreamingDiskSource`: its columns' fields, dtypes, shapes, offsets, files' base names and
-  sizes, and the content digest of the copy it is.
+  sizes (each ragged field's values and offsets), and the content digest of the copy it is.
 
 A copy moved with its source to another directory or host still matches; a source file renamed,
 resized or re-encoded does not, and touching a file's modification time alone changes nothing.
@@ -62,7 +78,7 @@ resized or re-encoded does not, and touching a file's modification time alone ch
 source, naming every field that differs.
 
 The copy is also identified by its own bytes: the manifest's content digest is the SHA-256 of the
-units' SHA-256 digests, in unit order. `open_decoded_copy(directory, verify=True)` reads every
+units' SHA-256 digests, in unit order, a ragged field's values and offsets both in each unit's. `open_decoded_copy(directory, verify=True)` reads every
 column and refuses a copy whose bytes no longer give it (a full read).
 
 ## Writing and reading safely
@@ -80,18 +96,25 @@ column and refuses a copy whose bytes no longer give it (a full read).
 
 ## Refusals
 
-- no `manifest.json` (an incomplete copy), or a copy of another format, naming both;
-- a column file missing, or of another size than the manifest records;
+- no `manifest.json` (an incomplete copy), or a copy of another format (this datarax reads
+  format 2), naming both; `materialize` rebuilds it;
+- a column file missing, or of another size than the manifest records; a ragged field whose last
+  offset is not its values' length;
+- an unpacked read of a copy holding a ragged field (`get_batch`, `get_records`, `element_spec`),
+  naming the field, packing and padding;
 - an identity that differs, naming the fields; a content digest that does not match, with
   `verify=True`;
-- writing: a field whose dtype or record shape varies between records (a ragged field), a TFDS
+- writing: a field whose dtype varies between records, or whose shape varies past its first axis,
+  or along it in a source that does not name the field ragged; a source holding a ragged field
+  into RAM (`materialize` without `directory`: open work, since a ragged field's size is known
+  only once decoded); a TFDS
   `Video` feature (decoded frames are far larger than their stored size), a provenance value JSON
   cannot hold exactly (text, bytes, numbers, bools and `None` are kept), a target on a networked
   or FUSE filesystem (writing there through shared memory maps is not verified; reading a
   finished copy from one is allowed), a target directory holding a file the format does not
-  name, and a disk without the room: every file is reserved to its full size with
+  name, and a disk without the room: every fixed column is reserved to its full size with
   `os.posix_fallocate` before a row is written, and the refusal names the column, the bytes
-  needed and the bytes free.
+  needed and the bytes free (a ragged field is appended, and a full disk refuses the append).
 
 ## See Also
 

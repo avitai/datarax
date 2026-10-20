@@ -261,9 +261,39 @@ An in-memory source holds its records as host NumPy columns and keeps no iterati
 pipeline owns the order, the position and the epoch, and checkpoints them. A list of records is
 turned into columns once, at construction: numbers become columns, and strings and other
 objects become each record's provenance, kept beside the columns and never part of a batch.
-Every record must hold the same numeric fields with the same shapes; a field whose shape varies
-is refused, naming the field, so pad it to a fixed length (with its mask or length in `data`) or
-pack records with segment ids.
+Every record must hold the same numeric fields. A field whose records share one shape is a
+column. In `MemorySource` and `HFEagerSource`, a field whose records differ in length along their
+first axis only (token sequences, point sets) is a ragged field: `source.ragged_fields` names it,
+and it is held as one values array and int64 offsets. A batch's shapes are static, so a source
+holding a ragged field refuses every unpacked read (`get_batch`, indexing, iteration,
+`element_spec`), naming the field. Packing reads such a source through
+`source.lengths(indices, field)` and `source.get_ragged(indices, field)`, which return each
+record's length and the records' values with their offsets, for any field: a column's records
+count its row length, and a scalar counts 1; `source.field_names` names every field. A
+[decoded copy](../sources/decoded_copy.md) of such a source keeps the ragged field on disk as
+values and offsets and serves the same read. Other sources refuse a field whose shape varies,
+and so does every source when the records differ past their first axis, which packing cannot
+join: pad the field (with its mask or length in `data`).
+
+`Pipeline(..., packing=Packing(lengths={"tokens": 2048, "label": 16}, max_segments=16,
+window=16384))` serves such a source as rows of a static length. The records are planned into
+rows once, by first fit over `window` consecutive records of the planning order (the pipeline's
+cipher with `shuffle=True`, else the stored order), and the rows are what the pipeline orders
+(a new order each epoch), batches, counts (`len`, `batches_left`) and resumes. Every field is
+packed, so `lengths` names each one with its row length (a scalar field takes one cell a record),
+and none of the three arguments has a default: the row lengths and `max_segments` fix the batch's
+shapes, and a wider window fills rows better but rearranges more of the order (WLB-LLM, arXiv
+2503.17924, finds final loss rising as the packing window spans more global batches). A batch
+holds each field as `(batch_size, row length)` with `<field>_segment_ids` (records numbered from
+1, 0 in unused cells), `<field>_positions` (restarting in each record) and
+`<field>_segment_indices` (each slot's record identity, `PADDING_INDEX` when empty); a row is
+named `(2**31, row)`, and `raw_batches(with_provenance=True)` gives each row a tuple of its
+records' mappings in slot order, empty past its records, matching `<field>_segment_indices` slot
+for slot. A pipeline is typed by its `packing` argument (`Pipeline[None]` or `Pipeline[Packing]`),
+so the provenance's form is known statically. The plan is kept in a decoded
+copy for every pipeline built alike, or in a temporary directory removed with the pipeline.
+Packing is served by iteration: `step()`, `scan` and `session()` refuse it, and so do stages and
+`block_order`.
 
 The columns are host data, not NNX state: a split or a checkpoint of the pipeline carries none
 of them, and sources that differ only in their data share one graph definition and one compiled

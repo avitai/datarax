@@ -78,7 +78,8 @@ def batched_spec(element_spec: Any, batch_size: int) -> Any:
 
     The returned PyTree has the structure of ``element_spec`` with a leading ``batch_size``
     dimension prepended to every ``ShapeDtypeStruct`` leaf, and nothing added: every row of a
-    batch is a record, so no leaf marks padding.
+    batch is a record (or a packed row, whose unused cells its own segment ids mark), so no leaf
+    marks a padding row.
 
     Args:
         element_spec: PyTree of ``jax.ShapeDtypeStruct`` describing per-element
