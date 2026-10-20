@@ -1683,7 +1683,7 @@ requires-dist = [
     { name = "torchcrepe", marker = "extra == 'examples'" },
     { name = "torchvision", marker = "extra == 'benchmark'", specifier = ">=0.15,<0.26" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=4.0.2" },
-    { name = "typing-extensions", specifier = ">=4.6.0" },
+    { name = "typing-extensions", specifier = ">=4.10.0" },
     { name = "vastai-sdk", marker = "extra == 'automation'", specifier = ">=0.2.6,<0.3" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
     { name = "webdataset", marker = "extra == 'benchmark'", specifier = ">=0.2" },
