@@ -26,6 +26,7 @@ from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import ArrayValue, Batch, Element
+from datarax.core.field_paths import path_label
 from datarax.core.module import DataraxModule
 from datarax.core.prng import per_record_keys, record_key
 
@@ -521,7 +522,7 @@ class OperatorModule(DataraxModule):
                 f"{jax.tree.structure(current)}; got {jax.tree.structure(replacement)}"
             )
         mismatched = [
-            jax.tree_util.keystr(path)
+            path_label(path)
             for (path, new), old in zip(
                 jax.tree_util.tree_leaves_with_path(replacement),
                 jax.tree.leaves(current),

@@ -45,7 +45,7 @@ from typing import Any
 from flax import nnx
 
 from datarax.core.config import OperatorConfig
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import refuse_field_nodes
 from datarax.core.operator import OperatorModule
 
 
@@ -292,8 +292,8 @@ class CrossModalOperator(OperatorModule):
         """
         inputs = [data[name] for name in self.config.input_fields]
         for name, value in zip(self.config.input_fields, inputs, strict=True):
-            refuse_maybe(
-                value, f"{type(self).__name__} fuses its input fields as arrays", f"data[{name!r}]"
+            refuse_field_nodes(
+                value, f"{type(self).__name__} fuses its input fields as arrays", (name,)
             )
         return inputs
 

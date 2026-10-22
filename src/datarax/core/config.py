@@ -17,6 +17,8 @@ from dataclasses import (
 
 from jaxtyping import PyTree
 
+from datarax.core.field_paths import field_parameters
+
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +75,18 @@ class DataraxModuleConfig:
 
     A configuration is static metadata that a transform compares, so it holds no fitted
     values: an operator's statistics live on the operator (``OperatorModule.set_statistics``).
+
+    A parameter annotated ``FieldName`` or ``FieldNames`` (``core.field_paths``) is converted here,
+    once, so TOML, Python tuples and Python lists build equal, hashable configurations. A
+    subclass's ``__post_init__`` calls this one before it reads such a parameter.
     """
 
     def __post_init__(self) -> None:
-        """Validate configuration after initialization."""
+        """Convert every field-naming parameter by its annotation."""
+        for name, convert in field_parameters(type(self)):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, convert(value, name))
 
 
 @dataclass(frozen=True)

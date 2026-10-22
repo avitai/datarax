@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from datarax.sources import _field_paths
-from datarax.sources._field_paths import by_field, field_name, field_names, LEVEL, nested
+from datarax.core import field_paths
+from datarax.core.field_paths import by_field, field_name, field_names, LEVEL, nested
 
 
 def _record() -> dict:
@@ -88,13 +88,13 @@ def test_the_module_is_the_one_home_of_field_naming(name: str) -> None:
     """``eager_source`` reads these names; no second copy of the joiner is kept there."""
     from datarax.sources import eager_source  # noqa: PLC0415 - the module under test
 
-    assert getattr(eager_source, name) is getattr(_field_paths, name)
+    assert getattr(eager_source, name) is getattr(field_paths, name)
     assert f"_{name}" not in vars(eager_source)
 
 
 def test_the_column_sets_nest_with_the_same_function() -> None:
     from datarax.sources import streaming_disk_source  # noqa: PLC0415 - the module under test
 
-    assert streaming_disk_source.nested is _field_paths.nested
+    assert streaming_disk_source.nested is field_paths.nested
     assert "_nested" not in vars(streaming_disk_source)
     assert "_LEVEL" not in vars(streaming_disk_source)

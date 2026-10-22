@@ -326,7 +326,7 @@ class TestRotationOperatorEdgeCases:
     def test_nested_field_access(self):
         """Test rotation with nested field access."""
         config = RotationOperatorConfig(
-            field_key="data.image",
+            field_key="data/image",
             angle=10.0,  # Fixed 10-degree rotation
         )
         operator = RotationOperator(config)

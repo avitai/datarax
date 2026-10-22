@@ -481,7 +481,7 @@ class TestSpecs:
             "depth": Maybe(data["depth"].value, data["depth"].present.astype(jnp.int8)),
         }
 
-        with pytest.raises(SpecMismatchError, match=r"\['depth'\]\.present"):
+        with pytest.raises(SpecMismatchError, match=r"'depth'\.present"):
             validate_batch(wrong, self._element_spec(), batch_size=B)
 
     def test_a_record_spec_reads_off_a_record(self) -> None:

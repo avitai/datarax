@@ -36,6 +36,11 @@ class TestSplitFieldTransforms:
         out = jax.jit(SplitField(["a"]))(_two_fields())
         assert set(out.data) == {"a"}
 
+    def test_jit_selects_a_nested_field_by_spelling(self):
+        batch = batch_ops.from_arrays({"meta": {"id": jnp.arange(2), "x": jnp.ones(2)}})
+        out = jax.jit(SplitField(["meta/id"]))(batch)
+        assert set(out.data) == {"meta"} and set(out.data["meta"]) == {"id"}
+
     def test_vmap_over_a_batch_prefix(self):
         batch = _two_fields()
         axes = jax.tree.map(lambda _: 0, batch.replace(batch_state=None))

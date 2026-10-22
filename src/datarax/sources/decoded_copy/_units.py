@@ -16,8 +16,8 @@ import numpy as np
 
 from datarax.core.data_source import DataSourceModule, known_length, Provenance, read_records
 from datarax.core.element_batch import Batch
+from datarax.core.field_paths import by_field
 from datarax.core.index_words import to_words
-from datarax.sources._field_paths import by_field
 from datarax.sources.decoded_copy._layout import (
     ColumnLayout,
     LayoutColumn,
