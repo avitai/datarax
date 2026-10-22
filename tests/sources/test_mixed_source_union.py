@@ -162,7 +162,7 @@ class TestConflictsAndHostDtypes:
                 return self.spec
 
         image = jax.ShapeDtypeStruct((H, W, C), jnp.float32)
-        with pytest.raises(ValueError, match=r"\['image'\].*\['image'\]\['rgb'\]"):
+        with pytest.raises(ValueError, match=r"'image'.*'image/rgb'"):
             _mix([Specified({"image": image}), Specified({"image": {"rgb": image}})])
 
     def test_nested_fields_keep_their_nesting_and_a_missing_one_is_maybe(self) -> None:
