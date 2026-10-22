@@ -14,8 +14,7 @@ from flax import nnx
 from jaxtyping import PyTree
 
 from datarax.core.element_batch import Element
-from datarax.core.field_paths import get_field, set_field
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import get_field, refuse_field_nodes, resolve
 from datarax.core.modality import ModalityOperator, ModalityOperatorConfig
 from datarax.core.operator import require_key
 from datarax.operators.modality.image import functional
@@ -148,14 +147,11 @@ class RandomCropOperator(ModalityOperator):
         Returns:
             The spec of the record this operator returns.
         """
-        source = get_field(input_spec, self.config.field_key)
-        refuse_maybe(
-            source,
-            "RandomCropOperator crops its field as an array",
-            f"data[{self.config.field_key!r}]",
-        )
+        keys = resolve(input_spec, self.config.field_key)
+        source = get_field(input_spec, keys)
+        refuse_field_nodes(source, "RandomCropOperator crops its field as an array", keys)
         cropped = jax.ShapeDtypeStruct((*self.config.size, *source.shape[2:]), source.dtype)
-        return set_field(input_spec, self.config.target_key or self.config.field_key, cropped)
+        return self._remap_field(input_spec, cropped)
 
     def _store(self, element: Element, cropped: jax.Array) -> Element:
         """Clip if configured and write the crop into the record's target field."""
