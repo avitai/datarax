@@ -49,11 +49,11 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.field_paths import LEVEL, nested
 from datarax.core.host_values import HostArray, HostArrays
 from datarax.core.index_words import from_words
 from datarax.core.spec import device_spec, JAX_ARRAY_KINDS
 from datarax.sources._disk_provenance import decode_provenance, DiskProvenance
-from datarax.sources._field_paths import LEVEL, nested
 from datarax.sources.eager_source import read_host_batch
 from datarax.typing import DataDict
 

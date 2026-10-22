@@ -11,8 +11,7 @@ from flax.typing import Dtype
 from jaxtyping import PyTree
 
 from datarax.core.element_batch import Element
-from datarax.core.field_paths import get_field, set_field
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import get_field, refuse_field_nodes, resolve, set_field
 from datarax.core.operator import apply_where, OperatorModule, statistics_for_child
 from datarax.operators.strategies.base import CompositionStrategyImpl
 from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
@@ -112,7 +111,7 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
         """Initialize with the fields to combine and the weights to combine them with.
 
         Args:
-            mix_fields: Dotted paths of the data fields to combine.
+            mix_fields: Names of the data fields to combine, as ``core.field_paths`` names them.
             weights: One weight per operator, for this call: fixed Python numbers, or an array
                 (the softmax of learnable logits, or read from the record).
             dtype: The dtype array weights mix in, ``None`` for the promotion of the field and
@@ -141,12 +140,11 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
         """
         outputs = self._apply_each(operators, element, stats)
         mixed = element.data
-        for path in self.mix_fields:
+        for name in self.mix_fields:
+            path = resolve(outputs[0].data, name)
             fields = [get_field(output.data, path) for output in outputs]
             for field in fields:
-                refuse_maybe(
-                    field, "WEIGHTED_PARALLEL mixes its fields as arrays", f"data field {path!r}"
-                )
+                refuse_field_nodes(field, "WEIGHTED_PARALLEL mixes its fields as arrays", path)
             stacked = jnp.stack(fields)
             if isinstance(self.weights, tuple):
                 # Fixed weights are constants, not parameters: they mix in the field's dtype

@@ -34,7 +34,7 @@ class TestModalityOperatorConfigBasic:
         )
         assert config.field_key == "image"
         assert config.target_key == "processed_image"
-        assert config.auxiliary_fields == ["mask", "bounding_boxes"]
+        assert config.auxiliary_fields == ("mask", "bounding_boxes")
         assert config.clip_range == (0.0, 1.0)
         assert config.preserve_auxiliary is False
         assert config.validate_domain_constraints is False
@@ -145,7 +145,7 @@ class TestModalityOperatorConfigAuxiliaryFields:
             field_key="image",
             auxiliary_fields=["mask"],
         )
-        assert config.auxiliary_fields == ["mask"]
+        assert config.auxiliary_fields == ("mask",)
 
     def test_multiple_auxiliary_fields(self):
         """Multiple auxiliary fields should work."""
@@ -153,7 +153,7 @@ class TestModalityOperatorConfigAuxiliaryFields:
             field_key="image",
             auxiliary_fields=["mask", "bounding_boxes", "keypoints"],
         )
-        assert config.auxiliary_fields == ["mask", "bounding_boxes", "keypoints"]
+        assert config.auxiliary_fields == ("mask", "bounding_boxes", "keypoints")
 
     def test_empty_auxiliary_fields_list(self):
         """Empty auxiliary fields list should be valid."""
@@ -161,7 +161,7 @@ class TestModalityOperatorConfigAuxiliaryFields:
             field_key="image",
             auxiliary_fields=[],
         )
-        assert config.auxiliary_fields == []
+        assert config.auxiliary_fields == ()
 
     def test_none_auxiliary_fields(self):
         """None auxiliary_fields should be valid (default)."""

@@ -370,13 +370,13 @@ _SPEC = {"x": jax.ShapeDtypeStruct((3,), jnp.float32), "y": jax.ShapeDtypeStruct
 @pytest.mark.parametrize(
     ("columns", "fragment"),
     [
-        ({"x": np.ones((4, 4), np.float32), "y": np.zeros(4, np.int32)}, "['x']"),
-        ({"x": np.ones((4, 3), np.int32), "y": np.zeros(4, np.int32)}, "['x']"),
+        ({"x": np.ones((4, 4), np.float32), "y": np.zeros(4, np.int32)}, "'x':"),
+        ({"x": np.ones((4, 3), np.int32), "y": np.zeros(4, np.int32)}, "'x':"),
         (
             {"x": np.ones((4, 3), np.float32), "y": np.zeros(4, np.int32), "z": np.ones(4)},
-            "['z']",
+            "'z':",
         ),
-        ({"x": np.ones((4, 3), np.float32)}, "['y']"),
+        ({"x": np.ones((4, 3), np.float32)}, "'y':"),
     ],
     ids=["trailing-shape", "int32-declared-float32", "undeclared-field", "missing-field"],
 )
