@@ -292,7 +292,7 @@ class TestBatchMixOperatorCutMix:
 
         batch = batch_ops.from_arrays({"value": jnp.array([[1.0], [2.0]])})
 
-        with pytest.raises(ValueError, match="data\\['image'\\].*lacks: \\['value'\\]"):
+        with pytest.raises(ValueError, match="data field 'image'.*its data fields: 'value'"):
             op(batch)
 
     def test_cutmix_refuses_a_field_that_is_not_a_batch_of_images(self):

@@ -367,6 +367,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `datarax.pipeline.host_workers.resident_bytes` and `peak_resident_bytes` are
   `process_bytes` and `peak_process_bytes`: on macOS they read the physical footprint, not the
   resident size.
+- One naming of record fields, in `datarax.core.field_paths`. A field is the tuple of dict keys
+  from the record's root (its key tuple); a key is a non-empty string and may hold `/`, so TFDS's
+  `image/id` beside `image` is one field. A name is a spelling (the keys joined by `/`) or a key
+  tuple. `get_field`, `set_field` and every operator that names a field resolve a spelling
+  against the record's structure, never by splitting it, and an unknown name is refused listing
+  the record's fields. A create (`set_field`, an operator's `target_key`) writes onto the node a
+  spelling names, or descends into the existing group with the longest `/`-prefix and keeps the
+  rest as one key (`State/Province` is one top-level key); a spelling that would nest a field
+  under a field (`meta/size` beside the field `meta`) is refused, offering the key tuple
+  `("meta/size",)`. A key tuple creates exactly its path, and an empty or exotic key (`/a`, `a/`,
+  `a//b`) is refused. Breaking: the dotted form (`"data.image"` for `data["data"]["image"]`) is
+  removed; write `"data/image"` or `("data", "image")`.
+- Configuration parameters that name fields are annotated `FieldName` (one field) or
+  `FieldNames` (several) and converted once by `DataraxModuleConfig.__post_init__`: a list of
+  strings for one field is one key tuple, a list of names for several becomes a tuple, so TOML,
+  Python tuples and Python lists build equal, hashable configurations, and a bare string for
+  several fields is refused. `ModalityOperatorConfig.field_key`, `target_key` and
+  `auxiliary_fields` take them; `auxiliary_fields` now holds a tuple.
+- `SplitField(fields)` resolves each name against the batch's data, so `"meta/id"` keeps
+  `data["meta"]["id"]` inside its group and `("meta", "id")` names that path; it still skips an
+  absent field, and refuses a bare string.
+- A refusal names a field by its spelling in quotes, `'image'`, adding its key tuple where a key
+  holds `/` or is empty (`'image/id' (key tuple ('image/id',))`); a field node's member prints as
+  `'depth'.present` and a list position as `'c'[0]`. Spec mismatches, statistics mismatches, the
+  mix's field conflicts and every missing-value refusal use it in place of JAX's `['image']`.
+- `Maybe` is a `datarax.core.field_nodes.FieldNode`, the base of a field held as several arrays:
+  naming treats it as one field, and a consumer that reads a field as an array refuses any field
+  node through `datarax.core.field_paths.refuse_field_nodes`, with the node type's own fix.
 - The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
   notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
   at `eaff31ab`: PreAct ResNet-18 with PyTorch's initialization (11,171,274 parameters, as the
@@ -857,6 +885,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the key instead of a fixed key; the function type is the keyed or the keyless shape.
 
 ### Removed
+
+- `datarax.core.maybe.refuse_maybe`, `missing_value_error` and `maybe_paths`: a consumer refuses
+  field nodes with `datarax.core.field_paths.refuse_field_nodes(tree, consumer, where)`.
+- `datarax.sources._field_paths`: its `field_name`, `field_names`, `by_field`, `nested` and
+  `LEVEL` are in `datarax.core.field_paths`.
 
 - `datarax.sharding`, with `JaxProcessSharderModule` and `JaxProcessSharderConfig`, which sliced
   arrays and lists to the current JAX process's portion: a pipeline whose `sharding` spans

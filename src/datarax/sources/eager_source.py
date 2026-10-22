@@ -41,10 +41,10 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch, Element
+from datarax.core.field_paths import field_name, field_names
 from datarax.core.host_values import HostColumns, HostProvenance
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
-from datarax.sources._field_paths import field_name, field_names
 from datarax.sources._index_validation import validate_index_batch
 
 

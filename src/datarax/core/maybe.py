@@ -19,16 +19,15 @@ marks ``state[state_keys.IMPUTED][field]``. A row that is not a record is paddin
 (``state[state_keys.WEIGHT]`` 0).
 """
 
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any, ClassVar, NoReturn
 
 import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
-from jaxtyping import PyTree
 
 from datarax.core.element_batch import ArrayValue
+from datarax.core.field_nodes import FieldNode
 
 
 _EXPLICIT_READS = "read it with .value_or(fill), or with .present in hand"
@@ -36,7 +35,7 @@ _EXPLICIT_READS = "read it with .value_or(fill), or with .present in hand"
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True, slots=True)
-class Maybe[T]:
+class Maybe[T](FieldNode):
     """A field's values and which records have one; a missing record's slot holds zeros.
 
     A frozen dataclass registered as a pytree node with two children and nothing in aux: it
@@ -50,6 +49,11 @@ class Maybe[T]:
             record has no value.
         present: bool, ``(B,)`` in a batch or ``()`` for one record: which records have a value.
     """
+
+    kind: ClassVar[str] = "a Maybe (a value that can be missing)"
+    fix: ClassVar[str] = (
+        f"Fill it first (value_or) or apply an operator that reads its presence: {_EXPLICIT_READS}"
+    )
 
     value: T
     present: T
@@ -128,57 +132,4 @@ class Maybe[T]:
         return hash((self.value, self.present))
 
 
-def maybe_paths(tree: PyTree) -> list[str]:
-    """Return the key path of every ``Maybe`` in ``tree``, as JAX renders paths.
-
-    Args:
-        tree: A pytree, such as a record's or a batch's data.
-
-    Returns:
-        The paths, ``["['depth']", ...]``, in flattening order; ``"<root>"`` for ``tree`` itself.
-    """
-    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=lambda x: isinstance(x, Maybe))
-    return [
-        jax.tree_util.keystr(path) or "<root>" for path, leaf in flat if isinstance(leaf, Maybe)
-    ]
-
-
-def missing_value_error(consumer: str, names: Sequence[str]) -> TypeError:
-    """Return the error for a consumer that would treat ``present`` as data.
-
-    Args:
-        consumer: Who refuses and why: ``"MapOperator maps fn over the leaves it selects"``.
-        names: Each refused field, as ``"data['depth']"``.
-
-    Returns:
-        The ``TypeError`` to raise, naming every field.
-    """
-    return TypeError(
-        f"{consumer}, and {', '.join(names)} is a Maybe (a value that can be missing). Fill it "
-        f"first (value_or) or apply an operator that reads its presence: {_EXPLICIT_READS}."
-    )
-
-
-def refuse_maybe(  # noqa: DOC503 - missing_value_error builds the TypeError
-    tree: PyTree, consumer: str, where: str = ""
-) -> None:
-    """Refuse a ``Maybe`` anywhere in ``tree``: ``consumer`` would treat ``present`` as data.
-
-    The check reads only the tree's structure, so it costs nothing inside a compiled step.
-
-    Args:
-        tree: What ``consumer`` is about to treat as arrays.
-        consumer: Who refuses and why, for the message: ``"MapOperator maps fn over every leaf"``.
-        where: A prefix naming ``tree`` itself, such as ``"data['depth']"``.
-
-    Raises:
-        TypeError: Naming every ``Maybe`` found.
-    """
-    paths = maybe_paths(tree)
-    if paths:
-        raise missing_value_error(
-            consumer, [f"{where}{path}" if path != "<root>" else where or path for path in paths]
-        )
-
-
-__all__ = ["Maybe", "maybe_paths", "missing_value_error", "refuse_maybe"]
+__all__ = ["Maybe"]

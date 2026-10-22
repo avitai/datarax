@@ -46,6 +46,8 @@ from datarax.core.data_source import (
     refuse_unnamed,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.field_nodes import is_field_node
+from datarax.core.field_paths import path_label
 from datarax.core.host_resources import order_working_bytes
 from datarax.core.index_words import (
     add,
@@ -296,14 +298,9 @@ def _present_spec() -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct((), jnp.bool_)
 
 
-def _is_field(node: Any) -> bool:
-    """A ``Maybe`` is one field, not two leaves."""
-    return isinstance(node, Maybe)
-
-
 def _fields_of(tree: Any) -> dict[_Path, Any]:
-    """Each field of a record's spec or a batch's data by its path, a ``Maybe`` as one field."""
-    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=_is_field)
+    """Each field of a record's spec or a batch's data by its path, a field node as one field."""
+    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=is_field_node)
     return dict(flat)
 
 
@@ -328,7 +325,7 @@ def _nested(fields: Mapping[_Path, Any]) -> dict[str, Any]:
         if not all(isinstance(step, jax.tree_util.DictKey) for step in path):
             raise TypeError(
                 f"a mix joins records whose fields are nested dictionaries; field "
-                f"{jax.tree_util.keystr(path)} is not"
+                f"{path_label(path)} is not"
             )
     return traverse_util.unflatten_dict(
         {tuple(step.key for step in path): field for path, field in fields.items()}
@@ -348,10 +345,10 @@ def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> No
         for other, nested in held.items():
             if other != path and other[: len(path)] == path:
                 raise SpecMismatchError(
-                    f"a mix's children disagree on field {jax.tree_util.keystr(path)}:",
+                    f"a mix's children disagree on field {path_label(path)}:",
                     [
-                        f"child {holders[0][0]} holds values at {jax.tree_util.keystr(path)}, "
-                        f"child {nested[0][0]} fields under it ({jax.tree_util.keystr(other)})"
+                        f"child {holders[0][0]} holds values at {path_label(path)}, "
+                        f"child {nested[0][0]} fields under it ({path_label(other)})"
                     ],
                 )
 
@@ -376,7 +373,7 @@ def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> 
         problems = spec_mismatches(first, value)
         if problems:
             raise SpecMismatchError(
-                f"a mix's children disagree on field {jax.tree_util.keystr(path)}: child "
+                f"a mix's children disagree on field {path_label(path)}: child "
                 f"{first_child} holds {first.shape} {first.dtype}, child {child} "
                 f"{value.shape} {value.dtype}:",
                 problems,
