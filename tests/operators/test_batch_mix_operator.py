@@ -585,6 +585,20 @@ def test_cutmix_refuses_data_that_is_not_a_mapping():
         mixer(batch)
 
 
+def test_cutmix_refuses_a_batch_without_its_field_listing_the_fields_in_name_order():
+    mixer = BatchMixOperator(
+        BatchMixOperatorConfig(mode="cutmix", data_field="image"), rngs=nnx.Rngs(batch_mix=0)
+    )
+    batch = batch_ops.from_arrays({"pixels": jnp.zeros((4, 8, 8, 3)), "label": jnp.zeros(4)})
+
+    with pytest.raises(ValueError) as caught:
+        mixer(batch)
+    assert str(caught.value) == (
+        "BatchMixOperator mixes the data field 'image', which this batch lacks; its data fields: "
+        "'label', 'pixels'"
+    )
+
+
 class TestBatchMixOperatorInAPipeline:
     """BatchMixOperator as a pipeline stage and on a batch named by its records."""
 

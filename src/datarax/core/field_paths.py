@@ -20,8 +20,8 @@ from __future__ import annotations
 import functools
 import types
 import typing
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import fields
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, fields
 from typing import Any, NoReturn, overload
 
 import jax
@@ -58,6 +58,75 @@ class FieldNotFoundError(KeyError):
 
 class FieldCreateError(ValueError):
     """A create that would break the naming rules."""
+
+
+class FieldExistsError(FieldCreateError):
+    """A declared create of a field the record already has (W2): a name datarax chose.
+
+    The refusal is built from its parts, so a DAG can add the stage that ran the create and the
+    field's first writer (W8), and a pipeline the source, without parsing its text.
+
+    Attributes:
+        creator: Who creates: the operator, or the stage running it.
+        keys: The field's key tuple in the record.
+        held: How the record holds it: ``"(float32[63])"`` or ``"as a group of 2 fields (...)"``.
+        replaces: What the create would replace: ``"that value"`` or ``"the whole group"``.
+        config: The creating configuration's class name.
+        parameter: The configuration parameter that names the created field.
+        writer: Who wrote the field first (``"stage 'stage_0' (Op)"``), or ``None`` when unknown.
+    """
+
+    def __init__(
+        self,
+        *,
+        creator: str,
+        keys: KeyTuple,
+        held: str,
+        replaces: str,
+        config: str,
+        parameter: str,
+        writer: str | None = None,
+    ) -> None:
+        """Build the refusal from its parts.
+
+        Args:
+            creator: Who creates.
+            keys: The field's key tuple.
+            held: How the record holds the field.
+            replaces: What the create would replace.
+            config: The configuration's class name.
+            parameter: The parameter naming the created field.
+            writer: The field's first writer, if known.
+        """
+        self.creator, self.keys, self.held, self.replaces = creator, keys, held, replaces
+        self.config, self.parameter, self.writer = config, parameter, writer
+        written = f", written by {writer}" if writer else ""
+        super().__init__(
+            f"{creator} creates the field {label(keys)}, and the record already has "
+            f"{label(keys)} {held}{written}. Creating it would replace {replaces}. To keep both, "
+            f"name another output with {config}({parameter}=...). To replace it, pass "
+            f"{config}(overwrite=True)."
+        )
+
+    def located(self, *, creator: str | None = None, writer: str | None = None) -> FieldExistsError:
+        """The same refusal naming where the create ran and who wrote the field first.
+
+        Args:
+            creator: The stage running the create, replacing the operator's name.
+            writer: The field's first writer, when this refusal names none yet.
+
+        Returns:
+            The located refusal.
+        """
+        return FieldExistsError(
+            creator=creator or self.creator,
+            keys=self.keys,
+            held=self.held,
+            replaces=self.replaces,
+            config=self.config,
+            parameter=self.parameter,
+            writer=self.writer or writer,
+        )
 
 
 # ---------------------------------------------------------------------------------- spellings
@@ -196,8 +265,8 @@ def field_paths(data: Any) -> list[KeyTuple]:
 
 
 def _not_found(data: Any, name: FieldName) -> str:
-    names = ", ".join(label(keys) for keys in field_paths(data))
-    return f"{name_label(name)} names no field of the record; its fields: {names}"
+    fields = field_listing(field_paths(data))
+    return f"{name_label(name)} names no field of the record; its fields: {fields}"
 
 
 def _search(data: dict, wanted: str) -> list[KeyTuple]:
@@ -252,10 +321,7 @@ def resolve(data: Any, name: FieldName) -> KeyTuple:
     if not found:
         raise FieldNotFoundError(_not_found(data, held))
     if len(found) > 1:
-        raise ValueError(
-            f"{held!r} names {len(found)} nodes of the record: "
-            + ", ".join(repr(keys) for keys in found)
-        )
+        raise ValueError(f"the record: {fields_named(held, [repr(keys) for keys in found])}")
     return found[0]
 
 
@@ -338,7 +404,18 @@ def _create_by_spelling(data: dict, name: str, owner: str, param: str) -> KeyTup
     return keys
 
 
-def _node_spellings(data: Any) -> dict[str, KeyTuple]:
+def node_spellings(data: Any) -> dict[str, KeyTuple]:
+    """Every node of a record (groups included) by its spelling.
+
+    A record meeting N2's rules has one node per spelling; where two share one, the later in
+    walk order is kept (:func:`record_problems` reports the pair).
+
+    Args:
+        data: A record's data or spec.
+
+    Returns:
+        Each node's key tuple, keyed by its spelling.
+    """
     spelled: dict[str, KeyTuple] = {}
 
     def walk(node: Any, keys: KeyTuple) -> None:
@@ -369,7 +446,7 @@ def _create_by_tuple(data: dict, keys: KeyTuple, owner: str) -> KeyTuple:
         pass
     else:
         return keys
-    spelled = _node_spellings(data)
+    spelled = node_spellings(data)
     for depth in range(1, len(keys) + 1):
         new = keys[:depth]
         existing = spelled.get(spelling(new))
@@ -434,6 +511,115 @@ def set_field(
     return _set_at(data, create_path(data, name, owner=owner, param=param), value)
 
 
+# --------------------------------------------------------------------------- record rules
+
+
+_KEY_RULE = "a key may not start or end with '/' or hold '//'"
+_STRING_RULE = "a key is a non-empty string"
+_NODE_RULE = "a record's nodes are dicts and its fields arrays or field nodes"
+
+
+def fields_named(name: str, holders: Sequence[str]) -> str:
+    """The words for one spelling naming several nodes: ``'a' names two fields: ... and ...``.
+
+    Every refusal of an ambiguity prints this, after its own subject.
+
+    Args:
+        name: The spelling the nodes share.
+        holders: Each node as the refusal shows it, a key tuple with any noun before it.
+
+    Returns:
+        The words.
+    """
+    if len(holders) == 2:
+        return f"{name!r} names two fields: {holders[0]} and {holders[1]}"
+    return f"{name!r} names {len(holders)} fields: {', '.join(holders)}"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecordProblem:
+    """One way a record breaks N2's rules.
+
+    Attributes:
+        keys: The node's keys from the record's root, as found (a key may not be a string).
+        rule: The rule it breaks: ``"starts with '/'"``, ``"ends with '/'"``, ``"holds '//'"``,
+            ``"is empty"``, ``"is not a string"``, ``"is a list"`` or ``"shares its spelling"``.
+        other: For a shared spelling, the other node's key tuple; the pair is in key tuple order.
+    """
+
+    keys: tuple[Any, ...]
+    rule: str
+    other: KeyTuple | None = None
+
+    def __str__(self) -> str:
+        """The problem in the words every refusal of a record uses."""
+        if self.other is not None:
+            return fields_named(spelling(self.keys), [repr(self.keys), repr(self.other)])
+        if self.rule == "is a list":
+            return f"{label(self.keys)} is a list; {_NODE_RULE}"
+        key, group = self.keys[-1], self.keys[:-1]
+        where = f" in {label(group)}" if group else ""
+        if self.rule == "is empty":
+            return f"an empty key{where}; {_STRING_RULE}"
+        if self.rule == "is not a string":
+            return f"the key {key!r}{where}, which is not a string; {_STRING_RULE}"
+        return f"the key {key!r}{where}, which {self.rule}; {_KEY_RULE}"
+
+
+def _key_rule(key: object) -> str | None:
+    if not isinstance(key, str):
+        return "is not a string"
+    if key == "":
+        return "is empty"
+    if key.startswith(LEVEL):
+        return "starts with '/'"
+    if key.endswith(LEVEL):
+        return "ends with '/'"
+    if LEVEL * 2 in key:
+        return "holds '//'"
+    return None
+
+
+def record_problems(tree: Any) -> tuple[RecordProblem, ...]:
+    """Every way a record tree breaks N2's rules, in the order a walk of the tree meets them.
+
+    A key is a non-empty string that neither starts nor ends with ``/`` nor holds ``//``; a node
+    holding fields is a dict, never a list; and no two nodes, groups included, share a spelling.
+    A field node and an array are leaves, so the rules read structure only and apply to data and
+    to a spec alike. A node under a broken key is not walked.
+
+    Args:
+        tree: A record's data, a batch's data or a record's spec.
+
+    Returns:
+        The problems, empty for a record that meets the rules.
+    """
+    problems: list[RecordProblem] = []
+    spelled: dict[str, KeyTuple] = {}
+
+    def walk(node: Any, keys: KeyTuple) -> None:
+        if isinstance(node, list | tuple):
+            problems.append(RecordProblem(keys=keys, rule="is a list"))
+            return
+        if not isinstance(node, dict):
+            return
+        for key, child in node.items():
+            path = (*keys, key)
+            rule = _key_rule(key)
+            if rule is not None:
+                problems.append(RecordProblem(keys=path, rule=rule))
+                continue
+            name = spelling(path)
+            first = spelled.setdefault(name, path)
+            if first != path:
+                low, high = sorted((first, path))
+                problems.append(RecordProblem(keys=low, rule="shares its spelling", other=high))
+            walk(child, path)
+
+    walk(tree, ())
+    return tuple(problems)
+
+
 # ---------------------------------------------------------------------------- field nodes
 
 
@@ -490,6 +676,21 @@ def name_order(name: FieldName) -> tuple[int, KeyTuple]:
     """
     held = _held(name)
     return (0, (held,)) if isinstance(held, str) else (1, held)
+
+
+def field_listing(paths: Iterable[KeyTuple]) -> str:
+    """Fields' labels in name order, comma-separated, as a refusal lists them.
+
+    A record's own order is not always stable: a loaded TFDS ``FeaturesDict`` comes from a
+    protobuf map, whose order varies between processes. Name order makes one text of one set.
+
+    Args:
+        paths: The fields' keys.
+
+    Returns:
+        The labels, joined by ", ".
+    """
+    return ", ".join(label(keys) for keys in sorted(paths, key=name_order))
 
 
 def sorted_names(names: FieldNames) -> tuple[str | KeyTuple, ...]:
@@ -654,6 +855,7 @@ def nested(leaves: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "LEVEL",
     "FieldCreateError",
+    "FieldExistsError",
     "FieldName",
     "FieldNames",
     "FieldNotFoundError",
@@ -663,17 +865,22 @@ __all__ = [
     "by_field",
     "create_path",
     "describe",
+    "field_listing",
     "field_name",
     "field_names",
     "field_parameters",
     "field_paths",
+    "fields_named",
     "get_field",
     "is_exotic",
     "label",
     "name_label",
     "name_order",
     "nested",
+    "node_spellings",
     "path_label",
+    "record_problems",
+    "RecordProblem",
     "refuse_field_nodes",
     "resolve",
     "set_field",

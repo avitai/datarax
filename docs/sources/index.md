@@ -77,11 +77,16 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), s
 
 ### Field Filtering
 
+`include_keys` keeps only the fields it names and `exclude_keys` drops them. A name is a field
+name as the source holds it, so a nested field is spelled with "/": `"objects/bbox"` keeps
+`bbox` of the group `objects`. Names resolve when the source is built. A name the dataset does
+not have is refused there, with the dataset's fields listed:
+
 ```python
 config = HFEagerConfig(
-    name="coco",
+    name="ylecun/mnist",
     split="train",
-    include_keys={"image", "label"},  # Only these fields
+    include_keys={"image"},  # MNIST holds image and label
 )
 ```
 

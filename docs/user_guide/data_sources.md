@@ -215,7 +215,11 @@ Any other source subclasses `DataSourceModule` and declares what its record inde
    randomness on the same indices. The default names records by position, shuffled by the
    key when the pipeline shuffles
 4. `element_spec()` describes exactly the records your batches carry: the same
-   keys, per-element shapes and dtypes. For a stream, `Pipeline` checks
+   keys, per-element shapes and dtypes. Every source declares it: `Pipeline` reads it when it
+   is built and refuses a source that declares none, or a record that breaks the naming rules
+   (a key that is empty, starts or ends with "/" or holds "//", a list where a dict belongs,
+   or two nodes with one spelling, such as a key `"meta/id"` beside a group `meta` holding
+   `id`). For a stream, `Pipeline` checks
    every batch against it, as the device will hold it, with `datarax.core.spec.validate_batch` before running
    the DAG, and names the field that disagrees. It reads the declaration once per
    source and x64 setting, so keep it fixed after construction. Declare dtypes the

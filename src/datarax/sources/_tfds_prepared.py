@@ -16,13 +16,14 @@ the window must not open inside a constructor in the middle of a run.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence, Set as AbstractSet
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 import jax
 import tensorflow_datasets as tfds
 
-from datarax.sources.source_ops import filter_keys
+from datarax.core.field_paths import KeyTuple
+from datarax.sources.source_ops import KeyFilter
 
 
 def prepared_builder(  # noqa: DOC503 - the exception raised is the one ``refuse`` builds
@@ -66,16 +67,92 @@ def where(data_dir: str | None) -> str:
     return data_dir if data_dir is not None else "TFDS's default data directory"
 
 
+def decoded_infos(feature: Any, keys: KeyTuple = ()) -> Iterator[tuple[KeyTuple, Any]]:
+    """Each array a record decoded from ``feature`` holds, by its key tuple, with its tensor info.
+
+    TFDS describes what a feature decodes to (``get_tensor_info``): a dict of infos for a
+    ``FeaturesDict`` and for a ``Sequence`` of one, whose infos carry the sequence's length
+    first, and one info for every other feature. A mapping of features is walked by name.
+
+    Args:
+        feature: A TFDS feature, or a mapping of names to features (or to such mappings).
+        keys: ``feature``'s key tuple in the record, ``()`` at its root.
+
+    Yields:
+        ``(keys, info)`` per decoded array, the info's ``shape`` and ``np_dtype`` as stored.
+    """
+    if isinstance(feature, Mapping):
+        for name, child in feature.items():
+            yield from decoded_infos(child, (*keys, name))
+    else:
+        yield from _tensor_infos(feature.get_tensor_info(), keys)
+
+
+def _tensor_infos(tree: Any, keys: KeyTuple) -> Iterator[tuple[KeyTuple, Any]]:
+    """The infos of one feature's ``get_tensor_info`` tree, by key tuple."""
+    if isinstance(tree, tfds.features.TensorInfo):
+        yield keys, tree
+        return
+    for name, child in tree.items():
+        yield from _tensor_infos(child, (*keys, name))
+
+
+def decoded_names(features: Any) -> dict[str, Any]:
+    """The fields a record decoded from ``features`` holds, nested as the record nests them.
+
+    The record's structure is TFDS's own (:func:`decoded_infos`): a ``FeaturesDict`` and a
+    ``Sequence`` of one decode to groups, every other feature to one field.
+
+    Args:
+        features: A ``FeaturesDict``, or a mapping of names to features.
+
+    Returns:
+        The names, a group as a dict and a field as ``None``.
+    """
+    names: dict[str, Any] = {}
+    for keys, _ in decoded_infos(features):
+        *groups, name = keys
+        node = names
+        for group in groups:
+            node = node.setdefault(group, {})
+        node[name] = None
+    return names
+
+
+def feature_tree(features: Any) -> dict[str, Any]:
+    """``features`` as nested dicts down to whole features, for a filter to select from.
+
+    Only a ``FeaturesDict`` opens: a ``Sequence`` stays one feature, since TFDS decodes it whole,
+    and a filter naming a field inside it keeps it for the decode and selects from the record.
+
+    Args:
+        features: A ``FeaturesDict``, or a mapping of names to features.
+
+    Returns:
+        The features by name, a ``FeaturesDict`` as a dict.
+    """
+    return {
+        name: feature_tree(feature) if isinstance(feature, tfds.features.FeaturesDict) else feature
+        for name, feature in features.items()
+    }
+
+
 def kept_features(
-    record: dict[str, Any],
-    keys: Sequence[str] | None,
-    include_keys: AbstractSet[str] | None,
-    exclude_keys: AbstractSet[str] | None,
+    record: dict[str, Any], keys: Sequence[str] | None, key_filter: KeyFilter
 ) -> dict[str, Any]:
-    """The features of ``record`` a source keeps: the supervised ones if asked, then filtered."""
+    """The features of ``record`` a source keeps: the supervised ones if asked, then filtered.
+
+    Args:
+        record: A decoded record, or the dataset's features as :func:`feature_tree` gives them.
+        keys: The supervised features kept, or ``None`` for every feature.
+        key_filter: The source's filter, resolved when it was built.
+
+    Returns:
+        The kept features.
+    """
     if keys is not None:
         record = {key: record[key] for key in keys}
-    return filter_keys(record, include_keys, exclude_keys)
+    return key_filter.keep(record)
 
 
 def supervised_keys(info: Any, dataset: str) -> list[str]:

@@ -83,6 +83,10 @@ class Element:
     def update_data(self, updates: Mapping[str, PyTree]) -> Self:
         """Return a copy whose data mapping has ``updates`` merged in.
 
+        ``update_data`` merges keys, as ``Batch`` reads look keys up: a key holding "/" is one
+        key, and the post-stage check refuses a record where it shares a spelling with another
+        node.
+
         Args:
             updates: Fields to add or replace in ``data``.
 

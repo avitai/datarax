@@ -47,7 +47,7 @@ from datarax.core.data_source import (
 )
 from datarax.core.element_batch import Batch
 from datarax.core.field_nodes import is_field_node
-from datarax.core.field_paths import path_label
+from datarax.core.field_paths import KeyTuple, node_spellings, path_label
 from datarax.core.host_resources import order_working_bytes
 from datarax.core.index_words import (
     add,
@@ -65,7 +65,12 @@ from datarax.core.index_words import (
 )
 from datarax.core.maybe import Maybe
 from datarax.core.spec import spec_mismatches, SpecMismatchError
-from datarax.sources.eager_source import bind_columns, bound_columns, eager_sources
+from datarax.sources.eager_source import (
+    bind_columns,
+    bound_columns,
+    eager_sources,
+    EagerSource,
+)
 from datarax.sources.memory_source import MemorySource
 from datarax.typing import DataDict
 
@@ -353,6 +358,49 @@ def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> No
                 )
 
 
+def _spellings_of(source: DataSourceModule) -> dict[str, tuple[str, KeyTuple]]:
+    """Each spelling a child names, with the namespace and key tuple of its node."""
+    held = {name: ("data", keys) for name, keys in node_spellings(source.element_spec()).items()}
+    if isinstance(source, EagerSource):
+        for name in source.provenance_names():
+            held.setdefault(name, ("provenance", (name,)))
+    return held
+
+
+def _refuse_spelling_conflicts(sources: Sequence[DataSourceModule]) -> None:
+    """Refuse a spelling two children give to different nodes, or to data and to provenance.
+
+    One spelling names one node across a mix (N0). ``union_spec`` compares the children's fields
+    by key tuple, so a nested ``('meta', 'id')`` in one child and a literal ``('meta/id',)`` in
+    another, both spelled ``meta/id``, reach it as two fields. A child's provenance names are
+    known at construction only for a source holding its records (``EagerSource``); a stream's are
+    checked where it is bound to its reader.
+
+    Args:
+        sources: The mix's children, in order.
+
+    Raises:
+        SpecMismatchError: Naming the spelling and how each child holds it.
+    """
+    first: dict[str, tuple[int, tuple[str, KeyTuple]]] = {}
+    for child, source in enumerate(sources):
+        for name, node in _spellings_of(source).items():
+            earlier, seen = first.setdefault(name, (child, node))
+            if seen == node:
+                continue
+            if seen[0] == node[0]:
+                problem = (
+                    f"child {earlier} holds {seen[1]!r}, child {child} holds {node[1]!r}, both "
+                    f"spelled {name!r}. Rename one in its adapter, by its key tuple."
+                )
+            else:
+                problem = (
+                    f"child {earlier} holds {seen[0]} field {seen[1]!r}, child {child} "
+                    f"{node[0]} field {node[1]!r}"
+                )
+            raise SpecMismatchError(f"a mix's children disagree on field {name!r}:", [problem])
+
+
 def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> Any:
     """One field of the union: as its holders declare it, or a ``Maybe`` if any child lacks it.
 
@@ -558,7 +606,9 @@ class MixDataSourcesNode(DataSourceModule):
 
         Raises:
             ValueError: If the weights and sources differ in number, Grain's proportions for
-                the weights pass one word, or a source is refused (see the checks it calls).
+                the weights pass one word, a source is refused (see the checks it calls), or two
+                children give one spelling to different nodes, or to data in one and provenance
+                in another.
         """
         super().__init__(config, name=name or "MixDataSourcesNode")
         weights = config.weights
@@ -577,6 +627,7 @@ class MixDataSourcesNode(DataSourceModule):
         self._proportions = proportions
         self._layout()
         self.element_spec()
+        _refuse_spelling_conflicts(self._sources)
 
     @property
     def sources(self) -> tuple[DataSourceModule, ...]:

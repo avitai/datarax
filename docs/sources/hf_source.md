@@ -98,21 +98,23 @@ pipeline = Pipeline(source=source, stages=[], batch_size=32, rngs=nnx.Rngs(0), s
 
 ## Field Filtering
 
-Select only the fields you need:
+Select only the fields you need. A filter names a dataset's columns, and a name the dataset does
+not have is refused when the source is built ([Field Filtering](index.md#field-filtering)):
 
 ```python
 # Include only specific fields
 config = HFEagerConfig(
-    name="glue",
+    name="stanfordnlp/imdb",
     split="train",
-    include_keys={"sentence", "label"},  # Only these fields
+    include_keys={"text", "label"},  # Only these fields
 )
 
 # Or exclude unwanted fields
 config = HFEagerConfig(
-    name="imdb",
+    name="nyu-mll/glue",
     split="train",
-    exclude_keys={"idx"},  # Everything except idx
+    download_kwargs={"name": "sst2"},
+    exclude_keys={"idx"},  # sentence and label, without idx
 )
 ```
 

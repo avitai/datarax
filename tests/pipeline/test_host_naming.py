@@ -55,6 +55,9 @@ class _Length(DataSourceModule):
     def __len__(self) -> int:
         return self.rows
 
+    def element_spec(self) -> dict:
+        return {}  # a record of no fields
+
 
 def _memory(length: int) -> MemorySource:
     return MemorySource(
