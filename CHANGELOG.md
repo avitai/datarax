@@ -406,7 +406,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built against its data and provenance fields. A name the dataset does not have is refused,
   listing its fields, where it was dropped without a word; a nested name such as `meta/score`
   filters that nested field. A TFDS field inside a `Sequence` of dicts (COCO's `objects/bbox`)
-  resolves, and the decode keeps the `Sequence` whole.
+  resolves, and the decode keeps the `Sequence` whole. A decoded copy records its filters as key
+  tuples (`[["image"], ["label"]]`), so a filtered copy written by an earlier release is refused
+  when opened, naming `source/decode/include_keys`, and is rebuilt with
+  `datarax.pipeline.materialize(..., rebuild=True)`.
 - Breaking: the RAM budget of an in-memory TFDS build reads each feature's tensor infos, so a
   `Sequence` counts its length: one of fixed length counts every element, where one element was
   counted, and one of no fixed length is refused as having no size before reading. A `Video`
