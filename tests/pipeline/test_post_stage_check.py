@@ -228,6 +228,24 @@ class TestUnderTransforms:
         grads = nnx.jit(nnx.value_and_grad(loss, graph=graph), graph=graph)(_clean(), _batch())[1]
         assert float(grads.stages["stage_1"].scale[...]) == pytest.approx(1.0)
 
+    def test_nnx_vmap_over_k_batches_checks_once(self, graph: bool, check_calls: list[int]) -> None:
+        stacked = jax.tree.map(lambda *leaves: jnp.stack(leaves), _batch(), _batch())
+        apply = nnx.vmap(lambda dag, batch: dag(batch)["scaled"], in_axes=(None, 0), graph=graph)
+        out = apply(_clean(), stacked)
+        assert out.shape == (2, 2)
+        assert len(check_calls) == 2  # two stages, one trace for both batches
+
+    def test_nnx_scan_over_a_chunk_checks_once(self, graph: bool, check_calls: list[int]) -> None:
+        chunk = jax.tree.map(lambda *leaves: jnp.stack(leaves), _batch(), _batch(), _batch())
+
+        def body(dag: OperatorDag, total: jax.Array, batch: Batch) -> jax.Array:
+            return total + dag(batch)["scaled"].sum()
+
+        scan = nnx.scan(body, in_axes=(None, nnx.Carry, 0), out_axes=nnx.Carry, graph=graph)
+        total = scan(_clean(), jnp.float32(0), chunk)
+        assert float(total) == pytest.approx(3 * 3.0 * 1.0)
+        assert len(check_calls) == 2
+
     def test_eval_shape_runs_the_check(self, graph: bool) -> None:
         with pytest.raises(ValueError, match="'meta/id' names two fields"):
             nnx.eval_shape(lambda dag, batch: dag(batch), _clash(), _batch(), graph=graph)
@@ -249,6 +267,18 @@ class TestJaxTransforms:
             for _ in range(3):
                 apply(nnx.split(_clean())[1], _batch())
         assert len(check_calls) == 2
+
+    def test_jax_jit_with_a_closure_checks_only_while_tracing(self, check_calls: list[int]) -> None:
+        dag = _clean()
+        counter = TraceCounter()
+        apply = jax.jit(counter.wrap(lambda batch: dag(batch)["scaled"]))
+        with counter.expect(new_traces=1):
+            for _ in range(3):
+                apply(_batch())
+        assert len(check_calls) == 2
+        with counter.expect(new_traces=1):  # a new batch size traces again, and checks again
+            apply(_batch(4))
+        assert len(check_calls) == 4
 
     def test_vmap_over_k_batches(self) -> None:
         graphdef, state = nnx.split(_clean())

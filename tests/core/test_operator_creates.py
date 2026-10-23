@@ -142,7 +142,7 @@ class TestInADag:
             f"'f0_hz' (float32[63]), written by stage 'stage_0' (_AddF0). {FIXES}"
         )
 
-    @pytest.mark.parametrize("path", ["step", "iteration"])
+    @pytest.mark.parametrize("path", ["step", "iteration", "scan", "session"])
     def test_in_a_pipeline_a_field_the_source_holds_is_written_by_the_source(
         self, path: str
     ) -> None:
@@ -155,7 +155,14 @@ class TestInADag:
         )
         try:
             with pytest.raises(FieldCreateError) as caught:
-                pipe.step() if path == "step" else next(iter(pipe))
+                if path == "step":
+                    pipe.step()
+                elif path == "iteration":
+                    next(iter(pipe))
+                elif path == "scan":
+                    pipe.scan(lambda batch: batch["x"].sum(), length=2)
+                else:
+                    next(iter(pipe.session()))
         finally:
             pipe.close()  # the kept traceback holds the run open; close its read threads
         assert str(caught.value) == (
@@ -202,9 +209,86 @@ class TestUnderTransforms:
         grads = nnx.jit(nnx.grad(loss, graph=graph), graph=graph)(_creates(), _batch())
         assert float(grads.scale[...]) == pytest.approx(63.0)
 
+    def test_nnx_vmap_over_k_batches_checks_once(self, graph: bool) -> None:
+        stacked = jax.tree.map(lambda *leaves: jnp.stack(leaves), _batch(), _batch())
+        _Creates.calls = 0
+        out = nnx.vmap(lambda op, batch: op(batch)["f0_hz"], in_axes=(None, 0), graph=graph)(
+            _creates(), stacked
+        )
+        assert out.shape == (2, 2, 63)
+        assert _Creates.calls == 1
+
+    def test_nnx_scan_over_a_chunk_checks_once(self, graph: bool) -> None:
+        chunk = jax.tree.map(lambda *leaves: jnp.stack(leaves), _batch(), _batch(), _batch())
+
+        def body(op: _Creates, total: jax.Array, batch: Batch) -> jax.Array:
+            return total + op(batch)["f0_hz"].sum()
+
+        _Creates.calls = 0
+        scan = nnx.scan(body, in_axes=(None, nnx.Carry, 0), out_axes=nnx.Carry, graph=graph)
+        total = scan(_creates(), jnp.float32(0), chunk)
+        assert float(total) == pytest.approx(3 * 63 * 2.0)  # x = [0, 1] scaled by 2
+        assert _Creates.calls == 1
+
     def test_an_eager_call_checks_every_call(self, graph: bool) -> None:
         op = _creates()
         _Creates.calls = 0
         for _ in range(3):
             op(_batch())
         assert _Creates.calls == 3
+
+
+class TestUnderJaxTransforms:
+    """A split operator under plain JAX: the check traces with it and is gone from the program."""
+
+    def test_jax_jit_over_a_static_graphdef_traces_once_and_checks_while_tracing(self) -> None:
+        graphdef, state = nnx.split(_creates())
+        counter = TraceCounter()
+
+        @jax.jit
+        @counter.wrap
+        def apply(state: Any, batch: Batch) -> jax.Array:
+            return nnx.merge(graphdef, state)(batch)["f0_hz"]
+
+        _Creates.calls = 0
+        with counter.expect(new_traces=1):
+            for _ in range(3):
+                apply(state, _batch())
+            for _ in range(3):
+                apply(nnx.split(_creates())[1], _batch())
+        assert _Creates.calls == 1
+        with counter.expect(new_traces=1):  # a new batch size traces again, and checks again
+            apply(state, _batch(4))
+        assert _Creates.calls == 2
+
+    def test_jax_jit_with_a_closure_checks_only_while_tracing(self) -> None:
+        op = _creates()
+        _Creates.calls = 0
+        apply = jax.jit(lambda batch: op(batch)["f0_hz"])
+        for _ in range(3):
+            apply(_batch())
+        assert _Creates.calls == 1
+
+    def test_vmap_and_lax_scan_check_once(self) -> None:
+        graphdef, state = nnx.split(_creates())
+        stacked = jax.tree.map(lambda *leaves: jnp.stack(leaves), _batch(), _batch())
+        _Creates.calls = 0
+        out = jax.jit(jax.vmap(lambda batch: nnx.merge(graphdef, state)(batch)["f0_hz"]))(stacked)
+        assert out.shape == (2, 2, 63)
+        assert _Creates.calls == 1
+
+        def body(total: jax.Array, batch: Batch) -> tuple[jax.Array, None]:
+            return total + nnx.merge(graphdef, state)(batch)["f0_hz"].sum(), None
+
+        total, _ = jax.jit(lambda chunk: jax.lax.scan(body, jnp.float32(0), chunk))(stacked)
+        assert float(total) == pytest.approx(2 * 63 * 2.0)
+        assert _Creates.calls == 2
+
+    def test_jax_grad_values_are_the_closed_form(self) -> None:
+        graphdef, params, rest = nnx.split(_creates(), nnx.Param, ...)
+
+        def loss(params: Any, batch: Batch) -> jax.Array:
+            return nnx.merge(graphdef, params, rest)(batch)["f0_hz"].sum()
+
+        grads = jax.jit(jax.grad(loss))(params, _batch())
+        assert float(grads["scale"][...]) == pytest.approx(63.0)

@@ -389,15 +389,15 @@ def _refuse_spelling_conflicts(sources: Sequence[DataSourceModule]) -> None:
             if seen == node:
                 continue
             if seen[0] == node[0]:
-                problem = (
-                    f"child {earlier} holds {seen[1]!r}, child {child} holds {node[1]!r}, both "
-                    f"spelled {name!r}. Rename one in its adapter, by its key tuple."
-                )
+                holders = f"child {earlier} holds {seen[1]!r}, child {child} holds {node[1]!r}"
             else:
-                problem = (
+                holders = (
                     f"child {earlier} holds {seen[0]} field {seen[1]!r}, child {child} "
                     f"{node[0]} field {node[1]!r}"
                 )
+            problem = (
+                f"{holders}, both spelled {name!r}. Rename one in its adapter, by its key tuple."
+            )
             raise SpecMismatchError(f"a mix's children disagree on field {name!r}:", [problem])
 
 
