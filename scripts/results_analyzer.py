@@ -37,7 +37,7 @@ USAGE:
 
 2. Generate dashboard:
    ```bash
-   python tests/scripts/test_results_analyzer.py
+   python scripts/results_analyzer.py
    ```
 
 AUTHOR: Datarax Development Team
@@ -752,18 +752,18 @@ uv run pytest -vv \\
 
                         <h6 class="mt-4">3. Generate Dashboard</h6>
                         <pre><code># Basic dashboard without coverage
-python tests/scripts/test_results_analyzer.py \\
+python scripts/results_analyzer.py \\
     --json-report temp/test-results.json \\
     --output temp/test_results_dashboard.html
 
 # Full dashboard with coverage analysis (recommended)
-python tests/scripts/test_results_analyzer.py \\
+python scripts/results_analyzer.py \\
     --json-report temp/test-results.json \\
     --output temp/test_results_dashboard.html \\
     --coverage temp/coverage.json
 
 # For Datarax project specifically (exact command used)
-uv run python tests/scripts/test_results_analyzer.py \\
+uv run python scripts/results_analyzer.py \\
     --json-report temp/datarax-test-results.json \\
     --output temp/test_results_dashboard.html \\
     --coverage temp/coverage.json</code></pre>
