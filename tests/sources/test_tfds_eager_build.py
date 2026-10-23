@@ -89,4 +89,4 @@ def test_filters_leaving_no_feature_are_refused_before_decoding(
     tfds_fixture: TFDSFixture,
 ) -> None:
     with pytest.raises(ValueError, match="produced no records after loading and filtering"):
-        _eager(tfds_fixture, include_keys={"absent"})
+        _eager(tfds_fixture, exclude_keys={"image", "label", "name", "meta"})

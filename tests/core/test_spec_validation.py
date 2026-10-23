@@ -9,6 +9,7 @@ coercing it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -30,6 +31,7 @@ from datarax.core.spec import (
     validate_device_dtypes,
 )
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
+from tests.test_common.field_labels import unbracketed
 
 
 def _spec(shape: tuple[int, ...], dtype: Any) -> jax.ShapeDtypeStruct:
@@ -147,7 +149,7 @@ class TestDeviceSpec:
 
     def test_dtypes_without_a_jax_representation_are_rejected_by_field(self) -> None:
         spec = {"text": _spec((), np.dtype("<U5")), "x": _spec((2,), np.float32)}
-        with pytest.raises(TypeError, match=r"\['text'\].*<U5"):
+        with pytest.raises(TypeError, match=unbracketed("text") + r".*<U5"):
             device_spec(spec)
 
 
@@ -163,10 +165,10 @@ class TestValidateDeviceDtypes:
             validate_device_dtypes(spec)
         assert len(caught.value.problems) == 2
         message = str(caught.value)
-        assert "['x']" in message
+        assert re.search(unbracketed("x"), message)
         assert "float64" in message
         assert "float32" in message
-        assert "['i']" in message
+        assert re.search(unbracketed("i"), message)
         assert "jax_enable_x64" in message
 
     def test_64_bit_dtypes_pass_when_x64_is_on(self) -> None:
@@ -174,7 +176,9 @@ class TestValidateDeviceDtypes:
             validate_device_dtypes({"x": _spec((3,), np.float64)})
 
     def test_dtype_without_a_jax_representation_is_rejected(self) -> None:
-        with pytest.raises(SpecMismatchError, match=r"\['text'\].*no JAX array representation"):
+        with pytest.raises(
+            SpecMismatchError, match=unbracketed("text") + r".*no JAX array representation"
+        ):
             validate_device_dtypes({"text": _spec((), np.dtype("<U5"))})
 
 
@@ -199,15 +203,15 @@ class TestSpecMismatches:
         problems = spec_mismatches(expected, actual)
         joined = "\n".join(problems)
         assert len(problems) == 4
-        assert "['x']" in joined
+        assert re.search(unbracketed("x"), joined)
         assert "(4,)" in joined
         assert "(3,)" in joined
-        assert "['y']" in joined
+        assert re.search(unbracketed("y"), joined)
         assert "int64" in joined
         assert "int32" in joined
-        assert "['gone']: missing" in joined
+        assert "'gone': missing" in joined
         # A whole undeclared subtree is one problem, not one per leaf.
-        assert "['extra']: unexpected" in joined
+        assert "'extra': unexpected" in joined
 
     def test_weak_type_alone_is_not_a_mismatch(self) -> None:
         weak = jax.ShapeDtypeStruct((), np.float32, weak_type=True)
@@ -241,12 +245,12 @@ class TestValidateBatch:
             validate_batch(_batch(0), _ELEMENT_SPEC, batch_size=4)
 
     def test_per_element_shape_mismatch_names_the_field(self) -> None:
-        with pytest.raises(SpecMismatchError, match=r"\['x'\].*\(4,\).*\(3,\)"):
+        with pytest.raises(SpecMismatchError, match=unbracketed("x") + r".*\(4,\).*\(3,\)"):
             validate_batch(_batch(2, x_shape=(4,)), _ELEMENT_SPEC)
 
     def test_dtype_is_compared_without_coercion(self) -> None:
         batch = _batch(2, x_dtype=np.float64)
-        with pytest.raises(SpecMismatchError, match=r"\['x'\].*float64.*float32"):
+        with pytest.raises(SpecMismatchError, match=unbracketed("x") + r".*float64.*float32"):
             validate_batch(batch, _ELEMENT_SPEC)
         assert batch["x"].dtype == np.float64
 
@@ -255,8 +259,8 @@ class TestValidateBatch:
         with pytest.raises(SpecMismatchError) as caught:
             validate_batch(batch, _ELEMENT_SPEC)
         joined = "\n".join(caught.value.problems)
-        assert "['y']: missing" in joined
-        assert "['z']: unexpected" in joined
+        assert "'y': missing" in joined
+        assert "'z': unexpected" in joined
 
     def test_all_problems_are_reported_together(self) -> None:
         batch = {
@@ -281,7 +285,7 @@ class TestValidateBatch:
             validate_batch(batch, _ELEMENT_SPEC)
 
         message = str(caught.value)
-        assert "['x'] has 2" in message and "['y'] has 5" in message
+        assert "'x' has 2" in message and "'y' has 5" in message
 
     def test_a_field_that_is_not_an_array_is_reported_once(self) -> None:
         spec = {**_ELEMENT_SPEC, "text": _spec((), np.dtype("<U8"))}
@@ -290,12 +294,14 @@ class TestValidateBatch:
         with pytest.raises(SpecMismatchError) as caught:
             validate_batch(batch, spec)
 
-        text_problems = [problem for problem in caught.value.problems if "['text']" in problem]
+        text_problems = [
+            problem for problem in caught.value.problems if re.search(unbracketed("text"), problem)
+        ]
         assert len(text_problems) == 1
 
     def test_a_scalar_leaf_is_rejected_even_when_the_structure_matches(self) -> None:
         batch = {"x": np.zeros((2, 3), np.float32), "y": np.int32(0)}
-        with pytest.raises(SpecMismatchError, match=r"\['y'\].*no leading batch axis"):
+        with pytest.raises(SpecMismatchError, match=unbracketed("y") + r".*no leading batch axis"):
             validate_batch(batch, _ELEMENT_SPEC)
 
     def test_runs_at_trace_time_and_adds_nothing_to_the_compiled_graph(self) -> None:
@@ -342,21 +348,21 @@ class TestValidateBatchAsTheDeviceHolds:
             validate_batch(self._int64_labels(4), _ELEMENT_SPEC, as_the_device_holds=True)
 
     def test_without_it_the_same_column_is_refused(self) -> None:
-        with pytest.raises(SpecMismatchError, match=r"\['y'\].*int64.*int32"):
+        with pytest.raises(SpecMismatchError, match=unbracketed("y") + r".*int64.*int32"):
             validate_batch(self._int64_labels(4), _ELEMENT_SPEC)
 
     def test_with_x64_on_the_int64_column_is_refused(self) -> None:
-        with jax.enable_x64(True), pytest.raises(SpecMismatchError, match=r"\['y'\]"):
+        with jax.enable_x64(True), pytest.raises(SpecMismatchError, match=unbracketed("y")):
             validate_batch(self._int64_labels(4), _ELEMENT_SPEC, as_the_device_holds=True)
 
     def test_a_mismatch_is_reported_in_the_dtypes_the_device_holds(self) -> None:
         batch = {"x": np.zeros((2, 3), np.float64), "y": np.zeros((2,), np.float64)}
-        with pytest.raises(SpecMismatchError, match=r"\['y'\].*float32.*int32"):
+        with pytest.raises(SpecMismatchError, match=unbracketed("y") + r".*float32.*int32"):
             validate_batch(batch, _ELEMENT_SPEC, as_the_device_holds=True)
 
     def test_a_dtype_without_a_jax_representation_is_named(self) -> None:
         batch = {"x": np.zeros((2, 3), np.float32), "y": np.array(["a", "b"])}
-        with pytest.raises(TypeError, match=r"\['y'\]"):
+        with pytest.raises(TypeError, match=unbracketed("y")):
             validate_batch(batch, _ELEMENT_SPEC, as_the_device_holds=True)
 
     def test_a_matching_batch_builds_no_spec_and_no_stand_in(self) -> None:

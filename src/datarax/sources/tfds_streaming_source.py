@@ -53,6 +53,7 @@ from datarax.sources._config_base import StreamingSourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
 from datarax.sources._stream_order import buffer_shuffled, interleaved, RecordId, shard_ids
 from datarax.sources._tfds_prepared import (
+    decoded_names,
     kept_features,
     prepare_call,
     prepared_builder,
@@ -69,6 +70,7 @@ from datarax.sources._tfrecord import (
     split_shard,
 )
 from datarax.sources.eager_source import parts_of_records
+from datarax.sources.source_ops import KeyFilter
 from datarax.sources.stream_iterator import StreamChunk
 
 
@@ -84,8 +86,8 @@ class TFDSStreamingConfig(StreamingSourceConfigBase):
         shuffle_buffer_size: Records the shuffle buffer holds when the pipeline shuffles
         as_supervised: If True, keeps only the dataset's supervised features
             (``info.supervised_keys``), under their own names
-        include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
-        exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
 
     Note:
         Whether a pass is shuffled, and by which key, is the pipeline's
@@ -128,16 +130,14 @@ class _KeptFeatures:
 
     Attributes:
         keys: The supervised features kept, or ``None`` for every feature.
-        include_keys: Features kept, when given.
-        exclude_keys: Features dropped, when given.
+        key_filter: The configured filter, resolved against the dataset's features.
     """
 
     keys: tuple[str, ...] | None
-    include_keys: frozenset[str] | None
-    exclude_keys: frozenset[str] | None
+    key_filter: KeyFilter
 
     @classmethod
-    def of_config(  # noqa: DOC502 - supervised_keys raises
+    def of_config(  # noqa: DOC502 - supervised_keys and KeyFilter.resolved raise
         cls, config: TFDSStreamingConfig, info: Any, dataset: str
     ) -> _KeptFeatures:
         """The features ``config`` keeps of ``dataset``'s records.
@@ -151,23 +151,22 @@ class _KeptFeatures:
             The kept features.
 
         Raises:
-            ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
+            ValueError: If ``as_supervised`` is asked of a dataset without supervised keys, or a
+                filter names a feature the dataset does not have.
         """
-        include, exclude = config.include_keys, config.exclude_keys
         return cls(
             keys=tuple(supervised_keys(info, dataset)) if config.as_supervised else None,
-            include_keys=None if include is None else frozenset(include),
-            exclude_keys=None if exclude is None else frozenset(exclude),
+            key_filter=KeyFilter.resolved(
+                type(config).__name__,
+                decoded_names(info.features),
+                config.include_keys,
+                config.exclude_keys,
+            ),
         )
 
     def of(self, record: dict[str, Any]) -> dict[str, Any]:
         """The features of ``record`` kept."""
-        return kept_features(
-            record,
-            self.keys,
-            None if self.include_keys is None else set(self.include_keys),
-            None if self.exclude_keys is None else set(self.exclude_keys),
-        )
+        return kept_features(record, self.keys, self.key_filter)
 
 
 @dataclass(frozen=True, slots=True)

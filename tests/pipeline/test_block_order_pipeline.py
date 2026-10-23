@@ -205,6 +205,9 @@ class _Stream(DataSourceModule):
     def __len__(self) -> int:
         return 10
 
+    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
+        return {"x": jax.ShapeDtypeStruct((), jnp.float32)}
+
 
 class _Identity(nnx.Module):
     def __call__(self, batch: Batch) -> Batch:

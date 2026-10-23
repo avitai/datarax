@@ -31,6 +31,7 @@ from datarax.sources import (
 )
 from datarax.sources._tfds_identity import SplitOrigin
 from datarax.sources.decoded_copy._manifest import identity_differences
+from datarax.sources.source_ops import KeyFilter
 from datarax.sources.tfds_source import _per_batch_split, TFDSEagerConfig, TFDSEagerSource
 from tests.test_common.decoded_copies import every_record, write_copy
 from tests.test_common.tfds_fixture import FIXTURE, RAGGED, TFDSFixture
@@ -165,8 +166,7 @@ class TestATFDSSplitsIdentity:
         decoder = tfds_source._ExampleDecoder(  # noqa: SLF001 - the decode a split declares
             {"clip": video, "label": object()},
             None,
-            None,
-            None,
+            KeyFilter(),
             origin=SplitOrigin(
                 dataset="clips", version="1.0.0", config=None, split="train", features="0" * 64
             ),
