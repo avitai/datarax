@@ -165,13 +165,22 @@ sorted(source.data)  # ['image', 'label']
 
 ## Field Filtering
 
-Select only needed fields:
+Select only needed fields. A filter names fields as the record holds them, so a field inside a
+group is spelled with "/", and a name the dataset does not have is refused when the source is
+built ([Field Filtering](index.md#field-filtering)):
 
 ```python
 config = TFDSEagerConfig(
     name="coco/2017",
     split="train",
     include_keys={"image", "objects"},  # Only these fields
+)
+
+# A field inside a group: COCO's objects decode to a group of per-object arrays
+config = TFDSEagerConfig(
+    name="coco/2017",
+    split="train",
+    include_keys={"image", "objects/bbox"},  # The boxes, without the other object fields
 )
 
 # Or exclude unwanted fields
