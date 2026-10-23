@@ -83,9 +83,11 @@ class TestTheMix:
         flat = MemorySource(MemorySourceConfig(), {"meta/id": np.arange(4, dtype=np.int32)})
         with pytest.raises(ValueError) as caught:
             MixDataSourcesNode(MixDataSourcesConfig(weights=(1.0, 1.0)), [nested, flat])
-        message = str(caught.value)
-        assert "a mix's children disagree on field 'meta/id'" in message
-        assert "child 0 holds ('meta', 'id'), child 1 holds ('meta/id',)" in message
+        assert str(caught.value) == (
+            "a mix's children disagree on field 'meta/id':\n"
+            "  - child 0 holds ('meta', 'id'), child 1 holds ('meta/id',), both spelled 'meta/id'. "
+            "Rename one in its adapter, by its key tuple."
+        )
 
     def test_a_childs_data_field_spelled_as_anothers_provenance_is_refused(self) -> None:
         data = MemorySource(MemorySourceConfig(), {"x": np.arange(4, dtype=np.float32)})
@@ -94,9 +96,11 @@ class TestTheMix:
         )
         with pytest.raises(ValueError) as caught:
             MixDataSourcesNode(MixDataSourcesConfig(weights=(1.0, 1.0)), [data, named])
-        message = str(caught.value)
-        assert "a mix's children disagree on field 'x'" in message
-        assert "child 0 holds data field ('x',), child 1 provenance field ('x',)" in message
+        assert str(caught.value) == (
+            "a mix's children disagree on field 'x':\n"
+            "  - child 0 holds data field ('x',), child 1 provenance field ('x',), both spelled "
+            "'x'. Rename one in its adapter, by its key tuple."
+        )
 
 
 class _DeclaresAnExoticKey(MemorySource):
