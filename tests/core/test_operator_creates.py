@@ -142,7 +142,10 @@ class TestInADag:
             f"'f0_hz' (float32[63]), written by stage 'stage_0' (_AddF0). {FIXES}"
         )
 
-    def test_in_a_pipeline_a_field_the_source_holds_is_written_by_the_source(self) -> None:
+    @pytest.mark.parametrize("path", ["step", "iteration"])
+    def test_in_a_pipeline_a_field_the_source_holds_is_written_by_the_source(
+        self, path: str
+    ) -> None:
         data = {"x": np.arange(4, dtype=np.float32), "f0_hz": np.zeros((4, 63), np.float32)}
         pipe = Pipeline(
             source=MemorySource(MemorySourceConfig(), data),
@@ -150,8 +153,11 @@ class TestInADag:
             batch_size=2,
             rngs=nnx.Rngs(0),
         )
-        with pytest.raises(FieldCreateError) as caught:
-            pipe.step()
+        try:
+            with pytest.raises(FieldCreateError) as caught:
+                pipe.step() if path == "step" else next(iter(pipe))
+        finally:
+            pipe.close()  # the kept traceback holds the run open; close its read threads
         assert str(caught.value) == (
             "stage 'stage_0' (_Creates) creates the field 'f0_hz', and the record already has "
             f"'f0_hz' (float32[63]), written by the source (MemorySource). {FIXES}"

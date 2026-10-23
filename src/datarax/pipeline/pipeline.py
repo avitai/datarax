@@ -1001,12 +1001,18 @@ class Pipeline(nnx.Module):
         """
         if not self.dag.order:
             return iter(self.raw_batches())
-        apply = compile_dag(self.dag)
-        return (self._through(apply, batch) for batch in self.raw_batches())
+        return self._through(compile_dag(self.dag), self.raw_batches())
 
-    def _through(self, apply: Callable[[Batch], Batch], batch: Batch) -> Batch:
-        """Run the compiled DAG over one host batch, naming the source in a refused create."""
-        try:
-            return apply(batch)
-        except FieldExistsError as error:
-            raise _written_by_the_source(error, self.source) from error
+    def _through(
+        self, apply: Callable[[Batch], Batch], batches: Iterator[Batch]
+    ) -> Iterator[Batch]:
+        """Each host batch through the compiled DAG, naming the source in a refused create.
+
+        A generator, so a batch resumes it and starts no function: the ``try`` costs nothing
+        until a create is refused, which happens only while the DAG is traced.
+        """
+        for batch in batches:
+            try:
+                yield apply(batch)
+            except FieldExistsError as error:
+                raise _written_by_the_source(error, self.source) from error
