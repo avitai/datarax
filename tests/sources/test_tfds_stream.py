@@ -857,8 +857,9 @@ class TestThroughTheHostStage:
     ) -> None:
         """``get_state`` after every batch of a 3-pass shuffled run, read ahead; the rest resumes.
 
-        A resumed run reads the payloads of the records it serves and of the spec's one record,
-        never those before the saved position.
+        A resumed pipeline, from its construction, reads the payloads of the spec's one record
+        (read when it is built) and of the records it serves, never those before the saved
+        position.
         """
 
         def build() -> Pipeline:
@@ -895,10 +896,10 @@ class TestThroughTheHostStage:
             served = [rows(next(batches)) for _ in range(done)]
             state = pipe.get_state()
             pipe.close()
+            payloads.clear()
             resumed = build()
             resumed.set_state(state)
             assert resumed.batches_left() == len(whole) - done
-            payloads.clear()
             rest = [rows(b) for b in resumed.raw_batches()]
             assert served + rest == whole
             assert len(payloads) == 1 + sum(len(names) for names, _, _ in rest)
