@@ -6,7 +6,7 @@ these helpers for:
 - Wrapped index resolution, in the order a key selects (``resolve_wrapped_indices``)
 - A worker's share of the records (``partition_length``)
 - A named-dataset source's repr (``format_source_repr``)
-- Key filtering
+- Key filters resolved at construction (``KeyFilter``)
 
 In-memory sources read through ``datarax.sources.EagerSource``; streams build on
 ``datarax.sources.StreamingSourceBase``.
@@ -14,7 +14,8 @@ In-memory sources read through ``datarax.sources.EagerSource``; streams build on
 
 from __future__ import annotations
 
-from collections.abc import Set as AbstractSet
+from collections.abc import Mapping, Set as AbstractSet
+from dataclasses import dataclass
 from typing import Any
 
 import jax
@@ -24,6 +25,13 @@ from jax.typing import ArrayLike
 
 from datarax.core import index_words
 from datarax.core.block_order import BlockOrder, order_positions
+from datarax.core.field_paths import (
+    field_listing,
+    field_paths,
+    FieldNotFoundError,
+    KeyTuple,
+    resolve,
+)
 
 
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
@@ -110,23 +118,109 @@ def format_source_repr(
     return f"{class_name}({serialized})"
 
 
-def filter_keys(
-    element: dict[str, Any],
-    include_keys: AbstractSet[str] | None,
-    exclude_keys: AbstractSet[str] | None,
-) -> dict[str, Any]:
-    """Filter element keys based on include/exclude sets.
+@dataclass(frozen=True, slots=True)
+class KeyFilter:
+    """``include_keys`` or ``exclude_keys`` resolved once against a dataset's fields.
 
-    Args:
-        element: Dictionary to filter
-        include_keys: If set, only include these keys
-        exclude_keys: If set, exclude these keys
+    A filter holds field names (N3), so ``meta/score`` names the nested field ``score`` of the
+    group ``meta``; the names resolve at construction, an unknown one refused listing the fields,
+    and records are then filtered by key tuple with no name search per record.
 
-    Returns:
-        Filtered dictionary
+    Attributes:
+        include: The key tuples kept, with everything below them, or ``None`` for every field.
+        exclude: The key tuples dropped, or ``None`` for none.
     """
-    if include_keys is not None:
-        return {k: v for k, v in element.items() if k in include_keys}
-    if exclude_keys is not None:
-        return {k: v for k, v in element.items() if k not in exclude_keys}
-    return element
+
+    include: frozenset[KeyTuple] | None = None
+    exclude: frozenset[KeyTuple] | None = None
+
+    @classmethod
+    def resolved(  # noqa: DOC502 - _resolved_names raises the ValueError
+        cls,
+        owner: str,
+        fields: dict[str, Any],
+        include_keys: AbstractSet[str] | None,
+        exclude_keys: AbstractSet[str] | None,
+    ) -> KeyFilter:
+        """The filter a configuration names, resolved against the dataset's fields.
+
+        Args:
+            owner: Who names the filter, for the refusal: the configuration's class name.
+            fields: The dataset's data and provenance fields as the record holds them: dicts
+                nested by group, whose leaves are fields of any value.
+            include_keys: The names kept, or ``None``.
+            exclude_keys: The names dropped, or ``None``.
+
+        Returns:
+            The resolved filter.
+
+        Raises:
+            ValueError: If a name is not a field of the dataset, listing its fields.
+        """
+        return cls(
+            include=_resolved_names(owner, fields, "include_keys", include_keys),
+            exclude=_resolved_names(owner, fields, "exclude_keys", exclude_keys),
+        )
+
+    def keep(self, record: Any) -> dict[str, Any]:
+        """The fields of ``record`` the filter keeps; a group it empties is dropped.
+
+        Args:
+            record: A decoded record, or a dataset's features as nested mappings; a group is
+                a mapping and anything else one field, kept or dropped whole.
+
+        Returns:
+            The kept fields, nested as ``record``.
+        """
+        return _kept(record, (), self.include, self.exclude)
+
+
+def _resolved_names(
+    owner: str, tree: Any, parameter: str, names: AbstractSet[str] | None
+) -> frozenset[KeyTuple] | None:
+    if names is None:
+        return None
+    resolved = set()
+    for name in sorted(names):
+        try:
+            resolved.add(resolve(tree, name))
+        except FieldNotFoundError as error:
+            raise ValueError(
+                f"{owner} names {name!r} in {parameter}, which the dataset does not have; "
+                f"its fields are {field_listing(field_paths(tree))}"
+            ) from error
+    return frozenset(resolved)
+
+
+def _kept(
+    node: Any,
+    path: KeyTuple,
+    include: frozenset[KeyTuple] | None,
+    exclude: frozenset[KeyTuple] | None,
+) -> dict[str, Any]:
+    kept: dict[str, Any] = {}
+    for key, child in node.items():
+        here = (*path, key)
+        is_kept, below = _include_below(here, include)
+        if not is_kept or (exclude is not None and here in exclude):
+            continue
+        if isinstance(child, Mapping) and (below is not None or exclude is not None):
+            inner = _kept(child, here, below, exclude)
+            if inner or not child:
+                kept[key] = inner
+        else:
+            kept[key] = child
+    return kept
+
+
+def _include_below(
+    here: KeyTuple, include: frozenset[KeyTuple] | None
+) -> tuple[bool, frozenset[KeyTuple] | None]:
+    """Whether ``include`` keeps the node at ``here``, and what it still selects below it.
+
+    A node named, or under a named one, is kept whole (``None`` below); a node above a named one
+    is kept for the names below it; any other node is dropped.
+    """
+    if include is None or here in include:
+        return True, None
+    return any(keys[: len(here)] == here for keys in include), include

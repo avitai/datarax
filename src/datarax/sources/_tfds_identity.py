@@ -24,6 +24,8 @@ from google.protobuf.internal import api_implementation
 from substrax.checkpoint.metadata import library_versions
 from tensorflow_datasets.core.features import image_feature
 
+from datarax.core.field_paths import KeyTuple, spelling
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SplitOrigin:
@@ -64,7 +66,20 @@ def _decoder_versions() -> dict[str, str | None]:
     return {**versions, "opencv": None if cv2 is None else str(cv2.__version__)}
 
 
-def split_identity(
+def _refuse_videos(kept: Mapping[str, Any], keys: KeyTuple) -> None:
+    """Refuse a ``Video`` anywhere among the kept features, a group's members included."""
+    for name, feature in kept.items():
+        here = (*keys, name)
+        if isinstance(feature, Mapping):
+            _refuse_videos(feature, here)
+        elif isinstance(feature, tfds.features.Video):
+            raise ValueError(
+                f"feature {spelling(here)!r} is a Video, which decodes every frame to far more "
+                "than its stored size: a split holding one has no decoded copy; read it per batch"
+            )
+
+
+def split_identity(  # noqa: DOC502 - _refuse_videos raises the ValueError
     origin: SplitOrigin, kept: Mapping[str, Any], filters: Mapping[str, Any]
 ) -> dict[str, Any]:
     """A split's per-batch decode, as ``source_identity()`` declares it.
@@ -81,12 +96,7 @@ def split_identity(
     Raises:
         ValueError: If a kept feature is a ``Video``, naming it.
     """
-    for name, feature in kept.items():
-        if isinstance(feature, tfds.features.Video):
-            raise ValueError(
-                f"feature {name!r} is a Video, which decodes every frame to far more than its "
-                "stored size: a split holding one has no decoded copy; read it per batch"
-            )
+    _refuse_videos(kept, ())
     return {
         "source": {
             **dataclasses.asdict(origin),

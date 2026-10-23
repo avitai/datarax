@@ -436,6 +436,13 @@ class TestProvenanceBesideTheBatch:
                 f"t{int(x)}" for x in np.asarray(batch["x"][:, 0])
             ]
 
+    def test_a_text_column_is_refused_pointing_at_provenance(self) -> None:
+        """A device holds no text, so the test stream takes text only as provenance."""
+        with pytest.raises(TypeError, match=r"'name'.*<U2.*texts="):
+            RecordStream(
+                {"x": np.arange(3, dtype=np.float32), "name": np.array(["r0", "r1", "r2"])}
+            )
+
 
 class TestNnxHygiene:
     def test_no_variable_holds_a_python_value(self) -> None:

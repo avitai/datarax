@@ -31,7 +31,7 @@ from flax import nnx
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.field_paths import field_paths, label, refuse_field_nodes
+from datarax.core.field_paths import field_listing, field_paths, refuse_field_nodes
 from datarax.core.operator import OperatorModule
 from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 
@@ -117,9 +117,7 @@ class BatchMixOperator(OperatorModule):
         field = self.config.data_field
         if not isinstance(data, dict) or field not in data:
             available = (
-                ", ".join(label(keys) for keys in field_paths(data))
-                if isinstance(data, dict)
-                else type(data).__name__
+                field_listing(field_paths(data)) if isinstance(data, dict) else type(data).__name__
             )
             raise ValueError(
                 f"BatchMixOperator mixes the data field {field!r}, which this batch lacks; its "

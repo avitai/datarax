@@ -214,7 +214,7 @@ class TestTheEagerSourceReadsArrayRecord:
             ("train", {}),
             ("train[3:11]", {}),
             ("train", {"as_supervised": True}),
-            ("test", {"exclude_keys": {"score"}}),
+            ("test", {"exclude_keys": {"meta/score"}}),
         ],
     )
     def test_from_tfds_not_in_memory_reads_per_batch_what_the_eager_source_holds(

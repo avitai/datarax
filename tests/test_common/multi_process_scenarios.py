@@ -145,8 +145,12 @@ def refusals(process: int, args: Sequence[str]) -> dict[str, Any]:
         )
 
     shard = MemorySourceConfig(shard_id=process, num_workers=2)
+    records = built.records()
+    stream = RecordStream(
+        {"value": records["value"], "image": records["image"]}, texts=records["name"]
+    )
     return {
-        "stream": _refusal(lambda: over(RecordStream(built.records()))),
+        "stream": _refusal(lambda: over(stream)),
         "worker_shard": _refusal(lambda: over(MemorySource(shard, built.records()))),
     }
 

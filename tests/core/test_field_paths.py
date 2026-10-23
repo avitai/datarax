@@ -19,6 +19,7 @@ from datarax.core.field_paths import (
     as_field_name,
     as_field_names,
     create_path,
+    field_listing,
     FieldCreateError,
     FieldNotFoundError,
     get_field,
@@ -210,6 +211,21 @@ class TestDisplay:
         self, keys: tuple[str, ...], text: str
     ) -> None:
         assert label(keys) == text
+
+    def test_a_listing_of_fields_is_in_name_order_whatever_the_insertion_order(self) -> None:
+        """A loaded TFDS ``FeaturesDict`` has no stable order, so a listing orders its fields."""
+        paths = [("name",), ("meta", "score"), ("image/id",), ("image",)]
+        assert field_listing(paths) == (
+            "'image', 'image/id' (key tuple ('image/id',)), 'meta/score', 'name'"
+        )
+
+    def test_an_unknown_name_lists_the_record_s_fields_in_name_order(self) -> None:
+        data = {"b": np.zeros(2), "a": {"z": np.zeros(2), "y": np.zeros(2)}}
+        with pytest.raises(FieldNotFoundError) as caught:
+            get_field(data, "c")
+        assert str(caught.value) == (
+            "'c' names no field of the record; its fields: 'a/y', 'a/z', 'b'"
+        )
 
     def test_a_field_node_member_prints_as_an_attribute(self) -> None:
         data = {"depth": Maybe(np.zeros(3), np.array(True))}

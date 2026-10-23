@@ -88,8 +88,10 @@ from datarax.core.data_source import (
     shard_identity,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.field_paths import FieldExistsError, record_problems
 from datarax.core.host_resources import HostResources
 from datarax.core.prng import naming_key_data, NAMING_PRNG_IMPL
+from datarax.core.spec import declared_spec
 from datarax.pipeline.dag import name_records, OperatorDag, Records
 from datarax.pipeline.dag_call import compile_dag
 from datarax.pipeline.epochs import batch_records, EpochPlan
@@ -116,6 +118,40 @@ from datarax.typing import DataDict
 _SCAN_BODIES: weakref.WeakKeyDictionary[Pipeline, dict[tuple[Any, ...], Callable[..., Any]]] = (
     weakref.WeakKeyDictionary()
 )
+
+
+def _written_by_the_source(error: FieldExistsError, source: DataSourceModule) -> FieldExistsError:
+    """A refused create whose field came with the DAG's input, as written by the source (W8).
+
+    Args:
+        error: The DAG's refusal.
+        source: The pipeline's source.
+
+    Returns:
+        The refusal naming the source as the field's first writer, when it names none yet.
+    """
+    return error.located(writer=f"the source ({type(source).__name__})")
+
+
+def _check_record_names(source: DataSourceModule) -> None:  # noqa: DOC503 - element_spec raises
+    """Refuse a source whose declared record breaks N2's naming rules, when the pipeline is built.
+
+    Every pipeline source declares its record (``element_spec``), read once through the cached
+    ``declared_spec`` that a run's later reads share.
+
+    Args:
+        source: The pipeline's source.
+
+    Raises:
+        ValueError: Naming the source and every problem of its record.
+        NotImplementedError: If the source declares no record (no ``element_spec``).
+    """
+    problems = record_problems(declared_spec(source))
+    if problems:
+        raise ValueError(
+            f"{type(source).__name__} declares a record in which "
+            + "; ".join(str(problem) for problem in problems)
+        )
 
 
 def _check_block_order(
@@ -160,8 +196,10 @@ class Pipeline(nnx.Module):
 
     Args (linear constructor):
         source: A ``DataSourceModule`` exposing ``record_indices_at`` and
-            ``get_records`` for stateless indexed access. The pipeline owns
-            iteration position; the source does not advance internal state.
+            ``get_records`` for stateless indexed access, and declaring its record
+            (``element_spec``), which is checked against the naming rules when the
+            pipeline is built. The pipeline owns iteration position; the source does
+            not advance internal state.
         stages: Ordered list of ``nnx.Module`` stages applied in order.
             Each stage's ``__call__(batch)`` takes the current batch (a
             dict of arrays) and returns the next batch. Stages may carry
@@ -265,8 +303,10 @@ class Pipeline(nnx.Module):
                 ``shuffle`` or for a source that is not ``INDEXED`` or has no length, or the
                 sharding cannot place this pipeline's batches (more than the rows, an
                 ``AbstractMesh``, Explicit axes, or a ``batch_size`` it cannot split; across
-                processes, a stream source or one serving a worker's shard).
+                processes, a stream source or one serving a worker's shard), or the source's
+                declared record breaks the naming rules.
             TypeError: If ``sharding`` is not a ``NamedSharding``.
+            NotImplementedError: If the source declares no record (no ``element_spec``).
         """
         super().__init__()
         _check_block_order(source, shuffle=shuffle, block_order=block_order)
@@ -279,6 +319,9 @@ class Pipeline(nnx.Module):
             num_epochs=num_epochs,
             block_order=block_order,
         )
+        # Last: reading the declared record can open a stream's pass, which a refused
+        # configuration does not need.
+        _check_record_names(source)
         self.shuffle = shuffle
         self.block_order = block_order
         self.drop_last = drop_last
@@ -456,7 +499,9 @@ class Pipeline(nnx.Module):
     # Public API
     # ------------------------------------------------------------------
 
-    def __call__(self, data: DataDict, records: Records | None = None) -> Batch:
+    def __call__(  # noqa: DOC503 - the DAG's FieldExistsError is re-raised naming the source
+        self, data: DataDict, records: Records | None = None
+    ) -> Batch:
         """Run the DAG over the gathered ``data``, its rows named as ``records``.
 
         The data becomes a ``Batch`` whose rows carry their records' indices and epochs, which
@@ -471,12 +516,19 @@ class Pipeline(nnx.Module):
 
         Returns:
             The DAG's output.
+
+        Raises:
+            FieldExistsError: If a stage creates a field the batch already has; a field the
+                source holds is named as the source's.
         """
         batch = batch_ops.from_arrays(data)
         if records is None:
             start, epoch = self.epoch_plan.batch_start(self._position[...], self._epoch[...])
             records = self._records_at(start, epoch, batch.batch_size)
-        return self.dag(name_records(batch, records.indices, records.epochs))
+        try:
+            return self.dag(name_records(batch, records.indices, records.epochs))
+        except FieldExistsError as error:
+            raise _written_by_the_source(error, self.source) from error
 
     def epoch_key(self) -> jax.Array:
         """The key the current epoch's records are ordered by when the pipeline shuffles.
@@ -950,4 +1002,11 @@ class Pipeline(nnx.Module):
         if not self.dag.order:
             return iter(self.raw_batches())
         apply = compile_dag(self.dag)
-        return (apply(batch) for batch in self.raw_batches())
+        return (self._through(apply, batch) for batch in self.raw_batches())
+
+    def _through(self, apply: Callable[[Batch], Batch], batch: Batch) -> Batch:
+        """Run the compiled DAG over one host batch, naming the source in a refused create."""
+        try:
+            return apply(batch)
+        except FieldExistsError as error:
+            raise _written_by_the_source(error, self.source) from error
