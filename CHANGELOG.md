@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `OperatorModule.created_fields()` and `datarax.core.operator.CreatedField(name, parameter)`: an
+  operator declares the fields it creates under names datarax chose (empty by default). A
+  declared create of a field the incoming batch already has raises
+  `datarax.core.field_paths.FieldExistsError` (a `FieldCreateError`), naming the field, how the
+  record holds it, and both fixes: another output, or `overwrite=True` on that config. Inside an
+  `OperatorDag` the refusal names the stage and the field's first writer; in a `Pipeline`, the
+  source. A name the user typed, such as a `target_key`, replaces.
+- `datarax.core.field_paths.record_problems(tree)` and `RecordProblem`: the ways a record breaks
+  the naming rules, worded once for every refusal; `field_listing(paths)` lists fields in name
+  order; `fields_named` words a spelling naming several nodes.
+- `datarax.sources.source_ops.KeyFilter`: `include_keys` or `exclude_keys` resolved once against a
+  dataset's fields, then applied by key tuple.
+- `EagerSource.provenance_names()`: the provenance keys a source's records hold.
 - `Pipeline(..., sharding=NamedSharding(mesh, P("data")))` (and `Pipeline.from_dag`,
   `Pipeline.from_arrays`): iteration places each batch on the data mesh, rows on the sharding and
   `batch_state` replicated, through substrax `place_batch_on_shards` with the
@@ -378,6 +391,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Maybe` is a `datarax.core.field_nodes.FieldNode`, the base of a field held as several arrays:
   naming treats it as one field, and a consumer that reads a field as an array refuses any field
   node through `datarax.core.field_paths.refuse_field_nodes`, with the node type's own fix.
+- Records meet the naming rules wherever they are built: keys are non-empty strings that neither
+  start nor end with `/` nor hold `//`, nodes are dicts, and no two nodes, groups included, share
+  a spelling (a key `"meta/id"` beside a group `meta` holding `id` is refused). `OperatorDag`
+  checks every stage's output, declared or not, in every trace and on every eager call, never on
+  a cached jitted call. A mix refuses children that give one spelling to different nodes or to
+  data and to provenance; an eager source refuses a data field spelled as a provenance field and
+  a provenance spelling given twice.
+- Breaking: every `Pipeline` source declares its record (`element_spec`). The pipeline reads it
+  when it is built, after the refusals that need no data, refuses a record that breaks the
+  naming rules, and refuses a source that leaves `element_spec` to `DataSourceModule` with its
+  `NotImplementedError`.
+- Breaking: `include_keys` and `exclude_keys` hold field names, resolved when the source is
+  built against its data and provenance fields. A name the dataset does not have is refused,
+  listing its fields, where it was dropped without a word; a nested name such as `meta/score`
+  filters that nested field. A TFDS field inside a `Sequence` of dicts (COCO's `objects/bbox`)
+  resolves, and the decode keeps the `Sequence` whole.
+- Breaking: the RAM budget of an in-memory TFDS build reads each feature's tensor infos, so a
+  `Sequence` counts its length: one of fixed length counts every element, where one element was
+  counted, and one of no fixed length is refused as having no size before reading. A `Video`
+  inside a group has no decoded copy, as a top-level one has none.
+- A refusal that lists fields lists them in name order, so its text is the same in every process
+  (a loaded TFDS `FeaturesDict` has no stable order of its own).
 
 - The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
   notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
@@ -874,6 +909,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field nodes with `datarax.core.field_paths.refuse_field_nodes(tree, consumer, where)`.
 - `datarax.sources._field_paths`: its `field_name`, `field_names`, `by_field`, `nested` and
   `LEVEL` are in `datarax.core.field_paths`.
+- `datarax.sources.source_ops.filter_keys`: a source filters through `KeyFilter.resolved(...)`
+  and `KeyFilter.keep(record)`.
 
 - `datarax.sharding`, with `JaxProcessSharderModule` and `JaxProcessSharderConfig`, which sliced
   arrays and lists to the current JAX process's portion: a pipeline whose `sharding` spans
