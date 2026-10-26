@@ -61,16 +61,15 @@ class DaliAdapter(PipelineAdapter):
         return getattr(dali, "__version__", "unknown")
 
     def is_available(self) -> bool:
-        """Return True if DALI is installed and CUDA is available."""
+        """Return True if DALI is installed and finds a CUDA device."""
         try:
-            import nvidia.dali  # noqa: F401
-
-            # DALI requires CUDA
             import nvidia.dali.fn  # noqa: F401
-
-            return True
+            from nvidia.dali import backend
         except (ImportError, RuntimeError):
             return False
+        # Importing DALI needs no GPU. Its device count reads 0 with no device or no driver
+        # (cudaErrorNoDevice, cudaErrorInsufficientDriver) and raises on any other CUDA error.
+        return backend.GetCUDADeviceCount() > 0
 
     def supported_scenarios(self) -> set[str]:
         """Return the set of supported benchmark scenario IDs."""

@@ -1,7 +1,8 @@
 """Tests for DaliAdapter.
 
-TDD: Tests written first. NVIDIA DALI is a Tier 2 GPU-accelerated loader.
-Requires CUDA. Supports 7 scenarios.
+NVIDIA DALI is a Tier 2 GPU-accelerated loader. ``is_available`` reports DALI usable only when
+DALI's own device count finds a CUDA device, which the availability tests check wherever DALI is
+installed; the property and lifecycle tests need that device and skip without it.
 """
 
 import pytest
@@ -13,25 +14,39 @@ from benchmarks.tests.test_adapters.conftest import assert_valid_iteration_resul
 # nvidia-*-cu12 CUDA packages, so import a real DALI submodule to skip cleanly
 # when DALI itself is not installed.
 pytest.importorskip("nvidia.dali")
-dali_types = pytest.importorskip("nvidia.dali.types")
+dali_backend = pytest.importorskip("nvidia.dali.backend")
 
-# DALI requires CUDA — skip all tests if no GPU available.
-pytestmark = pytest.mark.skipif(
-    not (hasattr(dali_types, "NO_GPU") and dali_types.NO_GPU is False),
-    reason="DALI requires CUDA GPU",
+
+def _dali_sees_a_cuda_device() -> bool:
+    from benchmarks.adapters.dali_adapter import DaliAdapter
+
+    return DaliAdapter().is_available()
+
+
+requires_dali_gpu = pytest.mark.skipif(
+    not _dali_sees_a_cuda_device(), reason="DALI sees no CUDA device"
 )
 
-try:
-    import nvidia.dali.fn as fn  # noqa: F401
 
-    _has_cuda = True
-except (ImportError, RuntimeError):
-    _has_cuda = False
+class TestDaliAvailability:
+    """``is_available`` follows DALI's device count, which needs no GPU to test."""
 
-if not _has_cuda:
-    pytest.skip("DALI CUDA not available", allow_module_level=True)
+    def test_no_cuda_device_is_unavailable(self, monkeypatch):
+        from benchmarks.adapters.dali_adapter import DaliAdapter
+
+        monkeypatch.setattr(dali_backend, "GetCUDADeviceCount", lambda: 0)
+
+        assert DaliAdapter().is_available() is False
+
+    def test_a_cuda_device_is_available(self, monkeypatch):
+        from benchmarks.adapters.dali_adapter import DaliAdapter
+
+        monkeypatch.setattr(dali_backend, "GetCUDADeviceCount", lambda: 1)
+
+        assert DaliAdapter().is_available() is True
 
 
+@requires_dali_gpu
 class TestDaliAdapterProperties:
     def test_name(self):
         from benchmarks.adapters.dali_adapter import DaliAdapter
@@ -59,6 +74,7 @@ class TestDaliAdapterProperties:
         )
 
 
+@requires_dali_gpu
 class TestDaliAdapterLifecycle:
     def test_setup_teardown(self, cv1_small_config, small_image_data):
         from benchmarks.adapters.dali_adapter import DaliAdapter
