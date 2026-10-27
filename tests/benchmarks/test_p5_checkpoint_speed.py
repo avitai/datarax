@@ -9,6 +9,7 @@ that same manager doing the same composite save and restore: the state
 extraction, the identity validation and ``set_state``.
 """
 
+import logging
 from typing import Any
 
 import jax.numpy as jnp
@@ -17,6 +18,9 @@ import pytest
 
 from datarax.checkpoint import IteratorCheckpoint
 from tests.benchmarks.performance_targets import measure_latency
+
+
+logger = logging.getLogger(__name__)
 
 
 class _DictState:
@@ -69,6 +73,7 @@ class TestP5CheckpointSpeed:
                 checkpoint.save(_DictState(model_state), step=counter[0])
 
             latency = measure_latency(save_cycle, repetitions=3)
+        logger.info(f"P5 save latency {latency * 1000:.1f}ms for a 4MB state, target 5s")
         assert latency < 5.0, f"Save latency {latency:.2f}s exceeds 5s target"
 
     def test_checkpoint_cycle_within_1_5x_orbax(self, tmp_path, model_state):
@@ -123,8 +128,11 @@ class TestP5CheckpointSpeed:
             if orbax > 0
         )
         ratio = ratios[len(ratios) // 2]
-        assert ratio <= 1.5, (
+        measured = (
             f"Datarax checkpoint cycle is {ratio:.2f}x the Orbax manager's over "
-            f"{len(ratios)} paired rounds (datarax min {min(datarax_latencies) * 1000:.1f}ms, "
-            f"orbax min {min(orbax_latencies) * 1000:.1f}ms), exceeds 1.5x target"
+            f"{len(ratios)} paired rounds (pair ratios {', '.join(f'{r:.2f}' for r in ratios)}; "
+            f"datarax min {min(datarax_latencies) * 1000:.1f}ms, "
+            f"orbax min {min(orbax_latencies) * 1000:.1f}ms)"
         )
+        logger.info(f"P5 {measured}, target 1.5x")
+        assert ratio <= 1.5, f"{measured}, exceeds 1.5x target"

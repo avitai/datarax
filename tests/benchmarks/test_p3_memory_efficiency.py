@@ -42,6 +42,7 @@ class TestP3MemoryEfficiency:
         # so RSS delta should be dominated by Python/JAX overhead, not
         # data duplication. After optimization (array views), this should
         # be well under 200MB.
+        logger.info(f"P3 array views: RSS grew {delta_mb:.1f} MB over 1,000 records, target 200 MB")
         assert delta_mb < 200, f"RSS increased by {delta_mb:.0f} MB during iteration"
 
     def test_gather_batch_efficiency(self):
