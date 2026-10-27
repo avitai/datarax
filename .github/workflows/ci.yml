@@ -507,16 +507,7 @@ jobs:
           # Explicitly run on CPU for GitHub workflow
           # Disable coverage to avoid distorting benchmark timings
           export JAX_PLATFORMS="cpu"
-          uv run pytest tests --benchmark -v -rs -m "not tfds" --no-cov --benchmark-autosave --benchmark-columns=mean,stddev,min,max
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results
-          path: |
-            benchmark-results/
-            benchmark.json
-            histogram.svg
+          uv run pytest tests --benchmark -v -rs -m "not tfds" --no-cov
 
   coverage:
     name: Test Coverage

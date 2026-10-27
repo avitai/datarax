@@ -164,7 +164,6 @@ dev = [
   "pre-commit>=4.3.0",
   "pytest>=8.3.5",
   "pytest-asyncio>=0.23",
-  "pytest-benchmark>=4",
   "pytest-cov>=6.1.1",
   "pytest-env>=1.0.1",
   "pytest-json-report>=1.5.0",
@@ -221,7 +220,6 @@ test = [
   "matplotlib>=3.8",
   "pytest>=8.3.5",
   "pytest-asyncio>=0.23",
-  "pytest-benchmark>=4",
   "pytest-cov>=6.1.1",
   "pytest-env>=1.0.1",
   # Splits the unit suite into the CI shards (ci.yml, the unit_tests matrix).
@@ -445,7 +443,7 @@ markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
   "integration: marks tests as integration tests",
   "unit: marks tests as unit tests",
-  "benchmark: marks tests as performance benchmarks (requires pytest-benchmark)",
+  "benchmark: marks tests as performance benchmarks (selected with --benchmark)",
   "e2e: marks tests as end-to-end tests",
   "performance: marks tests as performance tests",
   "contract: marks tests as contract tests"
@@ -457,17 +455,6 @@ python_files = "test_*.py"
 python_functions = "test_*"
 # Main pytest configuration
 testpaths = ["tests"]
-
-[tool.pytest-benchmark]
-compare = ["last", "base"]
-disable_gc = true
-histogram = "histogram.svg"
-min_rounds = 5
-min_time = 0.1
-save = "benchmark-results"
-save_data = true
-warmup = true
-warmup_iterations = 3
 
 [tool.pytest_env]
 # D: prefix = set as default only (don't override existing env vars)

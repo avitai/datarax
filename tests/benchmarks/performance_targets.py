@@ -5,9 +5,13 @@ target as an assertion. The test MUST fail before optimization and MUST pass
 after. This module provides the common measurement and assertion infrastructure.
 """
 
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 def measure_adapter_throughput(
@@ -157,16 +161,23 @@ def assert_within_ratio(
     For latency/memory (lower is better), swap args:
         assert_within_ratio(alternative_latency, datarax_latency, 1.5)
 
+    The measurement is logged before the check, so a passing run records its
+    margin as well as a failing one.
+
     Args:
         datarax_value: The datarax measurement.
         alternative_value: The alternative measurement.
         max_ratio: Maximum acceptable ratio.
-        metric_name: Name for error messages.
+        metric_name: Name for the logged measurement and the error message.
 
     Raises:
         AssertionError: If datarax_value < alternative_value / max_ratio.
     """
     min_acceptable = alternative_value / max_ratio
+    logger.info(
+        f"Datarax {metric_name} {datarax_value:.0f}, alternative {alternative_value:.0f}: "
+        f"the {max_ratio}x target needs at least {min_acceptable:.0f}"
+    )
     assert datarax_value >= min_acceptable, (
         f"Datarax {metric_name} ({datarax_value:.0f}) is below "
         f"{max_ratio}x target ({min_acceptable:.0f}) vs alternative ({alternative_value:.0f})"

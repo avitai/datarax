@@ -1,5 +1,7 @@
 """Tests for the performance_targets utility module."""
 
+import logging
+
 import pytest
 
 from tests.benchmarks.performance_targets import (
@@ -26,6 +28,17 @@ class TestAssertWithinRatio:
 
     def test_datarax_exceeds_alternative(self):
         assert_within_ratio(25000, 20000, 1.2)  # Better than needed
+
+    def test_logs_the_measurement_when_it_passes(self, caplog):
+        # A passing run records its margin, so CI history shows how close it sits to the target.
+        with caplog.at_level(logging.INFO, logger="tests.benchmarks.performance_targets"):
+            assert_within_ratio(18000, 20000, 1.2, metric_name="throughput")
+
+        [record] = caplog.records
+        assert record.levelno == logging.INFO
+        assert "throughput 18000" in record.getMessage()
+        assert "alternative 20000" in record.getMessage()
+        assert "1.2x" in record.getMessage()
 
 
 class TestMeasurePeakRssDeltaMb:
