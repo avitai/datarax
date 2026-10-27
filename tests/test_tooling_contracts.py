@@ -912,8 +912,9 @@ def test_the_release_checklist_runs_macos_before_the_tag() -> None:
 
 
 # The lockfile audit also lives in substrax, pinned by commit: it exports every extra the lock
-# resolves and runs a pinned pip-audit through uvx, isolated from the project, on each export.
-AUDIT_ACTION = "avitai/substrax/.github/actions/audit-lock@13e98b78127606be04437bd7c5de894fb765a28e"
+# resolves and runs a pinned pip-audit through uvx, isolated from the project, on each export,
+# against both its PyPI and OSV services.
+AUDIT_ACTION = "avitai/substrax/.github/actions/audit-lock@e889be4e9fb55fe9c272e219277524630bf9d39e"
 
 
 def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
