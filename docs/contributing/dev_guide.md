@@ -298,8 +298,8 @@ uv run pytest -m integration
 # Run only unit tests (fast)
 uv run pytest -m unit
 
-# Run benchmarks
-uv run pytest -m benchmark --benchmark-autosave
+# Run the performance targets, as CI's Performance Tests job does
+uv run pytest tests --benchmark -m "not tfds" --no-cov
 ```
 
 ### Test Directory Structure
