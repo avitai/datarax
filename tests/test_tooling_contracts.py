@@ -780,7 +780,7 @@ def test_pull_requests_gate_coverage_on_changed_lines() -> None:
 # finds the merged pull request (squash or rebase) through GitHub's commit-to-pull-request
 # association and treats a pending or cancelled check as unproven.
 GATE_ACTION = (
-    "avitai/substrax/.github/actions/already-tested@ec43d80bbae0040375f746cd1bb07dddb0a0b169"
+    "avitai/substrax/.github/actions/already-tested@a61235ad7f851081efca508285b660a9d7f921ea"
 )
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 MACOS_WORKFLOW = WORKFLOWS / "macos.yml"
