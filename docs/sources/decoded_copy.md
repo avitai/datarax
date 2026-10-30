@@ -89,9 +89,9 @@ column and refuses a copy whose bytes no longer give it (a full read).
   cannot hold exactly (text, bytes, numbers, bools and `None` are kept), a target on a networked
   or FUSE filesystem (writing there through shared memory maps is not verified; reading a
   finished copy from one is allowed), a target directory holding a file the format does not
-  name, and a disk without the room: every file is reserved to its full size with
-  `os.posix_fallocate` before a row is written, and the refusal names the column, the bytes
-  needed and the bytes free.
+  name, and a disk without the room: every file is reserved to its full size before a row is
+  written (`os.posix_fallocate` on Linux, `fcntl(F_PREALLOCATE)` on macOS), and the refusal
+  names the column, the bytes needed and the bytes free.
 
 ## See Also
 

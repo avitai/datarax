@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A decoded copy is written on macOS. Its files are reserved there with `fcntl(F_PREALLOCATE)`
+  and then sized, where Linux uses `os.posix_fallocate`; before, `materialize(directory=...)`
+  and `begin_copy` refused every platform without `posix_fallocate`. A platform with neither
+  is still refused, naming it. A copy is refused for writing on macOS's networked and FUSE
+  mounts as on Linux's: `smbfs`, `afpfs`, `webdav`, `macfuse`, `osxfuse`, `osxfusefs` and any
+  `fusefs.*` type, which the Linux-only list did not name.
+
 - `Pipeline(..., sharding=NamedSharding(mesh, P("data")))` (and `Pipeline.from_dag`,
   `Pipeline.from_arrays`): iteration places each batch on the data mesh, rows on the sharding and
   `batch_state` replicated, through substrax `place_batch_on_shards` with the
