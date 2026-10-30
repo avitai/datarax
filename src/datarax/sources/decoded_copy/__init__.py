@@ -21,9 +21,10 @@ Writing a copy follows one protocol:
    so one process writes a copy at a time; the kernel frees it when its holder dies.
 2. :func:`clear_copy` removes an old copy in an order safe for readers: its manifest first, the
    directory fsynced, then its other files; a reader that mapped them keeps their old inodes.
-3. :func:`begin_copy` creates every ``.partial`` file fresh and reserves its full size with
-   ``os.posix_fallocate`` before a row is written, so a full disk is refused in the writing
-   process (a sparse memory map written on a full disk is a ``SIGBUS``).
+3. :func:`begin_copy` creates every ``.partial`` file fresh and reserves its full size before a
+   row is written (``os.posix_fallocate``, or ``fcntl(F_PREALLOCATE)`` on macOS), so a full disk
+   is refused in the writing process (a sparse memory map written on a full disk is a
+   ``SIGBUS``).
 4. Each unit's rows are written in place (:meth:`CopyFiles.rows`) and digested
    (:func:`unit_digest`); the provenance is appended unit by unit (:meth:`CopyFiles.provenance`).
 5. :func:`finish_copy` fsyncs each ``.partial`` once, renames it, fsyncs the directory, and writes

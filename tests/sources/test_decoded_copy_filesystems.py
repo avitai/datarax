@@ -48,6 +48,14 @@ def mounts(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         ("/data/plain", "fuse"),
         ("/data/my", "nfs"),
         ("/data/my disk", "ext4"),
+        # macOS names its networked and FUSE mounts differently (mpv's stream_file.c lists them).
+        ("/Volumes/share", "smbfs"),
+        ("/Volumes/afp", "afpfs"),
+        ("/Volumes/dav", "webdav"),
+        ("/Volumes/fused", "macfuse"),
+        ("/Volumes/old", "osxfuse"),
+        ("/Volumes/sshfs", "fusefs.sshfs"),
+        ("/Volumes/disk", "apfs"),
     )
     monkeypatch.setattr(_files.psutil, "disk_partitions", lambda all=False: found)  # noqa: A002
     return found
@@ -61,6 +69,12 @@ class TestTheFilesystemRefusal:
             ("/data/bucket/copy", "fuse.gcsfuse"),
             ("/data/plain/a/b", "fuse"),
             ("/data/my/copy", "nfs"),
+            ("/Volumes/share/copy", "smbfs"),
+            ("/Volumes/afp/copy", "afpfs"),
+            ("/Volumes/dav/copy", "webdav"),
+            ("/Volumes/fused/copy", "macfuse"),
+            ("/Volumes/old/copy", "osxfuse"),
+            ("/Volumes/sshfs/copy", "fusefs.sshfs"),
         ],
     )
     def test_a_networked_or_fuse_target_is_refused_naming_its_type(
@@ -76,8 +90,15 @@ class TestTheFilesystemRefusal:
             ("/data/bucket/local/copy", "ext4"),
             ("/data/my disk/copy", "ext4"),
             ("/data/nfsish/copy", "ext4"),
+            ("/Volumes/disk/copy", "apfs"),
         ],
-        ids=["root", "longest-prefix-wins", "space-in-mountpoint", "whole-components-only"],
+        ids=[
+            "root",
+            "longest-prefix-wins",
+            "space-in-mountpoint",
+            "whole-components-only",
+            "macos-local-volume",
+        ],
     )
     def test_a_local_target_is_written(self, mounts: list[Any], target: str, kind: str) -> None:
         assert refuse_unsupported_filesystem(target) == kind

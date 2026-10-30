@@ -14,8 +14,9 @@ import errno
 import fcntl
 import json
 import os
+import struct
 import sys
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -44,9 +45,24 @@ from datarax.sources.decoded_copy._units import content_digest
 
 REFUSED_FILESYSTEMS = frozenset(
     {"nfs", "nfs4", "cifs", "smb3", "9p", "ceph", "glusterfs", "lustre", "gpfs", "beegfs", "fuse"}
+    # macOS's names for its networked and FUSE mounts, as mpv's stream/stream_file.c lists them.
+    | {"smbfs", "afpfs", "webdav", "macfuse", "osxfuse", "osxfusefs"}
 )
 """Networked and FUSE filesystems, on which concurrent writes through shared maps are not
-verified (any ``fuse.*`` type too)."""
+verified (any ``fuse.*`` or ``fusefs.*`` type too)."""
+_REFUSED_PREFIXES = ("fuse.", "fusefs.")
+
+# macOS has no posix_fallocate; fcntl(F_PREALLOCATE) reserves the blocks. CPython's fcntl module
+# exports none of these names (fcntlmodule.c on main, 3.12 and 3.13), and the one PyPI binding,
+# `fallocate`, last released in 2018, so the values are xnu's (bsd/sys/fcntl.h). The call follows
+# rustix's Apple `fallocate` and fs4-rs's `allocate`, which skips blocks already reserved.
+_F_PREALLOCATE = 42
+_F_ALLOCATEALL = 0x4
+"""All of the requested space or none of it."""
+_F_PEOFPOSMODE = 3
+"""The region starts at the file's physical end."""
+_FSTORE = struct.Struct("Iiqqq")
+"""xnu's ``fstore_t``: flags, position mode, offset, length, bytes allocated (written back)."""
 
 
 class ProvenanceWriter:
@@ -145,7 +161,7 @@ def refuse_unsupported_filesystem(directory: str | os.PathLike[str]) -> str:
         if (target == mount or mount in target.parents) and len(mount.parts) > best[0]:
             best = (len(mount.parts), partition.fstype)
     kind = best[1]
-    if kind in REFUSED_FILESYSTEMS or kind.startswith("fuse."):
+    if kind in REFUSED_FILESYSTEMS or kind.startswith(_REFUSED_PREFIXES):
         raise ValueError(
             f"{directory} is on a {kind} filesystem, where workers writing a copy's rows in place "
             "through shared memory maps are not known to be safe: write the copy on a local disk "
@@ -299,20 +315,21 @@ def reserve(path: Path, size: int, column: str, directory: Path) -> None:
         directory: The copy's directory, for the refusal.
 
     Raises:
-        OSError: If the filesystem cannot hold them (or has no ``posix_fallocate``), naming the
-            directory, the column, the bytes needed and the bytes free.
+        OSError: If the filesystem cannot hold them, naming the directory, the column, the bytes
+            needed and the bytes free; or if the platform has no way to reserve them.
     """
-    reserve = getattr(os, "posix_fallocate", None)
-    if reserve is None:
+    allocate = _reservation()
+    if allocate is None:
         raise OSError(
             errno.ENOTSUP,
-            f"{sys.platform} has no os.posix_fallocate, with which a decoded copy reserves its "
-            "files before writing them in place (an unreserved map written on a full disk "
-            "kills its writer): write the copy on Linux, or build in memory",
+            f"{sys.platform} has neither os.posix_fallocate nor macOS's F_PREALLOCATE, with which "
+            "a decoded copy reserves its files before writing them in place (an unreserved map "
+            "written on a full disk kills its writer): write the copy on Linux or macOS, or build "
+            "in memory",
         )
     with path.open("r+b") as handle:
         try:
-            reserve(handle.fileno(), 0, size)
+            allocate(handle.fileno(), size)
         except OSError as error:
             stats = os.statvfs(directory)
             raise OSError(
@@ -321,6 +338,28 @@ def reserve(path: Path, size: int, column: str, directory: Path) -> None:
                 f"{size} bytes, and the filesystem has {stats.f_bavail * stats.f_frsize} bytes "
                 f"free ({os.strerror(error.errno or 0)})",
             ) from error
+
+
+def _reservation() -> Callable[[int, int], None] | None:
+    """The call that allocates a file's first bytes on this platform, or ``None`` if it has none."""
+    fallocate = getattr(os, "posix_fallocate", None)
+    if fallocate is not None:
+        return lambda fd, size: fallocate(fd, 0, size)
+    if sys.platform == "darwin":
+        return _preallocate
+    return None
+
+
+def _preallocate(fd: int, size: int) -> None:
+    """Allocate the first ``size`` bytes of ``fd`` on macOS, then make the file that long.
+
+    Blocks already allocated are not asked for again: macOS can answer ENOSPC to that.
+    """
+    if os.fstat(fd).st_blocks * 512 >= size:
+        return
+    request = _FSTORE.pack(_F_ALLOCATEALL, _F_PEOFPOSMODE, 0, size, 0)
+    fcntl.fcntl(fd, _F_PREALLOCATE, request)
+    os.ftruncate(fd, size)
 
 
 def create_column(path: Path, column: LayoutColumn, length: int) -> int:
@@ -342,8 +381,8 @@ def begin_copy(  # noqa: DOC503 - reserve raises the OSError
 ) -> Iterator[CopyFiles]:
     """Create a copy's ``.partial`` files, each fresh and reserved to its full size.
 
-    Every file is a new inode with its ``.npy`` header, reserved with ``os.posix_fallocate``
-    before the block runs, so a disk without the room is refused here. When the block ends, every
+    Every file is a new inode with its ``.npy`` header, reserved (:func:`reserve`) before the
+    block runs, so a disk without the room is refused here. When the block ends, every
     ``.partial`` still present is unlinked: :func:`finish_copy`, called inside it, has renamed
     those of a finished copy, so only an unfinished copy's are removed.
 

@@ -1,10 +1,11 @@
 """How a decoded copy reaches disk: reserved files, the durability order, and a reader-safe clear.
 
-Every ``.partial`` file is created fresh and reserved to its full size with
-``os.posix_fallocate`` before a row is written, so a full disk is refused in the writing process
-instead of killing a writer with ``SIGBUS`` later. A finished copy's files are fsynced once each,
-renamed, the directory fsynced, and the manifest written last through a fsynced temporary file;
-clearing an old copy unlinks its manifest first, so a reader starting meanwhile is refused.
+Every ``.partial`` file is created fresh and reserved to its full size (``os.posix_fallocate``,
+or ``fcntl(F_PREALLOCATE)`` on macOS) before a row is written, so a full disk is refused in the
+writing process instead of killing a writer with ``SIGBUS`` later. A finished copy's files are
+fsynced once each, renamed, the directory fsynced, and the manifest written last through a
+fsynced temporary file; clearing an old copy unlinks its manifest first, so a reader starting
+meanwhile is refused.
 These tests check that order; power-loss safety is not claimed.
 """
 
@@ -13,6 +14,7 @@ from __future__ import annotations
 import errno
 import os
 import shutil
+import struct
 import subprocess  # nosec B404 - the test runs its own script under a user namespace
 import sys
 import textwrap
@@ -170,15 +172,16 @@ class TestTheReservation:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         calls: list[int] = []
-        reserve = os.posix_fallocate
+        reserve = _files._reservation()
+        assert reserve is not None
 
-        def full(fd: int, offset: int, length: int) -> None:
-            calls.append(length)
+        def full(fd: int, size: int) -> None:
+            calls.append(size)
             if len(calls) == 2:
                 raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
-            reserve(fd, offset, length)
+            reserve(fd, size)
 
-        monkeypatch.setattr(os, "posix_fallocate", full)
+        monkeypatch.setattr(_files, "_reservation", lambda: full)
         layout = source_layout(_source())
         directory = tmp_path / "copy"
 
@@ -189,14 +192,88 @@ class TestTheReservation:
         assert len(calls) == 2
         assert not list(directory.glob("*.partial"))
 
-    def test_without_posix_fallocate_a_copy_is_refused_naming_the_platform(
+    def test_a_platform_with_no_reservation_is_refused_naming_it(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        monkeypatch.delattr(os, "posix_fallocate")
+        monkeypatch.delattr(os, "posix_fallocate", raising=False)
+        monkeypatch.setattr(sys, "platform", "sunos5")
 
-        with pytest.raises(OSError, match=sys.platform):
+        with pytest.raises(OSError, match="sunos5") as raised:
             with begin_copy(tmp_path / "copy", source_layout(_source()), unit_records=4):
                 pass
+        assert raised.value.errno == errno.ENOTSUP
+
+
+class TestTheReservationOnMacOS:
+    """macOS has no ``posix_fallocate``; its ``fcntl(F_PREALLOCATE)`` reserves the blocks.
+
+    These run anywhere: the platform is set to ``darwin`` and ``fcntl.fcntl`` is replaced by a
+    recorder, so they check the request datarax sends against xnu's ``fstore_t``
+    (``bsd/sys/fcntl.h``). A macOS run of the suite checks the call itself.
+    """
+
+    @pytest.fixture
+    def on_darwin(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, bytes]]:
+        requests: list[tuple[int, int, bytes]] = []
+
+        def recorded(fd: int, command: int, argument: bytes) -> bytes:
+            requests.append((fd, command, argument))
+            return argument
+
+        monkeypatch.delattr(os, "posix_fallocate", raising=False)
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(_files.fcntl, "fcntl", recorded)
+        return requests
+
+    def test_preallocates_every_byte_from_the_end_then_sizes_the_file(
+        self, on_darwin: list[tuple[int, int, bytes]], tmp_path: Path
+    ) -> None:
+        path = tmp_path / "column.partial"
+        path.write_bytes(b"")
+        reserve = _files._reservation()
+        assert reserve is not None
+
+        with path.open("r+b") as handle:
+            reserve(handle.fileno(), 4096)
+
+        [(_, command, argument)] = on_darwin
+        assert command == 42  # F_PREALLOCATE
+        flags, posmode, offset, length, allocated = struct.unpack("Iiqqq", argument)
+        assert flags == 0x4  # F_ALLOCATEALL: all of it or none
+        assert posmode == 3  # F_PEOFPOSMODE: from the physical end of the file
+        assert (offset, length, allocated) == (0, 4096, 0)
+        assert path.stat().st_size == 4096
+
+    def test_blocks_already_reserved_are_not_asked_for_again(
+        self, on_darwin: list[tuple[int, int, bytes]], tmp_path: Path
+    ) -> None:
+        """Asking again for allocated blocks can fail with ENOSPC on macOS (fs4-rs issue 15)."""
+        path = tmp_path / "column.partial"
+        path.write_bytes(bytes(8192))
+        reserve = _files._reservation()
+        assert reserve is not None
+
+        with path.open("r+b") as handle:
+            reserve(handle.fileno(), 4096)
+
+        assert on_darwin == []
+
+    def test_a_full_disk_is_refused_naming_its_terms(
+        self, monkeypatch: pytest.MonkeyPatch, on_darwin: list[Any], tmp_path: Path
+    ) -> None:
+        def full(fd: int, command: int, argument: bytes) -> bytes:
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+        monkeypatch.setattr(_files.fcntl, "fcntl", full)
+        directory = tmp_path / "copy"
+        # Columns longer than the first block their header occupies, so the request is made.
+        layout = source_layout(_source(4096))
+
+        with pytest.raises(OSError, match=r"needs \d+ bytes.*\d+ bytes free") as raised:
+            with begin_copy(directory, layout, unit_records=_UNIT):
+                pytest.fail("the body runs only once every column is reserved")
+        assert raised.value.errno == errno.ENOSPC
+        assert not list(directory.glob("*.partial"))
 
     @pytest.mark.slow
     def test_on_a_real_small_filesystem_the_refusal_frees_what_it_reserved(
