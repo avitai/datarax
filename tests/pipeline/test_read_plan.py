@@ -73,6 +73,13 @@ def _terms(**changes: int | bool | None) -> HostTerms:
     return dataclasses.replace(base, **changes)
 
 
+def _accounted(resources: HostResources, terms: HostTerms) -> int:
+    """The bytes the worker plan of ``resources`` and ``terms`` accounts for."""
+    accounted = budget_plan(resources, HostReadPath.PROCESSES, terms).accounted_bytes
+    assert accounted is not None
+    return accounted
+
+
 def _workers_by_hand(budget: int, terms: HostTerms, cap: int) -> int:
     """The largest k meeting the RAM, ``/dev/shm`` and cap bounds, searched one k at a time."""
     best = 0
@@ -181,18 +188,17 @@ class TestWorkerPlan:
         assert plan.terms == terms
 
     def test_the_order_s_working_set_and_the_source_s_are_charged(self) -> None:
-        budget = 2 << 30
+        # The budget holds `cap` workers under the plain terms and at least one under the heavier
+        # ones, whatever the machine's CPUs, so the plain plan is bound at exactly `cap` and the
+        # heavier terms must cost it a worker.
         cap = min(8, available_cpus())
-        plain = budget_plan(
-            HostResources(ram_budget_bytes=budget, max_workers=cap),
-            HostReadPath.PROCESSES,
-            _terms(),
-        )
-        heavier = budget_plan(
-            HostResources(ram_budget_bytes=budget, max_workers=cap),
-            HostReadPath.PROCESSES,
-            _terms(order_bytes=200 * _MiB, working_bytes=200 * _MiB),
-        )
+        heavy = _terms(order_bytes=200 * _MiB, working_bytes=200 * _MiB)
+        plain_fit = _accounted(HostResources(ram_budget_bytes=1 << 40, max_workers=cap), _terms())
+        heavy_fit = _accounted(HostResources(ram_budget_bytes=1 << 40, max_workers=1), heavy)
+        resources = HostResources(ram_budget_bytes=max(plain_fit, heavy_fit), max_workers=cap)
+        plain = budget_plan(resources, HostReadPath.PROCESSES, _terms())
+        heavier = budget_plan(resources, HostReadPath.PROCESSES, heavy)
+        assert plain.workers == cap
         assert heavier.workers < plain.workers or plain.workers == 1
 
     def test_a_budget_below_one_worker_is_refused_naming_the_terms(self) -> None:
