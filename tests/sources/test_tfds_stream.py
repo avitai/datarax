@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import gc
 import hashlib
-import json
 import os
 import shutil
 import struct
@@ -64,7 +63,8 @@ _CHILD_SECONDS = 300.0
 
 # tf.data's own read of the TFRecord copy with tfds_id, files in order: the oracle of names.
 _TFDATA_ORACLE = """
-import hashlib, json, sys
+import hashlib, sys
+from substrax.testing import report
 import tensorflow as tf
 tf.config.set_visible_devices([], "GPU")
 import tensorflow_datasets as tfds
@@ -75,7 +75,7 @@ rows = [
      r["name"].decode()]
     for r in tfds.as_numpy(builder.as_dataset(split=sys.argv[3], read_config=config))
 ]
-print(json.dumps(rows))
+report(rows)
 """
 
 
@@ -89,7 +89,7 @@ def _oracle(fixture: TFDSFixture, split: str = "train") -> list[list[Any]]:
         env=forwarded_jax_environment(os.environ),
         cwd=_REPO_ROOT,
     )
-    return json.loads(result.check().stdout.strip().splitlines()[-1])
+    return result.check().report_as(list[list[Any]])
 
 
 @pytest.fixture(scope="module")
@@ -457,9 +457,10 @@ class TestTheCopyTheStreamReads:
 
 
 # Builds a stream over the TFRecord copy, reads a shuffled pass, looks provenance up and runs a
-# pipeline over it; prints whether TensorFlow is in the process after each stage.
+# pipeline over it; reports whether TensorFlow is in the process after each stage.
 _STREAM_WITHOUT_TENSORFLOW = """
-import json, sys
+import sys
+from substrax.testing import report
 if "--import-tensorflow" in sys.argv:
     import tensorflow
 import jax
@@ -476,7 +477,7 @@ seen["provenance"] = "tensorflow" in sys.modules
 served = sum(b.batch_size for b in Pipeline(source=source, stages=[], batch_size=4,
                                              rngs=nnx.Rngs(0), shuffle=True, num_epochs=2))
 seen["pipeline"] = "tensorflow" in sys.modules
-print(json.dumps({"served": served, "seen": seen}))
+report({"served": served, "seen": seen})
 """
 
 
@@ -491,7 +492,7 @@ def test_the_stream_never_imports_tensorflow(tfds_fixture: TFDSFixture, control:
         cwd=_REPO_ROOT,
     )
 
-    report = json.loads(result.check().stdout.strip().splitlines()[-1])
+    report = result.check().report_as(dict[str, Any])
     assert report["served"] == 2 * TRAIN_RECORDS
     assert set(report["seen"].values()) == {control}
 

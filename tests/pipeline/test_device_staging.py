@@ -12,7 +12,6 @@ on the caller's default device.
 from __future__ import annotations
 
 import gc
-import json
 import subprocess
 import sys
 import threading
@@ -319,8 +318,9 @@ def test_placement_stays_explicit_uncommitted_and_in_the_caller_s_mode(depth: in
 
 
 _PEAK = """
-import collections, json, sys, threading
+import collections, sys, threading
 import jax
+from substrax.testing import report
 import numpy as np
 from flax import nnx
 from datarax.core.index_words import to_words
@@ -353,7 +353,7 @@ for batch in batches:
     if mode == "pipeline":
         threading.Event().wait(0.02)  # a step's time
 growth = device.memory_stats()["peak_bytes_in_use"] - before
-print(json.dumps({"platform": device.platform, "growth": growth}))
+report({"platform": device.platform, "growth": growth})
 """
 
 
@@ -382,7 +382,7 @@ def test_on_a_gpu_the_peak_is_the_control_s_with_the_depth_more_batches(depth: i
             env={"JAX_PLATFORMS": "cuda,cpu", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"},
             cwd=Path(__file__).resolve().parents[2],
         )
-        report = json.loads(result.check().stdout.strip().splitlines()[-1])
+        report = result.check().report_as(dict[str, Any])
         assert report["platform"] == "gpu"
         return int(report["growth"])
 

@@ -10,9 +10,9 @@ process, and a tooling contract keeps every tracked file from naming it
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from google.protobuf.internal import api_implementation
@@ -29,8 +29,9 @@ _CHILD_SECONDS = 300.0
 # Starts from the default runtime (the variable unset), reads both TFDS sources, and reports the
 # runtime that parsed the records and whether anything set the variable on the way.
 _READ_ON_THE_DEFAULT_RUNTIME = """
-import json, os, sys
+import os, sys
 os.environ.pop(VARIABLE, None)
+from substrax.testing import report
 import jax
 import datarax
 from datarax.sources import (
@@ -42,13 +43,13 @@ array_record, tfrecord = sys.argv[1], sys.argv[2]
 eager = TFDSEagerSource(TFDSEagerConfig(name=NAME, split="train", data_dir=array_record))
 stream = TFDSStreamingSource(TFDSStreamingConfig(name=NAME, split="train", data_dir=tfrecord))
 streamed = next(stream.iter_batches(4, key=jax.random.key(0))).batch_size
-print(json.dumps({
+report({
     "datarax": datarax.__file__,
     "runtime": api_implementation.Type(),
     "variable": os.environ.get(VARIABLE),
     "eager records": len(eager),
     "streamed": streamed,
-}))
+})
 """
 
 
@@ -73,7 +74,7 @@ def test_reading_tfds_leaves_the_default_runtime_in_place(tfds_fixture: TFDSFixt
         cwd=_REPO_ROOT,
     )
 
-    report = json.loads(result.check().stdout.strip().splitlines()[-1])
+    report = result.check().report_as(dict[str, Any])
     assert report["eager records"] == TRAIN_RECORDS
     assert report["streamed"] == 4
     assert report["variable"] is None

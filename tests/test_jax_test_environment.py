@@ -21,7 +21,8 @@ from tests.jax_test_environment import forwarded_jax_environment, resolve_test_e
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEVICE_COUNT_FLAG = "--xla_force_host_platform_device_count"
 _IMPORT_PROBE = (
-    "import json, sys; import tests.jax_test_environment; print(json.dumps('jax' in sys.modules))"
+    "import sys; from substrax.testing import report; import tests.jax_test_environment; "
+    "report('jax' in sys.modules)"
 )
 
 
@@ -92,7 +93,7 @@ def test_importing_the_environment_module_does_not_import_jax() -> None:
         cwd=_REPO_ROOT,
     )
 
-    assert result.check().last_json() is False
+    assert result.check().report_as(bool) is False
 
 
 @pytest.mark.tfds
@@ -111,13 +112,13 @@ def test_the_suite_conftest_keeps_tensorflow_out_of_the_test_process(
     The control imports TensorFlow itself, showing the probe sees it when it is there.
     """
     result = run_python(
-        f"import json, sys; {first}import tests.conftest; "
-        "print(json.dumps('tensorflow' in sys.modules))",
+        f"import sys; from substrax.testing import report; {first}import tests.conftest; "
+        "report('tensorflow' in sys.modules)",
         timeout=300.0,
         cwd=_REPO_ROOT,
     )
 
-    assert result.check().last_json() is expected
+    assert result.check().report_as(bool) is expected
 
 
 @pytest.mark.parametrize(("requested", "devices"), [("0", 1), ("2", 2), (None, 8)])
@@ -128,12 +129,13 @@ def test_a_fresh_interpreter_started_with_the_environment_sees_its_cpu_devices(
     env = resolve_test_environment(base, cuda_plugin_available=False)
 
     result = run_python(
-        "import json, jax; print(json.dumps([jax.default_backend(), jax.device_count()]))",
+        "import jax; from substrax.testing import report; "
+        "report([jax.default_backend(), jax.device_count()])",
         env=env,
         timeout=180.0,
     )
 
-    assert result.check().last_json() == ["cpu", devices]
+    assert result.check().report_as(tuple[str, int]) == ("cpu", devices)
 
 
 def test_an_example_run_is_given_the_jax_settings_of_the_test_process() -> None:

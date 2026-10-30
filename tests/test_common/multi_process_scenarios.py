@@ -1,9 +1,9 @@
-"""What each process of a multi-process test does, and the report it prints.
+"""What each process of a multi-process test does, and the report it sends.
 
 A test runs ``PROGRAM`` as every process of one ``jax.distributed`` run
 (:func:`tests.test_common.processes.run_processes`); the program joins the run, then calls the
-scenario named by its third argument with the process index and any further arguments, and prints
-the returned report as one JSON line. Pipelines come from
+scenario named by its third argument with the process index and any further arguments, and sends
+the returned report with ``substrax.testing.report``. Pipelines come from
 :mod:`tests.test_common.multi_process_pipelines`, so the single-process reference is built alike.
 """
 
@@ -28,16 +28,16 @@ from tests.test_common.worker_reads import ProcessReadMemorySource, resources
 
 
 PROGRAM = """
-import json, sys
+import sys
 import jax
+from substrax.testing import report
 
 port, process = int(sys.argv[1]), int(sys.argv[2])
 jax.distributed.initialize(f"localhost:{port}", num_processes=2, process_id=process)
 
 from tests.test_common.multi_process_scenarios import SCENARIOS
 
-report = SCENARIOS[sys.argv[3]](process, sys.argv[4:])
-print(json.dumps(report), flush=True)
+report(SCENARIOS[sys.argv[3]](process, sys.argv[4:]))
 jax.distributed.shutdown()
 """
 

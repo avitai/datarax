@@ -7,9 +7,9 @@ holding the same batches in flight, built from the same reads and placements, an
 another size leaves it unchanged. SPDL's peak is reported beside it, not as a bound.
 """
 
-import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -94,7 +94,7 @@ class TestP3MemoryEfficiency:
         # One batch: its images, and its indices (two words a record), epochs and draws.
         batch_mb = (64 * 224 * 224 * 3 + 64 * (2 * 4 + 4 + 4)) / 2**20
 
-        def peak(*args: str) -> dict:
+        def peak(*args: str) -> dict[str, Any]:
             result = run_python(
                 _PEAK_HOST_MEMORY,
                 *args,
@@ -102,7 +102,7 @@ class TestP3MemoryEfficiency:
                 env={"JAX_PLATFORMS": "cpu", "MALLOC_MMAP_THRESHOLD_": "131072"},
                 cwd=Path(__file__).resolve().parents[2],
             )
-            return json.loads(result.check().stdout.strip().splitlines()[-1])
+            return result.check().report_as(dict[str, Any])
 
         large = peak("pipeline", "10000", str(depth), "1")
         small = peak("pipeline", "1000", str(depth), "1")
@@ -119,9 +119,10 @@ class TestP3MemoryEfficiency:
 
 
 _PEAK_HOST_MEMORY = """
-import collections, gc, json, sys, threading
+import collections, gc, sys, threading
 import jax, jax.numpy as jnp, numpy as np
 from flax import nnx
+from substrax.testing import report
 from datarax.core.index_words import to_words
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
@@ -187,7 +188,7 @@ else:
         transforms=[], seed=42,
     )
     if not adapter.is_available():
-        print(json.dumps({"growth_mb": None, "read_buffer": 0}))
+        report({"growth_mb": None, "read_buffer": 0})
         sys.exit(0)
 
     def run():
@@ -205,5 +206,5 @@ with open("/proc/self/clear_refs", "w") as refs:
 start = kib("VmRSS:")
 run()
 growth = (kib("VmHWM:") - start) / 1024
-print(json.dumps({"growth_mb": growth, "read_buffer": read_buffer}))
+report({"growth_mb": growth, "read_buffer": read_buffer})
 """

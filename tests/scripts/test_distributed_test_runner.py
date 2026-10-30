@@ -14,11 +14,12 @@ from tests.scripts.script_loader import load_script, REPO_ROOT
 
 
 _LOGGING_PROBE = (
-    "import json, logging; "
+    "import logging; "
+    "from substrax.testing import report; "
     "from tests.scripts.script_loader import load_script; "
     "before = len(logging.getLogger().handlers); "
     "load_script('distributed_test_runner'); "
-    "print(json.dumps([before, len(logging.getLogger().handlers)]))"
+    "report([before, len(logging.getLogger().handlers)])"
 )
 
 
@@ -26,7 +27,7 @@ def test_importing_the_runner_leaves_the_root_logger_alone() -> None:
     """Logging is configured by the entry point, not as a side effect of importing the module."""
     result = run_python(_LOGGING_PROBE, timeout=180.0, cwd=REPO_ROOT)
 
-    before, after = result.check().last_json_as(tuple[int, int])
+    before, after = result.check().report_as(tuple[int, int])
     assert after == before
 
 

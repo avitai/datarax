@@ -2,7 +2,8 @@
 
 Each process is a fresh interpreter started by ``substrax.testing.run_python`` with the program,
 the coordinator's port and its process index as arguments, and two CPU devices; the processes run
-concurrently and each one's last line is read as JSON of the caller's shape. While coverage
+concurrently and each one's report (``substrax.testing.report``) is read as the caller's shape,
+whatever a library prints. While coverage
 measures the test, each process measures itself too (``COVERAGE_PROCESS_START``, read by the
 start-up hook coverage installs), writing its data beside the test's for ``coverage combine``: the
 code only the processes run is read as covered where it ran.
@@ -40,11 +41,12 @@ def _coverage_environment() -> dict[str, str]:
 
 
 def run_processes[T](program: str, report: type[T], *args: str) -> list[T]:
-    """``program`` as every process of one run, each one's last JSON line as ``report``.
+    """``program`` as every process of one run, each one's report as ``report``.
 
     Args:
         program: Python code; ``sys.argv[1:3]`` are the port and the process index, then ``args``.
-        report: The shape each process's last line must have, validated strictly.
+            It sends its result with ``substrax.testing.report``.
+        report: The shape each process's report must have, validated strictly.
         *args: More arguments, the same for every process.
 
     Returns:
@@ -68,7 +70,7 @@ def run_processes[T](program: str, report: type[T], *args: str) -> list[T]:
             for process in range(PROCESSES)
         ]
         results = [child.result() for child in children]
-    return [result.check().last_json_as(report) for result in results]
+    return [result.check().report_as(report) for result in results]
 
 
 __all__ = ["CHILD_SECONDS", "PROCESSES", "REPO_ROOT", "free_port", "run_processes"]

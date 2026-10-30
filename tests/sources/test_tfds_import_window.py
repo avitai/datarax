@@ -18,7 +18,6 @@ same program with a first TFDS import of its own mid-run, and sees the window an
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -37,13 +36,14 @@ _CHILD_SECONDS = 300.0
 _CONTROL = "a first import of tensorflow_datasets"
 
 # argv: the entry under test, the ArrayRecord data directory, the TFRecord data directory.
-# Prints one JSON line: what was imported after each stage, every module that imported under
+# Reports one value: what was imported after each stage, every module that imported under
 # etils' swap while the source was built, and the Grain semaphores still linked after collection.
 _BUILD_MID_RUN = """
-import gc, json, multiprocessing.synchronize, os, sys
+import gc, multiprocessing.synchronize, os, sys
 
 from absl import app
 import grain
+from substrax.testing import report
 
 entry, array_record, tfrecord = sys.argv[1:4]
 seen = {}
@@ -100,12 +100,12 @@ def main(argv):
     sys.setprofile(None)
     gc.collect()
     linked = [n for n in names if os.path.exists("/dev/shm/sem." + n.lstrip("/"))]
-    print(json.dumps({
+    report({
         "seen": seen,
         "imported_under_swap": sorted(set(swapped)),
         "semaphores": len(names),
         "still_linked": len(linked),
-    }))
+    })
 
 
 app.run(main, argv=sys.argv[:1])
@@ -122,8 +122,7 @@ def _build_mid_run(entry: str, fixture: TFDSFixture) -> tuple[dict[str, Any], st
         env=forwarded_jax_environment(os.environ),
         cwd=_REPO_ROOT,
     )
-    report = json.loads(result.check().stdout.strip().splitlines()[-1])
-    return report, result.stderr
+    return result.check().report_as(dict[str, Any]), result.stderr
 
 
 @pytest.mark.parametrize("entry", ["TFDSStreamingSource", "TFDSEagerSource", "from_tfds"])
