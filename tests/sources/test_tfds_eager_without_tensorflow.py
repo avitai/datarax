@@ -9,9 +9,9 @@ nothing on a device: the host columns are NumPy.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -30,9 +30,10 @@ pytestmark = pytest.mark.tfds
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CHILD_SECONDS = 300.0
 
-# Each stage prints whether TensorFlow is in the process after it, as one JSON line at the end.
+# Each stage records whether TensorFlow is in the process after it, reported once at the end.
 _READ_WITHOUT_TENSORFLOW = """
-import json, sys
+import sys
+from substrax.testing import report
 import numpy as np
 from flax import nnx
 
@@ -57,7 +58,7 @@ try:
     TFDSEagerSource(TFDSEagerConfig(name=NAME, split="train", data_dir=tfrecord))
 except FileNotFoundError:
     seen["refuse a tfrecord copy"] = "tensorflow" in sys.modules
-print(json.dumps({"records": len(records), "batch": int(batch["image"].shape[0]), "seen": seen}))
+report({"records": len(records), "batch": int(batch["image"].shape[0]), "seen": seen})
 """
 
 
@@ -77,7 +78,7 @@ def test_reading_iterating_and_stepping_never_import_tensorflow(
         cwd=_REPO_ROOT,
     )
 
-    report = json.loads(result.check().stdout.strip().splitlines()[-1])
+    report = result.check().report_as(dict[str, Any])
     assert report["records"] == TRAIN_RECORDS
     assert report["batch"] == 4
     assert report["seen"] == {
@@ -93,12 +94,13 @@ def test_reading_iterating_and_stepping_never_import_tensorflow(
 def test_the_check_sees_tensorflow_when_a_process_imports_it() -> None:
     """The positive control: the same check in a fresh interpreter that imports TensorFlow."""
     result = run_python(
-        "import json, sys; import tensorflow; print(json.dumps('tensorflow' in sys.modules))",
+        "import sys; from substrax.testing import report; import tensorflow; "
+        "report('tensorflow' in sys.modules)",
         timeout=_CHILD_SECONDS,
         env={**_child_env(), "CUDA_VISIBLE_DEVICES": ""},
     )
 
-    assert result.check().last_json() is True
+    assert result.check().report_as(bool) is True
 
 
 def _dataset_sized_arrays_made_since(before: list[jax.Array]) -> list[jax.Array]:
@@ -123,15 +125,16 @@ def test_building_the_source_places_nothing_on_a_device(tfds_fixture: TFDSFixtur
 
 
 _PEAK_DEVICE_BYTES = """
-import json, sys
+import sys
 import jax
+from substrax.testing import report
 from datarax.sources import TFDSEagerConfig, TFDSEagerSource
 
 device = jax.devices()[0]
 before = device.memory_stats()["peak_bytes_in_use"]
 source = TFDSEagerSource(TFDSEagerConfig(name=NAME, split="train", data_dir=sys.argv[1]))
 after = device.memory_stats()["peak_bytes_in_use"]
-print(json.dumps({"platform": device.platform, "before": before, "after": after}))
+report({"platform": device.platform, "before": before, "after": after})
 """
 
 
@@ -146,6 +149,6 @@ def test_building_the_source_raises_no_device_memory_peak(tfds_fixture: TFDSFixt
         cwd=_REPO_ROOT,
     )
 
-    report = json.loads(result.check().stdout.strip().splitlines()[-1])
+    report = result.check().report_as(dict[str, Any])
     assert report["platform"] == "gpu"
     assert report["after"] == report["before"]

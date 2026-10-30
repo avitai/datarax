@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import json
 import os
 from pathlib import Path
 from types import ModuleType
@@ -192,10 +191,11 @@ def test_a_public_module_defines_only_what_users_call_or_receive(module: ModuleT
 
 
 _IMPORTS = """
-import importlib, json, sys
+import importlib, sys
+from substrax.testing import report
 for name in sys.argv[1:]:
     importlib.import_module(name)
-print(json.dumps({"tfds": "tensorflow_datasets" in sys.modules}))
+report({"tfds": "tensorflow_datasets" in sys.modules})
 """
 
 
@@ -208,7 +208,7 @@ def _imported(*modules: str) -> dict[str, bool]:
         env=forwarded_jax_environment(os.environ),
         cwd=_REPO_ROOT,
     )
-    return json.loads(child.check().stdout.strip().splitlines()[-1])
+    return child.check().report_as(dict[str, bool])
 
 
 @pytest.mark.parametrize("module", ["datarax.sources._tfrecord", "datarax.sources._stream_order"])
@@ -229,10 +229,11 @@ def test_the_damaged_record_error_is_caught_from_the_package() -> None:
 
 
 _ERROR_ONLY = """
-import json, sys
+import sys
+from substrax.testing import report
 import datarax.sources
 datarax.sources.DamagedRecordError
-print(json.dumps({"tfds": "tensorflow_datasets" in sys.modules}))
+report({"tfds": "tensorflow_datasets" in sys.modules})
 """
 
 
@@ -243,18 +244,19 @@ def test_catching_the_error_imports_no_tensorflow_datasets() -> None:
         env=forwarded_jax_environment(os.environ),
         cwd=_REPO_ROOT,
     )
-    assert json.loads(child.check().stdout.strip().splitlines()[-1]) == {"tfds": False}
+    assert child.check().report_as(dict[str, bool]) == {"tfds": False}
 
 
 _WITHOUT_CRC = """
 import sys
+from substrax.testing import report
 sys.modules["google_crc32c"] = None  # hides the installed package
 try:
     exec(sys.argv[1])
 except ImportError as error:
-    print(type(error).__name__ + ": " + str(error))
+    report(type(error).__name__ + ": " + str(error))
 else:
-    print("imported")
+    report("imported")
 """
 
 
@@ -274,7 +276,7 @@ def test_reading_records_without_google_crc32c_names_the_extra(statement: str) -
         env=forwarded_jax_environment(os.environ),
         cwd=_REPO_ROOT,
     )
-    printed = child.check().stdout.strip().splitlines()[-1]
+    printed = child.check().report_as(str)
     assert printed.startswith("ImportError: ")
     assert "google_crc32c" in printed and "datarax[data]" in printed
 

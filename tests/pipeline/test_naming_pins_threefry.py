@@ -13,7 +13,6 @@ follow it. Several batches named in one vmapped call equal each batch named alon
 from __future__ import annotations
 
 import itertools
-import json
 from pathlib import Path
 
 import jax
@@ -45,7 +44,7 @@ def _fresh_default(partitionable: bool, tfrecord: Path | None) -> dict[str, str]
         cwd=_ROOT,
     )
     assert result.returncode == 0, result.stderr[-3000:]
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    return result.report_as(dict[str, str])
 
 
 def _check_against_fresh(tfrecord: Path | None) -> None:

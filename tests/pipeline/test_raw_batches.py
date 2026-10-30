@@ -12,7 +12,6 @@ records' provenance. One Grain iterator serves a run across calls and leaves no 
 from __future__ import annotations
 
 import gc
-import json
 import subprocess
 import sys
 import threading
@@ -843,8 +842,9 @@ def test_on_a_gpu_only_the_placed_batches_reach_it() -> None:
 
 
 _PEAK_WHILE_ITERATING = """
-import collections, json, sys
+import collections, sys
 import jax
+from substrax.testing import report
 import numpy as np
 from flax import nnx
 from datarax.core.index_words import to_words
@@ -874,7 +874,7 @@ kept = collections.deque(maxlen=held)
 for batch in batches:
     kept.append(batch)
 growth = device.memory_stats()["peak_bytes_in_use"] - before
-print(json.dumps({"platform": device.platform, "growth": growth}))
+report({"platform": device.platform, "growth": growth})
 """
 
 
@@ -902,7 +902,7 @@ def test_on_a_gpu_the_peak_is_what_placing_the_held_batches_takes_whatever_the_d
             env={"JAX_PLATFORMS": "cuda,cpu", "XLA_PYTHON_CLIENT_PREALLOCATE": "false"},
             cwd=Path(__file__).resolve().parents[2],
         )
-        report = json.loads(result.check().stdout.strip().splitlines()[-1])
+        report = result.check().report_as(dict[str, Any])
         assert report["platform"] == "gpu"
         return int(report["growth"])
 

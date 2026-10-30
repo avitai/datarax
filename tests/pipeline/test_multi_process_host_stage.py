@@ -16,8 +16,9 @@ from tests.test_common.processes import run_processes
 
 # One process of the run: joins it, iterates three batches of a shuffled pipeline and reports.
 _PROCESS = """
-import json, sys
+import sys
 import jax
+from substrax.testing import report
 
 port, process = int(sys.argv[1]), int(sys.argv[2])
 jax.distributed.initialize(f"localhost:{port}", num_processes=2, process_id=process)
@@ -36,18 +37,18 @@ batches = pipeline.raw_batches()
 named = [
     [int(i) for i in from_words(np.asarray(next(batches).indices))] for _ in range(3)
 ]
-print(json.dumps({
+report({
     "process": jax.process_index(),
     "host_device_process": next(iter(host_device().device_set)).process_index,
     "local_cpu_devices": len(jax.local_devices(backend="cpu")),
     "named": named,
-}), flush=True)
+})
 jax.distributed.shutdown()
 """
 
 
 class ProcessReport(TypedDict):
-    """What one process of the run prints."""
+    """What one process of the run reports."""
 
     process: int
     host_device_process: int

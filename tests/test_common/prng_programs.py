@@ -5,14 +5,13 @@
 pipeline over a threefry2x32 key: the host stage's served names on threads and in worker
 processes, over an indexed source and, given the TFDS fixture, a TFDS stream; the compiled step's
 naming (``Pipeline.step``); a stream's pass seed (``fold_on_host``); and the host index shuffle
-(``index_shuffle``). Run as a script it prints the same for a fresh process.
+(``index_shuffle``). Run as a script by ``run_python`` it reports the same for a fresh process.
 """
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
-import json
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,7 +19,7 @@ from pathlib import Path
 import jax
 import numpy as np
 from flax import nnx
-from substrax.testing import restored_jax_config
+from substrax.testing import report, restored_jax_config
 
 from datarax.core.data_source import DataSourceModule
 from datarax.core.index_shuffle import index_shuffle
@@ -132,4 +131,4 @@ if __name__ == "__main__":
     names = names_under(
         "threefry2x32", sys.argv[1] == "True", "context manager", workers=(0,), tfrecord=fixture
     )
-    sys.stdout.write(json.dumps(names) + "\n")
+    report(names)

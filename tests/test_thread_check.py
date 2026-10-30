@@ -48,14 +48,15 @@ def test_loading_the_check_imports_no_jax() -> None:
     """The root conftest loads it before tests/conftest.py sets the JAX environment."""
     program = textwrap.dedent(
         f"""
-        import json, sys
+        import sys
+        from substrax.testing import report
         sys.path.insert(0, {str(_REPOSITORY)!r})
         import tests.thread_check
-        print(json.dumps({{"jax": "jax" in sys.modules}}))
+        report({{"jax": "jax" in sys.modules}})
         """
     )
 
-    assert run_python(program, timeout=120).check().last_json() == {"jax": False}
+    assert run_python(program, timeout=120).check().report_as(dict[str, bool]) == {"jax": False}
 
 
 def test_a_thread_that_ends_within_the_bound_is_not_left() -> None:

@@ -36,7 +36,7 @@ dependencies = [
   # jax removed that option in 0.10, so older optax breaks flax's import outright.
   "optax>=0.2.8",
   "orbax-checkpoint>=0.11.33",
-  "substrax>=0.1.22",
+  "substrax>=0.1.25",
   "tomli-w>=1",
   "numpy>=2.1",
   "psutil>=5.9.0",
@@ -226,7 +226,7 @@ test = [
   "pytest-split>=0.11",
   "pytest-timeout>=2.1",
   "pytest-xdist>=3.6",
-  "substrax[testing]>=0.1.22",
+  "substrax[testing]>=0.1.25",
   # Optional comparison/benchmark dependencies that are CPU-compatible.
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"

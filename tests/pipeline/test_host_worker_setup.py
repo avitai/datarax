@@ -156,6 +156,7 @@ class TestWorkerSetUp:
 _INHERITED_CUDA = """
 import json, sys
 import jax
+from substrax.testing import report
 jax.config.update("jax_platforms", "cpu")  # set in code: a spawned worker does not inherit it
 import grain
 from absl import flags
@@ -180,12 +181,13 @@ if __name__ == "__main__":
         list(bare)
     except Exception as error:  # the control: what a worker without datarax's set-up raises
         control = f"raised {type(error).__name__}: {str(error)[:300]}"
-    print(json.dumps({"backends": facts, "control": control}))
+    report({"backends": facts, "control": control})
 """
 
 _UNGUARDED_MAIN = """
-import json, sys
+import sys
 import jax
+from substrax.testing import report
 from flax import nnx
 from datarax.pipeline import Pipeline
 from tests.test_common.worker_reads import png_source, resources
@@ -197,9 +199,9 @@ if __name__ == "__main__":
                     host_resources=resources(1))
     try:
         list(pipe.raw_batches())
-        print(json.dumps({"outcome": "served"}))
+        report({"outcome": "served"})
     except Exception as error:
-        print(json.dumps({"outcome": f"{type(error).__name__}: {error}"}))
+        report({"outcome": f"{type(error).__name__}: {error}"})
 """
 
 
@@ -208,7 +210,7 @@ def _run_script(tmp_path: Path, source: str, *args: str, env: dict[str, str]) ->
     script.write_text(source)
     result = run_python(script, *args, timeout=300, env=env, cwd=_ROOT)
     assert result.returncode == 0, result.stderr[-3000:]
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    return result.report_as(dict[str, Any])
 
 
 @free_threaded
@@ -281,8 +283,9 @@ def _memory_config() -> Any:
 
 
 _OUTSIDE_APP_RUN = """
-import json, sys
+import sys
 from flax import nnx
+from substrax.testing import report
 from datarax.pipeline import Pipeline
 from tests.test_common.worker_reads import png_source, resources
 
@@ -293,13 +296,12 @@ if __name__ == "__main__":
     pipe.close()
     from absl import flags
     flags.FLAGS(["script", "--grain_enable_multiprocess_worker_profiling=true"])
-    print(json.dumps({"served": served,
-                      "flag": flags.FLAGS.grain_enable_multiprocess_worker_profiling}))
+    report({"served": served, "flag": flags.FLAGS.grain_enable_multiprocess_worker_profiling})
 """
 
 _BARE_GRAIN = """
-import json
 import grain
+from substrax.testing import report
 import jax
 import numpy as np
 
@@ -309,9 +311,9 @@ if __name__ == "__main__":
         grain.multiprocessing.MultiprocessingOptions(num_workers=1))
     try:
         served = len(list(ds))
-        print(json.dumps({"outcome": f"served {served}"}))
+        report({"outcome": f"served {served}"})
     except Exception as error:
-        print(json.dumps({"outcome": type(error).__name__}))
+        report({"outcome": type(error).__name__})
 """
 
 

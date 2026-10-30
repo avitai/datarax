@@ -4,11 +4,13 @@ TensorFlow in a JAX process breaks JAX's NCCL collectives on GPUs ("corrupted co
 detected"), so the process that reads TFDS data for training must not hold it. This program
 reads the offline fixture (:mod:`tests.test_common.tfds_fixture`) with ``TFDSEagerSource``,
 places a host-read batch on a two-device data mesh and takes its mean, an all-reduce across the
-devices, then prints one line starting with :data:`REPORT_PREFIX`, then JSON: whether TensorFlow
-is in the process, the devices, and the mean beside the host's. ``--import-tensorflow`` imports
-TensorFlow first, hiding the GPUs from it as examples used to: the positive control, which on
-GPUs reproduces the failure. ``--stream`` reads the batch with ``TFDSStreamingSource`` from the
-fixture's TFRecord copy, a shuffled pull, instead of the eager source.
+devices, and returns whether TensorFlow is in the process, the devices, and the mean beside the
+host's. A test's child sends that with ``substrax.testing.report``, since NCCL writes to standard
+output too; run as a module, as the compute job does, it prints it as JSON.
+``--import-tensorflow`` imports TensorFlow first, hiding the GPUs from it as examples used to: the
+positive control, which on GPUs reproduces the failure. ``--stream`` reads the batch with
+``TFDSStreamingSource`` from the fixture's TFRecord copy, a shuffled pull, instead of the eager
+source.
 
     python -m tests.test_common.tfds_collective <fixture directory> [--stream] [--import-tensorflow]
 """
@@ -23,13 +25,17 @@ from typing import Any
 
 DEVICES = 2
 RECORDS = 8
-# The report's line starts with this: NCCL writes to standard output too, through C stdio, whose
-# buffer reaches the pipe after Python's at exit, so the report is not the last line there.
-REPORT_PREFIX = "TFDS_COLLECTIVE "
 
 
-def main(argv: list[str]) -> None:
-    """Read, place, all-reduce and report; ``argv`` is the fixture directory and the flag."""
+def main(argv: list[str]) -> dict[str, Any]:
+    """Read, place and all-reduce; ``argv`` is the fixture directory and the flags.
+
+    Args:
+        argv: The fixture directory, then ``--stream`` or ``--import-tensorflow``.
+
+    Returns:
+        Whether TensorFlow is in the process, the platform, the devices and both means.
+    """
     root = Path(argv[0])
     if "--import-tensorflow" in argv[1:]:
         import tensorflow as tf  # noqa: PLC0415 - the positive control puts it in the process
@@ -54,14 +60,13 @@ def main(argv: list[str]) -> None:
     with jax.set_mesh(mesh):
         placed = place_batch_on_shards({"image": images}, create_data_parallel_sharding(mesh))
         mean = float(jnp.mean(placed["image"]))
-    report = {
+    return {
         "tensorflow": "tensorflow" in sys.modules,
         "platform": jax.devices()[0].platform,
         "devices": len(placed["image"].sharding.device_set),
         "mean": mean,
         "host_mean": float(images.mean()),
     }
-    sys.stdout.write(REPORT_PREFIX + json.dumps(report) + "\n")
 
 
 def _read(root: Path, *, stream: bool) -> Any:
@@ -90,4 +95,4 @@ def _read(root: Path, *, stream: bool) -> Any:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.stdout.write(json.dumps(main(sys.argv[1:])) + "\n")

@@ -18,7 +18,6 @@ restarted through ``/proc/<pid>/clear_refs``), so no transient is missed between
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -42,9 +41,10 @@ _BATCH = 256
 _RECORDS = 1024
 
 _FOOTPRINT = """
-import collections, gc, json, multiprocessing, sys, threading
+import collections, gc, multiprocessing, sys, threading
 import cloudpickle, jax, jax.numpy as jnp, numpy as np
 from flax import nnx
+from substrax.testing import report
 from datarax.pipeline import Pipeline
 from datarax.pipeline.host_workers import JaxSettings
 from datarax.sources.memory_source import MemorySourceConfig
@@ -75,7 +75,7 @@ def main():
         child.start()
         growth = receive.recv()
         child.join()
-        print(json.dumps({"growth_kib": growth, "unit": unit}))
+        report({"growth_kib": growth, "unit": unit})
         return
     if mode == "control parent":
         read = pipe.host_stage.read_for_workers(pipe)
@@ -87,7 +87,7 @@ def main():
         held = collections.deque(maxlen=keep)
         for ordinal in range(1, steps + 1):
             held.append(jax.device_put(read(ordinal).batch))
-        print(json.dumps({"growth_kib": proc_kib("self", "VmHWM") - start, "unit": unit}))
+        report({"growth_kib": proc_kib("self", "VmHWM") - start, "unit": unit})
         return
     batches = iter(pipe.raw_batches())
     held = collections.deque(maxlen=1)
@@ -108,8 +108,8 @@ def main():
     growth = {pid: proc_kib(pid, "VmHWM") - start[pid] for pid in workers}
     parent = proc_kib("self", "VmHWM") - parent_start
     pipe.close()
-    print(json.dumps({"absolute_kib": list(absolute.values()), "growth_kib": list(growth.values()),
-                      "parent_kib": parent, "unit": unit, "workers": plan.workers}))
+    report({"absolute_kib": list(absolute.values()), "growth_kib": list(growth.values()),
+            "parent_kib": parent, "unit": unit, "workers": plan.workers})
 
 if __name__ == "__main__":
     main()
@@ -130,7 +130,7 @@ def _measure(tmp_path: Path, mode: str, kind: str, *args: str, steps: int = 24) 
         cwd=_ROOT,
     )
     assert result.returncode == 0, result.stderr[-3000:]
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    return result.report_as(dict[str, Any])
 
 
 @pytest.fixture(scope="module")

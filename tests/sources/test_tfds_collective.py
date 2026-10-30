@@ -11,7 +11,6 @@ which TensorFlow in the process breaks. The GPU case runs where two GPUs are vis
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -19,7 +18,6 @@ import pytest
 from substrax.testing import run_python
 
 from tests.jax_test_environment import forwarded_jax_environment
-from tests.test_common.tfds_collective import REPORT_PREFIX
 from tests.test_common.tfds_fixture import TFDSFixture
 
 
@@ -28,7 +26,10 @@ pytestmark = [pytest.mark.tfds, pytest.mark.devices(2)]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Run from the repository root by module name, so the program imports the tests package wherever
 # the root is not on the path (an installed project, as on the compute job).
-_PROGRAM = "import sys; from tests.test_common.tfds_collective import main; main(sys.argv[1:])"
+_PROGRAM = (
+    "import sys; from substrax.testing import report; "
+    "from tests.test_common.tfds_collective import main; report(main(sys.argv[1:]))"
+)
 _SECONDS = 300.0
 
 
@@ -36,9 +37,7 @@ def _collective(fixture: TFDSFixture, env: dict[str, str], *flags: str) -> dict[
     result = run_python(
         _PROGRAM, str(fixture.root), *flags, timeout=_SECONDS, env=env, cwd=_REPO_ROOT
     )
-    lines = [line for line in result.check().stdout.splitlines() if line.startswith(REPORT_PREFIX)]
-    assert len(lines) == 1, result.stdout
-    return json.loads(lines[0].removeprefix(REPORT_PREFIX))
+    return result.check().report_as(dict[str, object])
 
 
 def _assert_an_all_reduce_without_tensorflow(report: dict[str, object]) -> None:
