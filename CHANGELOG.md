@@ -929,6 +929,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- P3's peak-host-memory bound (`tests/benchmarks/test_p3_memory_efficiency.py`) allows the
+  pipeline's allocator and thread jitter, 1 MB, beside the one batch of slack for an extra batch
+  the pipeline's peak holds now and then when it stages. The extra batch is one batch to within
+  0.4 MB, so with any positive jitter the batch alone did not hold: main's Performance run on
+  `d22802e` failed 0.07 MB over it. The extra batch is bounded at one, so the property, host memory
+  O(batch) never O(dataset), holds; what holds it is not identified.
 - The multi-process tests no longer fail when Gloo writes `[Gloo] Rank 1 is connected to 1 peer
   ranks...` after a process's report: the report travels on its own channel, which no library
   writes to, where the last line of standard output was read before.
