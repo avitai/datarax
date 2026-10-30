@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `datarax.core.pack_plan`: `plan_rows` packs a source's variable-length records into rows of a
+  static length by first fit (each record, in a given order, into the leftmost row with room;
+  a row holds at most `max_segments` records), a window of `window` records at a time (both the
+  caller's choice, with no default; no row spans two windows, so planning holds one window), the
+  same rows as
+  Megatron-Bridge's `first_fit` and NeMo-RL's `FirstFitPacker` on the same order. Several packed
+  fields each have their own row length and a record goes only where every field fits; a record
+  longer than its row is refused naming it, the field, its length and the row length. The plan is
+  a directory read through a memory map (`PackPlan.open`, `PackPlan.take`): the records in row
+  order and each row's start, 8 bytes a record and 8 a row boundary; a plan of another version
+  is refused naming both.
+- Ragged fields: `MemorySource` (a column of per-record arrays, or a list of records) and
+  `HFEagerSource` (an Arrow list column, at its declared dtype) hold a field whose records differ
+  in length along their first axis as one values array and int64 offsets
+  (`datarax.core.ragged.RaggedColumn`), named by `source.ragged_fields`. Every source has the
+  ragged read packing uses, `lengths(indices, field)` and `get_ragged(indices, field)`: an
+  in-memory source serves every field (a column's records count its row length, a scalar 1, as
+  Grain's packer counts them), ArrayRecord and TFDS sources refuse it as open work, and a stream
+  refuses it naming why. A source holding a ragged field refuses every unpacked read, naming the
+  field, packing and padding.
+- Decoded copies of sources holding ragged fields (copy format 2): `materialize(source,
+  directory=...)` stores a ragged field as `column-<i>.values.npy` and int64
+  `column-<i>.offsets.npy`, the training process appending each unit's values in unit order (the
+  workers write the fixed columns in place), the content digest covering both. The copy, a
+  `StreamingDiskSource` holding `DiskRagged` fields, serves the ragged read (`lengths` from the
+  offsets alone, `get_ragged`) and refuses every unpacked read. Pack plans planned over a copy
+  are kept in it, `plan-<digest>/`, and removed by a rebuild. `source.field_names` names every
+  field the ragged read serves (HF datasets' `column_names`).
+- `Pipeline(..., packing=Packing(lengths, max_segments, window))` (and `Pipeline.from_dag`):
+  a source holding ragged fields is served as packed rows of a static length. Its records are
+  planned once into rows by windowed first fit over the planning order (the pipeline's cipher with
+  `shuffle=True`, else the stored order), and the rows are the indexed unit the pipeline orders
+  each epoch, batches, counts and resumes; each process plans the same rows. Every field is
+  packed, so `lengths` names each one; no argument has a default. A row is named `(2**31, row)`
+  and its provenance is one tuple per row of its records' mappings in slot order, empty past its
+  records (`data_source.PackedProvenance`, served by `PackedRows.row_provenance`; a row's index
+  looks up no record's provenance). `Pipeline` is generic over the type of its `packing`
+  argument: `raw_batches(with_provenance=True)` gives `Pipeline[None]` (a bare `Pipeline`) one
+  mapping per record and `Pipeline[Packing]` each row's slots. The plan is kept in a
+  decoded copy (`plan-<digest>/`, reused by every pipeline built alike) or in a temporary directory
+  removed with the pipeline (`Pipeline.pack_plan`). `step()`, `scan`, `session()`, stages and
+  `block_order` are refused with packing, naming why.
+- `batch_ops.pack_rows`: planned rows' records side by side, each packed field `f` as `f`, its
+  `f_segment_ids` (from 1, 0 in unused cells), `f_positions` (restarting in each record) and
+  `f_segment_indices` (`(R, max_segments, 2)` uint32 identities, `PADDING_INDEX` in unused
+  slots), host NumPy.
 - `Pipeline(..., sharding=NamedSharding(mesh, P("data")))` (and `Pipeline.from_dag`,
   `Pipeline.from_arrays`): iteration places each batch on the data mesh, rows on the sharding and
   `batch_state` replicated, through substrax `place_batch_on_shards` with the
@@ -350,6 +396,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Pipeline.get_state()` is version 4: its fingerprint names the packing and the SHA-256 of the
+  lengths a packed pipeline's rows were planned from (`packing`, `packing_lengths`, `None`
+  without packing), checked first; a state of version 3 is refused naming both versions.
+- `pack_plan`'s plans are version 2: `plan.json` records the SHA-256 of the lengths planned
+  (`PackPlan.lengths_digest`), and a plan pickles as its directory.
+- The decoded copy's format is 2: a copy of format 1 is refused naming the rebuild, and
+  `materialize` rebuilds it. A source holding a ragged field is refused into RAM (`materialize`
+  without `directory`), naming the decoded copy.
+- `typing-extensions>=4.10.0` is a declared dependency (TypeVar defaults and `TypeIs` on
+  Python 3.12).
+
+- A field whose records differ past their first axis is refused naming padding only (packing
+  joins records along the first axis), and a field varying along its first axis in a source that
+  does not hold ragged fields names the sources that do (`MemorySource`, `HFEagerSource`). A
+  `MemorySource` column holding per-record arrays as an object array was kept as provenance, and
+  a list of per-record arrays of different lengths failed in NumPy; both are ragged fields now.
 - The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
   notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
   at `eaff31ab`: PreAct ResNet-18 with PyTorch's initialization (11,171,274 parameters, as the
@@ -915,6 +977,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A decoded copy's build that fails on a full disk raises its `OSError` (`ENOSPC`, naming the
+  directory, the field and the bytes free) instead of the `RuntimeError` array_record's
+  provenance writer raised when it then failed to close; the close's error is kept as a note.
 - MixUp/CutMix and Poisson noise no longer make the host wait for the GPU on every batch.
   `BatchMixOperator` drew its mixing ratio with `jax.random.beta` and `NoiseOperator(mode="poisson")`
   its counts with `jax.random.poisson`, whose default rejection samplers lower to `while` loops; on a

@@ -163,7 +163,9 @@ class TestTheIndexedRead:
             decoded[-1]["x"] = decoded[-1]["x"][:2]
             return decoded
 
-        with pytest.raises(ValueError, match="'x'"):
+        with pytest.raises(
+            ValueError, match="'x'.*pack records with segment ids.*MemorySource, HFEagerSource"
+        ):
             _source(shards, decode=ragged).get_batch(to_words(np.arange(3, dtype=np.uint64)))
 
 

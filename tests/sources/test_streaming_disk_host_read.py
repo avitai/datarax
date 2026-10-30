@@ -26,6 +26,7 @@ from datarax.pipeline import Pipeline
 from datarax.sources import EagerSource
 from datarax.sources.streaming_disk_source import (
     DiskColumn,
+    DiskRagged,
     StreamingDiskSource,
     StreamingDiskSourceConfig,
 )
@@ -141,7 +142,8 @@ def test_the_source_its_config_and_its_column_are_exported() -> None:
     assert sources.StreamingDiskSource is StreamingDiskSource
     assert sources.StreamingDiskSourceConfig is StreamingDiskSourceConfig
     assert sources.DiskColumn is DiskColumn
-    exported = {"DiskColumn", "StreamingDiskSource", "StreamingDiskSourceConfig"}
+    assert sources.DiskRagged is DiskRagged
+    exported = {"DiskColumn", "DiskRagged", "StreamingDiskSource", "StreamingDiskSourceConfig"}
     assert exported <= set(sources.__all__)
     assert exported <= set(datarax.__all__)
 

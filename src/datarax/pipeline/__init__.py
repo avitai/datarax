@@ -20,11 +20,13 @@ Public API:
 from datarax.core.host_resources import HostResources
 from datarax.pipeline.materialization import materialize
 from datarax.pipeline.pipeline import Pipeline, PipelineIterator
+from datarax.pipeline.run_configuration import Packing
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
 __all__ = [
     "HostResources",
+    "Packing",
     "Pipeline",
     "PipelineIterator",
     "materialize",

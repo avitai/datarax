@@ -38,6 +38,16 @@ class PlacementReport(TypedDict):
     units: list[UnitReport]
 
 
+class PackedUnitReport(TypedDict):
+    shape: list[int]
+    rows: dict[str, list[int]]
+    tokens: dict[str, list[list[int]]]
+
+
+class PackedReport(TypedDict):
+    units: list[PackedUnitReport]
+
+
 class ChunkUnitReport(TypedDict):
     shape: list[int]
     spec: str
@@ -102,6 +112,22 @@ class TestEveryGlobalBatchIsOneProcesssBatch:
         assert [unit["shape"] for unit in first] == [[8], [8], [8], [4]]
         for k, expected in enumerate(reference):
             assert merged_rows([first[k]["rows"], second[k]["rows"]]) == expected
+
+    def test_every_process_plans_the_same_rows_and_reads_its_share_of_each_packed_batch(
+        self,
+    ) -> None:
+        """Each process plans alone from the same inputs: its rows are one process's, row by row."""
+        reports = run_processes(PROGRAM, PackedReport, "packed")
+
+        reference = list(built.packed_pipeline().raw_batches())
+        first, second = (report["units"] for report in reports)
+        assert len(first) == len(second) == len(reference)
+        for k, unit in enumerate(reference):
+            assert first[k]["shape"] == list(unit["tokens"].shape)
+            assert merged_rows([first[k]["rows"], second[k]["rows"]]) == _records(unit.indices)
+            assert merged_rows([first[k]["tokens"], second[k]["tokens"]]) == host_rows(
+                unit["tokens"]
+            )
 
     def test_full_batches_are_split_and_the_short_final_batch_is_whole_on_every_process(
         self,

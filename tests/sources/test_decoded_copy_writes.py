@@ -10,12 +10,10 @@ These tests check that order; power-loss safety is not claimed.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
-import shutil
-import subprocess  # nosec B404 - the test runs its own script under a user namespace
 import sys
-import textwrap
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -31,6 +29,7 @@ from datarax.sources.decoded_copy._layout import LayoutColumn
 from datarax.sources.decoded_copy._units import source_layout
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.decoded_copies import IDENTITY, write_copy
+from tests.test_common.small_filesystem import run_on_small_filesystem
 
 
 _UNIT = 4
@@ -208,22 +207,14 @@ class TestTheReservation:
         self, tmp_path: Path
     ) -> None:
         """A tmpfs of 1 MiB in a user namespace: free space after the refusal equals before."""
-        if shutil.which("unshare") is None:
-            pytest.skip("needs unshare(1) to mount a small filesystem without root")
-        probe = subprocess.run(  # nosec B603 - fixed arguments
-            ["unshare", "-rm", "true"], capture_output=True, text=True, timeout=30, check=False
-        )
-        if probe.returncode != 0:  # e.g. Ubuntu 24.04's AppArmor restriction on user namespaces
-            pytest.skip(f"this host refuses a user namespace: {probe.stderr.strip()[:200]}")
         mount = tmp_path / "small"
         mount.mkdir()
-        script = textwrap.dedent(
+        run = run_on_small_filesystem(
+            mount,
             f"""
-            import os, sys
-            sys.path[:0] = {[str(p) for p in sys.path if p]!r}
+            import os
             from datarax.sources.decoded_copy._files import begin_copy
             from datarax.sources.decoded_copy._layout import ColumnLayout, LayoutColumn
-            from datarax.sources.decoded_copy._units import source_layout
             layout = ColumnLayout(
                 columns=(LayoutColumn(name="x", dtype="<f4", shape=(1024,)),), length=1024
             )
@@ -236,24 +227,8 @@ class TestTheReservation:
                     print("written")
             except OSError as error:
                 print("refused", error.errno, before, free(), str(error)[:200])
-            """
+            """,
         )
-        run = subprocess.run(  # nosec B603 - fixed arguments
-            [
-                "unshare",
-                "-rm",
-                "sh",
-                "-c",
-                f'mount -t tmpfs -o size=1m tmpfs "{mount}" && exec "{sys.executable}" -c "$0"',
-                script,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        if run.returncode != 0 and "mount" in run.stderr:
-            pytest.skip(f"this host refuses a user-namespace mount: {run.stderr.strip()[:200]}")
         words = run.stdout.split()
         assert words[:2] == ["refused", str(errno.ENOSPC)], run.stdout + run.stderr
         assert words[2] == words[3], "the refused reservation's blocks are freed"
@@ -273,3 +248,34 @@ def test_the_format_names_its_lock_file() -> None:
     assert _files.is_copy_file("manifest.json")
     assert not _files.is_copy_file("notes.txt")
     assert LayoutColumn(name="a/b", dtype="<f4", shape=(2,)).row_bytes == 8
+
+
+class TestClosingAfterAFailure:
+    """A writer unwinding a failed build keeps the build's error; its close's error is a note."""
+
+    @staticmethod
+    def _failing_close() -> contextlib.ExitStack:
+        stack = contextlib.ExitStack()
+
+        def close() -> None:
+            raise RuntimeError("write() failed: No space left on device")
+
+        stack.callback(close)
+        return stack
+
+    def test_the_build_s_error_propagates_with_the_close_s_as_a_note(self) -> None:
+        cause = OSError(errno.ENOSPC, "no room for the values")
+
+        with pytest.raises(OSError, match="no room for the values") as raised:
+            try:
+                raise cause
+            except OSError as error:
+                _files.close_files(self._failing_close(), (type(error), error, error.__traceback__))
+                raise
+
+        assert raised.value is cause
+        assert any("No space left on device" in note for note in raised.value.__notes__)
+
+    def test_with_no_error_propagating_a_failing_close_raises(self) -> None:
+        with pytest.raises(RuntimeError, match="No space left on device"):
+            _files.close_files(self._failing_close(), (None, None, None))

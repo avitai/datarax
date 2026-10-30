@@ -3,7 +3,7 @@
 Every source kind is read by the host stage (Grain threads, the order named on the CPU device,
 placement as each batch is taken), and each batch runs through the DAG in one compiled call.
 Iteration serves the compiled session's records, bit for bit, holds no dataset on the device, and
-stands where the last batch taken ended: ``get_state()`` is that cursor, version 3, and
+stands where the last batch taken ended: ``get_state()`` is that cursor, version 4, and
 ``set_state`` resumes exactly, a resumed run ending where the uninterrupted one would, whatever the
 read threads had read ahead. Any other state layout is refused, naming both versions.
 """
@@ -285,14 +285,14 @@ class TestIdentity:
 
 
 class TestState:
-    """``get_state()`` is the host cursor, version 3; another layout is refused, naming both."""
+    """``get_state()`` is the host cursor, version 4; another layout is refused, naming both."""
 
     def test_the_layout(self) -> None:
         pipe = _pipeline(_memory())
         it = iter(pipe)
         next(it)
         state = pipe.get_state()
-        assert state["version"] == 3
+        assert state["version"] == 4
         assert state["kind"] == "indexed"
         assert (state["epoch"], state["position"], state["run_end_epoch"]) == (0, 4, 3)
         assert state["stream"] is None
@@ -456,7 +456,7 @@ class TestState:
         [
             (lambda s: s.pop("version"), "without a version"),
             (lambda s: s.update(version=2), "version 2"),
-            (lambda s: s.update(version=4), "version 4"),
+            (lambda s: s.update(version=3), "version 3"),
             (lambda s: s.update(kind="arrival"), "kind"),
             (lambda s: s["fingerprint"].update(seed=[1, 2]), "seed"),
             (lambda s: s["fingerprint"].update(order={"kind": "block", "b": 4, "n": 1}), "order"),

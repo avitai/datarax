@@ -20,7 +20,7 @@ import contextlib
 import contextvars
 from collections.abc import Iterator, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -41,8 +41,17 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch, Element
-from datarax.core.host_values import HostColumns, HostProvenance
+from datarax.core.host_values import HostColumns, HostProvenance, HostRagged
 from datarax.core.index_words import low_words, to_words
+from datarax.core.ragged import (
+    field_lengths,
+    is_ragged,
+    ragged_column,
+    RaggedColumn,
+    refuse_unpacked_read,
+    take_field,
+    varies_along_first_axis_only,
+)
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
 from datarax.sources._field_paths import field_name, field_names
 from datarax.sources._index_validation import validate_index_batch
@@ -110,11 +119,63 @@ def _split(node: Any, path: tuple[str, ...], provenance: dict[str, Any]) -> Any:
     return _ABSENT
 
 
-def stack_records(parts: Sequence[PyTree]) -> PyTree:
+RAGGED_SOURCES = "MemorySource, HFEagerSource"
+"""The sources that hold ragged fields, which packing reads records from."""
+
+
+def past_first_axis_refusal(field: str, detail: str) -> ValueError:
+    """The refusal of a field whose records differ in more than their first axis.
+
+    Packing joins records along their first axis only, so such a field is neither a column nor a
+    ragged field, and only padding fixes it.
+
+    Args:
+        field: The field's name.
+        detail: How its records differ.
+
+    Returns:
+        The error, naming the field and the fix.
+    """
+    return ValueError(
+        f"field {field!r} {detail}: they differ in more than their first axis, which packing "
+        "joins records along, and a batch's shapes are static: pad the field to one shape and "
+        "keep its mask or lengths in data"
+    )
+
+
+def shape_refusal(
+    field: str, first: tuple[int, ...], shape: tuple[int, ...], position: int
+) -> ValueError:
+    """The refusal of a field whose shape differs between record 0 and record ``position``.
+
+    A field differing along its first axis only could be packed from a source holding ragged
+    fields; one differing past it can only be padded (:func:`past_first_axis_refusal`).
+
+    Args:
+        field: The field's name.
+        first: Its shape in record 0.
+        shape: Its shape in record ``position``.
+        position: The record.
+
+    Returns:
+        The error, naming the field, both shapes and the fix.
+    """
+    detail = f"is {first} in record 0 and {shape} in record {position}"
+    if not varies_along_first_axis_only([first, shape]):
+        return past_first_axis_refusal(field, detail)
+    return ValueError(
+        f"field {field!r} {detail}, but a batch's shapes are static: pad the field to a fixed "
+        "length along its first axis and keep its mask or length in data, or pack records with "
+        f"segment ids from a source that holds ragged fields ({RAGGED_SOURCES})"
+    )
+
+
+def stack_records(parts: Sequence[PyTree]) -> PyTree:  # noqa: DOC503 - shape_refusal builds one
     """Stack records' array parts into columns, once, on the host.
 
     Every record must hold the same numeric fields with the same shapes: a batch's shapes are
-    static, so a field whose shape varies is refused, naming the field, both shapes and the fix.
+    static, so a field whose shape varies is refused, naming the field, both shapes and the fix
+    (:func:`shape_refusal`).
 
     Args:
         parts: One array part per record (NumPy leaves), as :func:`split_record` returns them.
@@ -143,15 +204,13 @@ def stack_records(parts: Sequence[PyTree]) -> PyTree:
             strict=True,
         ):
             if shape != first:
-                raise ValueError(
-                    f"field {field!r} is {first} in record 0 and {shape} in record {position}, but "
-                    "a batch's shapes are static: pad the field to a fixed length along its own "
-                    "axis and keep its mask or length in data, or pack records with segment ids"
-                )
+                raise shape_refusal(field, first, shape, position)
     return batch_ops.stack([Element(part) for part in parts]).data
 
 
-def parts_of_records(records: Sequence[Any]) -> tuple[PyTree, tuple[dict[str, Any], ...]]:
+def parts_of_records(  # noqa: DOC502 - _split_records and stack_records raise
+    records: Sequence[Any],
+) -> tuple[PyTree, tuple[dict[str, Any], ...]]:
     """Turn records into columns and provenance: the one records-to-parts path of eager sources.
 
     Each record's numeric values (:func:`split_record`) are stacked into columns once, on the
@@ -170,6 +229,48 @@ def parts_of_records(records: Sequence[Any]) -> tuple[PyTree, tuple[dict[str, An
     """
     if not records:
         return {}, ()
+    parts, provenance = _split_records(records)
+    return stack_records(parts), provenance
+
+
+def ragged_parts_of_records(  # noqa: DOC502 - _split_records and stack_records raise
+    records: Sequence[Any],
+) -> tuple[PyTree, tuple[dict[str, Any], ...], dict[str, RaggedColumn]]:
+    """Turn records into columns, provenance and ragged fields, for a source holding ragged fields.
+
+    As :func:`parts_of_records`, except that a field whose records differ along their first axis
+    only becomes a ragged field (:func:`split_ragged`) instead of being refused.
+
+    Args:
+        records: The records, each a mapping of values (nested mappings included) or a value.
+
+    Returns:
+        The host columns, one provenance mapping per record (or none), and the ragged fields.
+
+    Raises:
+        ValueError: If a record holds no numeric value, or the records' numeric fields differ, or
+            a field's records differ past their first axis (see :func:`stack_records`).
+    """
+    if not records:
+        return {}, (), {}
+    parts, provenance = _split_records(records)
+    parts, ragged = split_ragged(parts)
+    return (stack_records(parts) if jax.tree.leaves(parts[0]) else {}), provenance, ragged
+
+
+def _split_records(records: Sequence[Any]) -> tuple[list[PyTree], tuple[dict[str, Any], ...]]:
+    """Each record's array part and its provenance (:func:`split_record`), refusing an empty part.
+
+    Args:
+        records: The records.
+
+    Returns:
+        The array parts, and one provenance mapping per record, or none when no record carries
+        anything but numbers.
+
+    Raises:
+        ValueError: If a record holds no numeric value.
+    """
     parts, provenance = [], []
     for position, record in enumerate(records):
         part, extra = split_record(record)
@@ -180,7 +281,64 @@ def parts_of_records(records: Sequence[Any]) -> tuple[PyTree, tuple[dict[str, An
             )
         parts.append(part)
         provenance.append(extra)
-    return stack_records(parts), tuple(provenance) if any(provenance) else ()
+    return parts, tuple(provenance) if any(provenance) else ()
+
+
+def split_ragged(parts: Sequence[PyTree]) -> tuple[list[PyTree], dict[str, RaggedColumn]]:
+    """Take the fields whose records differ along their first axis only out of records' parts.
+
+    Such a field becomes a :class:`~datarax.core.ragged.RaggedColumn`, named by its path; the
+    rest of each part is returned for stacking. Records with different fields, or a field
+    differing past its first axis, are left for :func:`stack_records` to refuse, naming them. A
+    record that is a single value is not a field and is not split.
+
+    Args:
+        parts: One array part per record, as :func:`split_record` returns them.
+
+    Returns:
+        The parts without their ragged fields (an empty mapping where nothing is left), and the
+        ragged fields by name.
+    """
+    found = _ragged_leaves(parts)
+    if not found:
+        return list(parts), {}
+    kept = [_without(part, set(found), ()) for part in parts]
+    return [{} if part is _ABSENT else part for part in kept], dict(found.values())
+
+
+def _ragged_leaves(parts: Sequence[PyTree]) -> dict[tuple[Any, ...], tuple[str, RaggedColumn]]:
+    """The fields of records' parts that are ragged, by their key path: each name and column.
+
+    Args:
+        parts: One array part per record.
+
+    Returns:
+        Each ragged field's key path, mapped to its name and its ``RaggedColumn``; none when the
+        records hold different fields (which :func:`stack_records` refuses).
+    """
+    structure = jax.tree.structure(parts[0])
+    if any(jax.tree.structure(part) != structure for part in parts):
+        return {}
+    flat = [jax.tree_util.tree_flatten_with_path(part)[0] for part in parts]
+    found: dict[tuple[Any, ...], tuple[str, RaggedColumn]] = {}
+    for column, (path, _) in enumerate(flat[0]):
+        leaves = [np.asarray(record[column][1]) for record in flat]
+        if path and is_ragged([leaf.shape for leaf in leaves]):
+            key = tuple(getattr(step, "key", step) for step in path)
+            found[key] = (field_name(path), ragged_column(leaves))
+    return found
+
+
+def _without(node: Any, removed: set[tuple[Any, ...]], path: tuple[Any, ...]) -> Any:
+    """``node`` without the leaves at ``removed`` paths, and without mappings left empty."""
+    if isinstance(node, Mapping):
+        kept = {}
+        for key, child in node.items():
+            value = _without(child, removed, (*path, key))
+            if value is not _ABSENT:
+                kept[key] = value
+        return kept if kept else _ABSENT
+    return _ABSENT if path in removed else node
 
 
 def column_length(columns: PyTree) -> int:
@@ -360,7 +518,15 @@ class EagerSource(DataSourceModule):
     the spec) is the base's. Columns given as device arrays are copied to the host once, where
     they are stored. Nothing in it is random and it keeps no iteration state: the pipeline that
     serves it owns the order and the position.
+
+    A subclass may also store ragged fields (:mod:`datarax.core.ragged`), which it then serves,
+    with every column, through the ragged read packing plans and packs from; while it holds one,
+    every unpacked read is refused, since a batch's shapes are static.
     """
+
+    _READS_RAGGED: ClassVar[bool] = True
+    """Whether the source serves the ragged read; a subclass whose records packing does not read
+    yet sets it ``False`` and refuses it as every source does."""
 
     @property
     def data(self) -> PyTree:
@@ -393,27 +559,143 @@ class EagerSource(DataSourceModule):
         super().__init__(config, name=name)
         self.data = {}
         self._provenance = HostProvenance(())
+        self._ragged = HostRagged(MappingProxyType({}))
+        self._ragged_names: tuple[str, ...] = ()
 
-    def _store(self, columns: PyTree, provenance: Sequence[Mapping[str, Any]] = ()) -> None:
-        """Hold ``columns`` as host NumPy arrays and ``provenance`` beside them.
+    def _store(
+        self,
+        columns: PyTree,
+        provenance: Sequence[Mapping[str, Any]] = (),
+        ragged: Mapping[str, RaggedColumn] | None = None,
+    ) -> None:
+        """Hold ``columns`` as host NumPy arrays, and ``provenance`` and ``ragged`` beside them.
 
         Args:
             columns: A pytree of arrays with one row per record; device arrays are copied to the
                 host here, once.
             provenance: One mapping per record, or nothing.
+            ragged: The ragged fields by name, or none.
 
         Raises:
-            ValueError: If the columns disagree on their record count, or the provenance is not
-                one mapping per record.
+            ValueError: If the columns and ragged fields disagree on their record count, or the
+                provenance is not one mapping per record.
         """
         host = jax.tree.map(np.asarray, columns)
-        length = column_length(host)
+        ragged = dict(ragged or {})
+        counts = {name: len(field) for name, field in ragged.items()}
+        if jax.tree.leaves(host):
+            counts["columns"] = column_length(host)
+        if len(set(counts.values())) > 1:
+            raise ValueError(f"every field holds one row per record; their records are {counts}")
+        length = next(iter(counts.values()), 0)
         if provenance and len(provenance) != length:
             raise ValueError(
                 f"provenance holds {len(provenance)} records but the columns hold {length}"
             )
         self.data = host
+        self._length = length
         self._provenance = HostProvenance(tuple(MappingProxyType(dict(p)) for p in provenance))
+        self._ragged = HostRagged(MappingProxyType(ragged))
+        self._ragged_names = tuple(ragged)
+
+    @property
+    def ragged_fields(self) -> tuple[str, ...]:
+        """The fields whose records differ in length along their first axis, by name.
+
+        Kept as plain names beside the holder, as :attr:`length` is, so the reads every program
+        makes check them without reading the holder.
+        """
+        return self._ragged_names
+
+    @property
+    def field_names(self) -> tuple[str, ...]:  # noqa: DOC502 - the base refuses
+        """Every numeric field the ragged read serves, by path: the columns, then the ragged.
+
+        Raises:
+            NotImplementedError: If the source does not serve the ragged read.
+        """
+        if not self._READS_RAGGED:
+            return super().field_names
+        return (*field_names(self.data), *self._ragged_names)
+
+    def lengths(self, indices: ArrayLike, field: str) -> np.ndarray:  # noqa: DOC502 - checks raise
+        """Each named record's length in ``field``: its array's along the first axis, a scalar 1.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            field: A field's name (its path, ``"text/tokens"``).
+
+        Returns:
+            int64 ``(n,)``, in the order named.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words or the field is not held.
+            IndexError: If an index names no record or is outside the source.
+        """
+        if not self._READS_RAGGED:
+            return super().lengths(indices, field)
+        return field_lengths(self._field(field), host_rows(record_words(indices), self.length))
+
+    def get_ragged(  # noqa: DOC502 - the checks it calls raise
+        self, indices: ArrayLike, field: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The named records of ``field``, as one values array and int64 offsets, on the host.
+
+        Record ``k`` of the reply is ``values[offsets[k]:offsets[k + 1]]``; a column is read as
+        records of its row length (a scalar column as records of one cell), so every field reads
+        the same way. One vectorised gather, no loop over records.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices, any order, repeats allowed.
+            field: A field's name (its path, ``"text/tokens"``).
+
+        Returns:
+            The records' cells, record after record, and their offsets, ``n + 1`` of them from 0.
+
+        Raises:
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words or the field is not held.
+            IndexError: If an index names no record or is outside the source.
+        """
+        if not self._READS_RAGGED:
+            return super().get_ragged(indices, field)
+        return take_field(self._field(field), host_rows(record_words(indices), self.length))
+
+    def _field(self, field: str) -> RaggedColumn | np.ndarray:
+        """The ragged field or column named ``field``.
+
+        Args:
+            field: The field's name.
+
+        Returns:
+            The field.
+
+        Raises:
+            ValueError: If the source holds no field of that name, naming those it holds.
+        """
+        ragged = self._ragged.value
+        if field in ragged:
+            return ragged[field]
+        columns = {
+            field_name(path): leaf
+            for path, leaf in jax.tree_util.tree_flatten_with_path(self.data)[0]
+        }
+        if field not in columns:
+            raise ValueError(
+                f"{type(self).__name__} holds no field {field!r}; its fields are "
+                f"{sorted([*ragged, *columns])}"
+            )
+        return columns[field]
+
+    def _refuse_unpacked(self) -> None:  # noqa: DOC502 - refuse_unpacked_read raises
+        """Refuse an unpacked read of a source holding a ragged field, naming the field and fixes.
+
+        It reads the plain field names only, never the holder: a traced path reads a stand-in of
+        the source whose holders are empty.
+
+        Raises:
+            ValueError: If the source holds a ragged field.
+        """
+        refuse_unpacked_read(self._ragged_names)
 
     @property
     def length(self) -> int:
@@ -443,7 +725,7 @@ class EagerSource(DataSourceModule):
         """
         return 0
 
-    def __getitem__(self, index: int) -> PyTree:
+    def __getitem__(self, index: int) -> PyTree:  # noqa: DOC503 - _refuse_unpacked raises one
         """Return record ``index`` (negative counts from the end): its array part.
 
         Args:
@@ -454,7 +736,9 @@ class EagerSource(DataSourceModule):
 
         Raises:
             IndexError: If ``index`` is outside the source.
+            ValueError: If the source holds a ragged field (see :meth:`_refuse_unpacked`).
         """
+        self._refuse_unpacked()
         length = self.length
         row = index + length if index < 0 else index
         if not 0 <= row < length:
@@ -462,7 +746,12 @@ class EagerSource(DataSourceModule):
         return jax.tree.map(lambda column: column[row], self.data)
 
     def __iter__(self) -> Iterator[PyTree]:
-        """Iterate over the records in order, each its array part; stateless."""
+        """Iterate over the records in order, each its array part; stateless.
+
+        Returns:
+            The records.
+        """
+        self._refuse_unpacked()
         return (self[row] for row in range(self.length))
 
     def _getitems(self, indices: Sequence[int]) -> list[PyTree]:
@@ -474,6 +763,7 @@ class EagerSource(DataSourceModule):
         Returns:
             Each record's arrays, in order.
         """
+        self._refuse_unpacked()
         resolved = validate_index_batch(indices, self.length)
         rows = take_rows(self.data, np.asarray(resolved, dtype=np.intp))
         return [jax.tree.map(lambda column, k=k: column[k], rows) for k in range(len(resolved))]
@@ -499,10 +789,11 @@ class EagerSource(DataSourceModule):
             The records as a host ``Batch``.
 
         Raises:
-            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared
-                contiguous is not one.
+            ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, a run declared
+                contiguous is not one, or the source holds a ragged field.
             IndexError: If an index is the padding index or outside the source.
         """
+        self._refuse_unpacked()
         return read_host_batch(
             self.data, self.length, indices, epochs=epochs, contiguous=contiguous
         )
@@ -538,6 +829,7 @@ class EagerSource(DataSourceModule):
         Returns:
             The columns' structure, each leaf a JAX array.
         """
+        self._refuse_unpacked()
         return jax.device_put(self.data)
 
     def get_records(self, indices: jax.Array, *, columns: PyTree | None = None) -> PyTree:
@@ -560,6 +852,7 @@ class EagerSource(DataSourceModule):
         Raises:
             TypeError: If ``indices`` are traced and no columns are given or bound.
         """
+        self._refuse_unpacked()
         rows = low_words(indices, self.length)
         if columns is None:
             columns = bound_columns(self)
@@ -588,8 +881,9 @@ class EagerSource(DataSourceModule):
             A pytree of ``jax.ShapeDtypeStruct`` with the columns' structure.
 
         Raises:
-            ValueError: If the source holds no records.
+            ValueError: If the source holds no records, or holds a ragged field.
         """
+        self._refuse_unpacked()
         if self.length == 0:
             raise ValueError(
                 f"{type(self).__name__} has zero elements; element_spec() cannot be inferred "
@@ -599,11 +893,16 @@ class EagerSource(DataSourceModule):
 
 
 __all__ = [
+    "RAGGED_SOURCES",
     "EagerSource",
     "column_length",
     "is_array_leaf",
     "parts_of_records",
+    "past_first_axis_refusal",
+    "ragged_parts_of_records",
     "read_host_batch",
+    "shape_refusal",
+    "split_ragged",
     "split_record",
     "stack_records",
     "take_rows",

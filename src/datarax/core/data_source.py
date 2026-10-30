@@ -10,11 +10,12 @@ import enum
 import inspect
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, cast, Protocol, runtime_checkable
+from typing import Any, cast, NoReturn, Protocol, runtime_checkable
 
 import jax
 import numpy as np
 from jax.typing import ArrayLike
+from typing_extensions import TypeIs
 
 from datarax.core.block_order import BlockOrder, order_positions
 from datarax.core.element_batch import Batch, PADDING_INDEX
@@ -140,7 +141,28 @@ NO_PROVENANCE: Mapping[str, Any] = MappingProxyType({})
 """The provenance of a record that carries nothing but arrays."""
 
 type Provenance = tuple[Mapping[str, Any], ...]
-"""One immutable mapping per record: its strings and objects, beside the batch."""
+"""One immutable mapping per record, in row order, beside the batch: its strings and objects."""
+
+type SlotProvenance = tuple[Mapping[str, Any], ...]
+"""A packed row's provenance: its records' mappings in slot order, empty past its records."""
+
+type PackedProvenance = tuple[SlotProvenance, ...]
+"""One entry per packed row, in row order, beside the batch: its slots' provenance."""
+
+type UnitProvenance = Provenance | PackedProvenance
+"""A unit's provenance as the host stage carries it: per record, or per packed row."""
+
+
+def is_packed_provenance(provenance: UnitProvenance) -> TypeIs[PackedProvenance]:
+    """Whether a unit's provenance is per packed row (its entries are slot tuples), not per record.
+
+    Args:
+        provenance: A unit's provenance; an empty one is per record.
+
+    Returns:
+        ``True`` when its entries are tuples of slot mappings.
+    """
+    return bool(provenance) and isinstance(provenance[0], tuple)
 
 
 class RecordIdentity(enum.Enum):
@@ -231,6 +253,27 @@ class IndexedHostReadWithProvenance(Protocol):
         Returns:
             The records as a host ``Batch``, and one mapping of strings and objects per record,
             in row order.
+        """
+        ...
+
+
+@runtime_checkable
+class PackedRowProvenance(Protocol):
+    """An indexed read whose units are packed rows of records, each row's provenance its slots'.
+
+    A row names no record, so its source refuses :meth:`DataSourceModule.provenance` and serves
+    each row's records' mappings, in slot order, by the row's index
+    (``datarax.pipeline.packed_rows.PackedRows``).
+    """
+
+    def row_provenance(self, indices: ArrayLike) -> PackedProvenance:
+        """The provenance of the rows ``indices`` names: each row's slots' mappings.
+
+        Args:
+            indices: uint32 ``(n, 2)`` row indices.
+
+        Returns:
+            One tuple of mappings per row, one per slot, empty past the row's records.
         """
         ...
 
@@ -466,6 +509,91 @@ class DataSourceModule(StructuralModule):
                 f"{what}: an arrival ordinal names no record it can find again. A stream naming "
                 "records by arrival hands each record's provenance out beside each batch it serves."
             )
+
+    @property
+    def ragged_fields(self) -> tuple[str, ...]:
+        """The fields whose records differ in length along their first axis: none on this base.
+
+        A source holding such a field serves it through :meth:`get_ragged`, which packing plans
+        and packs from, and refuses every unpacked read.
+        """
+        return ()
+
+    @property
+    def field_names(self) -> tuple[str, ...]:  # noqa: DOC502 - refuses
+        """Every numeric field the ragged read serves, by path (``"text/tokens"``).
+
+        A source reading its records for packing names them, as HF datasets'
+        ``Dataset.column_names`` does, since a source holding a ragged field serves no batch whose
+        structure would name them. This base refuses it (see :meth:`get_ragged`).
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: If the source does not read ragged records.
+        """
+        self._refuse_ragged_read()
+
+    def lengths(self, indices: ArrayLike, field: str) -> np.ndarray:  # noqa: DOC502 - refuses
+        """Each named record's length in ``field``, which packing plans rows from.
+
+        A record's length is its array's along the first axis, a scalar counting 1, as Grain's
+        packer counts it. This base refuses it (see :meth:`get_ragged`).
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            field: A field's name.
+
+        Returns:
+            int64 ``(n,)``, on a source that serves the ragged read.
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: If the source does not read ragged records.
+        """
+        del indices, field
+        self._refuse_ragged_read()
+
+    def get_ragged(  # noqa: DOC502 - refuses
+        self, indices: ArrayLike, field: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The named records of ``field`` as one values array and int64 offsets, on the host.
+
+        The read packing packs rows from (``datarax.core.ragged`` holds the layout). This base
+        refuses it: an indexed source that does not hold ragged records names the sources that
+        do, and a stream names why it cannot be packed.
+
+        Args:
+            indices: uint32 ``(n, 2)`` record indices.
+            field: A field's name.
+
+        Returns:
+            The records' cells, record after record, and their offsets, on a source that serves it.
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: If the source does not read ragged records.
+        """
+        del indices, field
+        self._refuse_ragged_read()
+
+    def _refuse_ragged_read(self) -> NoReturn:
+        """Refuse the ragged read, naming why for a stream and what reads it for an indexed source.
+
+        Raises:
+            TypeError: If the source is a stream.
+            NotImplementedError: Otherwise.
+        """
+        name, kind = type(self).__name__, self.record_identity
+        if kind is not RecordIdentity.INDEXED:
+            raise TypeError(
+                f"{name} is a stream ({kind.name}): packing plans a run's rows over an indexed "
+                "source's records before serving them, which a stream read forward does not give"
+            )
+        raise NotImplementedError(
+            f"{name} does not read ragged records, which packing plans and packs rows from; "
+            "MemorySource and HFEagerSource do. Reading this source's records for packing is "
+            "open work."
+        )
 
     def index_space(self) -> int:
         """How many record indices the source names; its indices run from 0 to one below it.

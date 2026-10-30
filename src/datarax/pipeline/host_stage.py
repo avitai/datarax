@@ -60,6 +60,7 @@ from datarax.core.data_source import (
     RecordIdentity,
     SliceableStreamRun,
     StreamHostRead,
+    UnitProvenance,
 )
 from datarax.core.element_batch import Batch
 from datarax.core.host_resources import HostResources, order_working_bytes
@@ -321,13 +322,13 @@ def _checker(source: DataSourceModule, batch_size: int) -> Callable[[Batch], Non
 
 def _place(
     element: HostElement, place_unit: Placer
-) -> tuple[Batch, Provenance | None, tuple[int, int, int]]:
+) -> tuple[Batch, UnitProvenance | None, tuple[int, int, int]]:
     """The element's batch placed by the run's placer; provenance stays on the host."""
     place = place_unit.full if element.batch_rows == place_unit.batch_size else place_unit.final
     return place(element.batch), element.provenance, element.after
 
 
-type _PlacedElement = tuple[Batch, Provenance | None, tuple[int, int, int]]
+type _PlacedElement = tuple[Batch, UnitProvenance | None, tuple[int, int, int]]
 type _Placed = grain.DatasetIterator[_PlacedElement]
 
 
@@ -489,7 +490,7 @@ class HostStage:
         """
         depth = self._depth(pipeline.sharding)
         resources: HostResources | None = pipeline.host_resources
-        source = pipeline.source
+        source = pipeline.read_source
         shape = (id(source), pipeline.epoch_plan, pipeline.shuffle, chunk, depth, resources)
         plan = self._plans.get(shape)
         if plan is None:
@@ -512,7 +513,7 @@ class HostStage:
     def _new_plan(
         self, pipeline: Any, chunk: int | None, depth: int, resources: HostResources | None
     ) -> HostPlan:
-        source: DataSourceModule = pipeline.source
+        source: DataSourceModule = pipeline.read_source
         access = self._access(pipeline)
         path = host_read_path(resources, source.host_read, access)
         if resources is None:
@@ -536,7 +537,7 @@ class HostStage:
 
     def _access(self, pipeline: Any) -> ReadAccess:
         """How the pipeline's run can be read: by unit, as a sliceable dataset, or pass by pass."""
-        source = pipeline.source
+        source = pipeline.read_source
         if source.record_identity is RecordIdentity.INDEXED:
             return ReadAccess.BY_UNIT
         plan: EpochPlan = pipeline.epoch_plan
@@ -677,7 +678,7 @@ class HostStage:
         chunk: int | None,
         max_chunk_bytes: int | None,
         with_provenance: bool,
-    ) -> Iterator[Batch] | Iterator[tuple[Batch, Provenance]]:
+    ) -> Iterator[Batch] | Iterator[tuple[Batch, UnitProvenance]]:
         """The run's units from the cursor, placed, advancing the cursor as each is taken.
 
         Args:
@@ -696,7 +697,7 @@ class HostStage:
         size = 1 if chunk is None else chunk
         if size < 1:
             raise ValueError(f"a chunk holds at least one batch; got chunk={chunk}")
-        source = pipeline.source
+        source = pipeline.read_source
         if chunk is not None and max_chunk_bytes is not None:
             batch_bytes = _batch_bytes(source, pipeline.batch_size)
             if size * batch_bytes > max_chunk_bytes:
@@ -722,7 +723,7 @@ class HostStage:
         token = self._run_token(pipeline, options, chunk, with_provenance, reads, settings)
         _RUN_HOLDERS[pipeline] = token
         return cast(
-            Iterator[Batch] | Iterator[tuple[Batch, Provenance]],
+            Iterator[Batch] | Iterator[tuple[Batch, UnitProvenance]],
             _Served(self, (*options,), with_provenance, token),
         )
 
@@ -777,7 +778,7 @@ class HostStage:
         settings: JaxSettings,
     ) -> grain.IterDataset:
         """The run's dataset of host elements, from the cursor, read as ``reads`` plans."""
-        source: DataSourceModule = pipeline.source
+        source: DataSourceModule = pipeline.read_source
         key = _key(pipeline)
         plan: EpochPlan = pipeline.epoch_plan
         processes = reads.path is HostReadPath.PROCESSES
@@ -918,7 +919,7 @@ class HostStage:
         version = state.get("version")
         if version != STATE_VERSION:
             if version is None:
-                saved = "a state without a version (a pipeline module_state layout)"
+                saved = "a state without a version"
             elif version == configuration.SESSION_VERSION:
                 saved = f"version {version} (the session layout of PipelineIterator)"
             else:
@@ -981,9 +982,9 @@ class HostStage:
         """
         plan: EpochPlan = pipeline.epoch_plan
         return IndexedRead(
-            pipeline.source,
+            pipeline.read_source,
             RunUnits(run=self._run(plan)),
-            HostNaming(pipeline.source, plan, shuffled=pipeline.shuffle),
+            HostNaming(pipeline.read_source, plan, shuffled=pipeline.shuffle),
             key=_key(pipeline),
             with_provenance=False,
             settings=JaxSettings.current(),
@@ -1157,7 +1158,7 @@ class _Served:
     def __iter__(self) -> _Served:
         return self
 
-    def __next__(self) -> Batch | tuple[Batch, Provenance]:
+    def __next__(self) -> Batch | tuple[Batch, UnitProvenance]:
         ended = self._token.ended_by
         if ended is _RUN_END:
             raise StopIteration
@@ -1185,11 +1186,11 @@ class _Served:
         stage._opened_for = (*self._options, cursor.epoch, cursor.position)  # noqa: SLF001
         if self._with_provenance:
             # The run was opened with provenance (its options say so), so every unit carries it.
-            return batch, cast(Provenance, provenance)
+            return batch, cast(UnitProvenance, provenance)
         return batch
 
 
-STATE_VERSION = 3
+STATE_VERSION = 4
 """The layout of ``Pipeline.get_state()``: the host stage's cursor and the configuration it fits."""
 
 

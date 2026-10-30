@@ -36,6 +36,7 @@ from datarax.samplers.sliding_window_sampler import (
 # Streaming source
 from datarax.sources.streaming_disk_source import (
     DiskColumn,
+    DiskRagged,
     StreamingDiskSource,
     StreamingDiskSourceConfig,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "SlidingWindowSamplerConfig",
     # Streaming source
     "DiskColumn",
+    "DiskRagged",
     "StreamingDiskSource",
     "StreamingDiskSourceConfig",
     # Utilities

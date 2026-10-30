@@ -20,7 +20,12 @@ from typing import Any, cast, NamedTuple
 import numpy as np
 
 from datarax.core import batch_ops
-from datarax.core.data_source import DataSourceModule, Provenance, read_records
+from datarax.core.data_source import (
+    DataSourceModule,
+    PackedRowProvenance,
+    read_records,
+    UnitProvenance,
+)
 from datarax.core.element_batch import Batch
 from datarax.core.index_words import from_words, to_words
 from datarax.pipeline import host_workers
@@ -43,7 +48,8 @@ class HostElement(NamedTuple):
 
     Attributes:
         batch: The unit's batch, ``(B, ...)`` or a chunk ``(K, B, ...)``, on the host.
-        provenance: One mapping per record, in row order, or ``None`` when not asked for.
+        provenance: One mapping per record, in row order (for packed rows, each row's slots'
+            mappings), or ``None`` when not asked for.
         after: ``(epoch, position, arrived)`` once the unit is served.
         unit: The unit's place in the run, which the consumer checks units arrive by.
         batch_rows: The rows of each of the unit's batches before a process's share of a mesh
@@ -53,7 +59,7 @@ class HostElement(NamedTuple):
     """
 
     batch: Batch
-    provenance: Provenance | None
+    provenance: UnitProvenance | None
     after: tuple[int, int, int]
     unit: int
     batch_rows: int
@@ -159,7 +165,8 @@ class IndexedRead:
 
     A unit's batches are named on the CPU device (several per call, :class:`_NamedBatches`) and
     read with one host read (:func:`~datarax.core.data_source.read_records`, with provenance when
-    asked); a chunk is split into its batches and stacked, ``(K, B, ...)``. A read marks a run of
+    asked: a packed row's is its slots', :class:`~datarax.core.data_source.PackedRowProvenance`);
+    a chunk is split into its batches and stacked, ``(K, B, ...)``. A read marks a run of
     consecutive records as contiguous only when its names are (so a source reads it as views).
     Each unit is named and read under the run's JAX settings, which a read thread does not
     inherit. It holds the source, the run's units, the naming, the key as host words and the
@@ -199,6 +206,11 @@ class IndexedRead:
         self.names = _NamedBatches(naming, units.run, key)
         self.key = key
         self.with_provenance = with_provenance
+        # The packed rows whose slots' provenance a unit carries: decided once per run, since a
+        # runtime-checked protocol costs microseconds a unit and the source's kind never changes.
+        self.packed: PackedRowProvenance | None = (
+            source if with_provenance and isinstance(source, PackedRowProvenance) else None
+        )
         self.settings = settings
         self.crossing = crossing
         self.rows = rows
@@ -226,7 +238,7 @@ class IndexedRead:
 
     def _named_records(
         self, first: int, batches: tuple[tuple[int, int, int], ...]
-    ) -> tuple[Batch, Provenance | None]:
+    ) -> tuple[Batch, UnitProvenance | None]:
         """Name a unit's batches and read their records, on a thread holding the run's settings.
 
         Args:
@@ -244,13 +256,16 @@ class IndexedRead:
         epochs = np.concatenate([epochs for _, epochs in named])
         values = from_words(indices)
         contiguous = len(values) > 1 and bool(np.all(np.diff(values.astype(np.int64)) == 1))
-        return read_records(
+        batch, provenance = read_records(
             self.source,
             indices,
             epochs=epochs,
             contiguous=contiguous,
-            with_provenance=self.with_provenance,
+            with_provenance=self.with_provenance and self.packed is None,
         )
+        if self.packed is not None:
+            return batch, self.packed.row_provenance(indices)
+        return batch, provenance
 
     def _held(
         self, indices: np.ndarray, epochs: np.ndarray, *, size: int

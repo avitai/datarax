@@ -302,7 +302,7 @@ class TestExactResume:
             "stream",
             "fingerprint",
         }
-        assert state["version"] == 3
+        assert state["version"] == 4
 
         resumed = _pipeline(png_source(png_paths), workers=_SECOND)
         resumed.set_state(state)

@@ -249,12 +249,26 @@ class TestRecordsBecomeColumns:
         assert int(source[2]["metadata"]["t"]) == 2
         assert "id" not in source[2]["metadata"]
 
-    def test_unequal_shapes_are_refused_naming_the_field_shapes_padding_and_packing(self) -> None:
-        records = [{"tokens": np.zeros(3)}, {"tokens": np.zeros(5)}]
+    def test_shapes_differing_past_the_first_axis_are_refused_naming_field_shapes_padding(
+        self,
+    ) -> None:
+        records = [{"tokens": np.zeros((2, 3))}, {"tokens": np.zeros((2, 5))}]
         with pytest.raises(ValueError) as refused:
             _memory(records)
         message = str(refused.value)
-        for part in ("tokens", "(3,)", "(5,)", "pad", "pack"):
+        for part in ("tokens", "(2, 3)", "(2, 5)", "pad the field to one shape"):
+            assert part in message, part
+        assert "pack records" not in message
+
+    def test_a_source_without_ragged_fields_refuses_first_axis_lengths_naming_both_fixes(
+        self,
+    ) -> None:
+        """``parts_of_records``, which TFDS and ArrayRecord build with, holds no ragged field."""
+        records = [{"tokens": np.zeros(3)}, {"tokens": np.zeros(5)}]
+        with pytest.raises(ValueError) as refused:
+            eager_source.parts_of_records(records)
+        message = str(refused.value)
+        for part in ("tokens", "(3,)", "(5,)", "pad", "pack records", "MemorySource"):
             assert part in message, part
 
     def test_records_of_different_fields_are_refused(self) -> None:
@@ -262,7 +276,7 @@ class TestRecordsBecomeColumns:
             _memory([{"a": 1, "b": 2}, {"a": 1}])
 
     def test_a_refusal_names_a_nested_field_by_its_slash_path(self) -> None:
-        records = [{"a": {"b": np.zeros(3)}}, {"a": {"b": np.zeros(5)}}]
+        records = [{"a": {"b": np.zeros((2, 3))}}, {"a": {"b": np.zeros((2, 5))}}]
         with pytest.raises(ValueError, match="field 'a/b' is"):
             _memory(records)
 

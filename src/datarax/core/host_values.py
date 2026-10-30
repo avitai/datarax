@@ -78,6 +78,17 @@ class HostColumns(HostValue):
     value: Any
 
 
+class HostRagged(HostValue):
+    """An in-memory source's ragged fields, held on the host and out of NNX state, as its columns.
+
+    Attributes:
+        value: Each ragged field's ``RaggedColumn`` (``datarax.core.ragged``), by field name.
+    """
+
+    __slots__ = ()
+    value: Mapping[str, Any]
+
+
 class HostArray:
     """A memory map of an array stored raw in a file at an offset, held on the host, not in NNX.
 
