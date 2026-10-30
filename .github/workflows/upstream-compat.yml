@@ -51,7 +51,12 @@ jobs:
           uv pip check
           .venv/bin/python -c "import flax, grain, jax, orbax.checkpoint as ocp, google.protobuf as pb; print('grain', grain.__version__, 'orbax-checkpoint', ocp.__version__, 'jax', jax.__version__, 'flax', flax.__version__, 'protobuf', pb.__version__)"
 
-      - name: Run the fast test subset
+      # A GITHUB_ENV write reaches later steps only, so the path is set in a step of its own, as
+      # in ci.yml; the tests' child processes import tests.test_common through it.
+      - name: Setup PYTHONPATH for tests
         run: |
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> "$GITHUB_ENV"
+
+      - name: Run the fast test subset
+        run: |
           .venv/bin/pytest tests --no-integration --no-end-to-end --no-benchmark -rs -m "not slow and not tfds" --no-cov -p no:cacheprovider
