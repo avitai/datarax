@@ -31,6 +31,7 @@ from datarax.core.block_order import BlockOrder
 from datarax.core.config import OperatorConfig
 from datarax.core.data_source import DataSourceModule, HostRead
 from datarax.core.element_batch import Element
+from datarax.core.host_resources import available_cpus
 from datarax.core.index_words import from_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.pipeline import Pipeline
@@ -375,7 +376,8 @@ class TestDrawsDoNotDependOnTheWorkers:
     def test_tier_a_and_the_dag_in_a_step_draw_alike_for_0_2_and_4_workers(
         self, png_paths: list[str]
     ) -> None:
-        counts = [0, 2] + ([4] if 4 in range(1, os.cpu_count() or 1) else [])
+        # The CPUs this process may run on, as HostResources counts them, not the machine's.
+        counts = [0, 2] + ([4] if 4 in range(1, available_cpus()) else [])
         tier_a, in_step = {}, {}
         for workers in counts:
             pipe = _pipeline(png_source(png_paths), workers=workers, stages=[_Jitter()])
