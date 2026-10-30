@@ -3,8 +3,8 @@
 A pipeline's read options come only from its plan (``pipe.host_plan``). With a budget a GIL-free
 read takes ``min(4, max_workers, CPUs - 1)`` threads and reads ``max(16, 2 x threads)`` units
 ahead whatever the budget (``read_plan.THREAD_READ_BUFFER``), so a test asks for the threads by the
-cap and for a budget that holds the run and its buffer. :data:`STILL_RESIDENT` is the resident size
-the ``still_resident`` fixture (``tests/conftest.py``) pins a plan's ``M_main`` at, for tests that
+cap and for a budget that holds the run and its buffer. :data:`STILL_MAIN_BYTES` is what the
+``still_main_bytes`` fixture (``tests/conftest.py``) pins a plan's ``M_main`` at, for tests that
 compute a budget from it.
 """
 
@@ -13,8 +13,8 @@ from __future__ import annotations
 from datarax.core.host_resources import available_cpus, HostResources
 
 
-STILL_RESIDENT = 1 << 30
-"""The resident size the ``still_resident`` fixture pins a plan's ``M_main`` at."""
+STILL_MAIN_BYTES = 1 << 30
+"""What the ``still_main_bytes`` fixture pins a plan's ``M_main`` at."""
 
 
 def reading_with(threads: int) -> HostResources:

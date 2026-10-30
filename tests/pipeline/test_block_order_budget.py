@@ -4,7 +4,7 @@ A block order keeps a buffer's records resident while a batch reads them, so a r
 storage holds about ``blocks_per_buffer * block_size`` records' stored bytes in the page cache: the
 budget's ``O`` term. Each source reports its own (``OrderWorkingSet``): a disk source from its
 stored rows, ArrayRecord from its files' bytes per record, an in-memory source 0 (its records are
-already the training process's resident memory), a mix the sum of its children's. A budget that
+already in the training process's memory), a mix the sum of its children's. A budget that
 cannot hold the term is refused naming it, and a source that cannot report one is refused when a
 budget is given.
 """

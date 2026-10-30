@@ -49,7 +49,7 @@ from substrax.testing import run_python
 
 from datarax.pipeline import host_workers
 from datarax.utils.console import emit
-from tests.test_common.host_plans import STILL_RESIDENT
+from tests.test_common.host_plans import STILL_MAIN_BYTES
 from tests.test_common.tfds_fixture import (
     COMMAND as TFDS_FIXTURE_COMMAND,
     DIRECTORY_VARIABLE as TFDS_FIXTURE_DIRECTORY_VARIABLE,
@@ -287,20 +287,20 @@ _TFDS_FIXTURE_PREPARE_SECONDS = 600.0
 
 
 @pytest.fixture
-def still_resident(monkeypatch: pytest.MonkeyPatch) -> int:
-    """Hold a host plan's ``M_main`` still, at :data:`~tests.test_common.host_plans.STILL_RESIDENT`.
+def still_main_bytes(monkeypatch: pytest.MonkeyPatch) -> int:
+    """Pin a host plan's ``M_main`` at :data:`~tests.test_common.host_plans.STILL_MAIN_BYTES`.
 
-    The process's resident size moves between two plans, so a test whose budget is computed from
+    The process's memory moves between two plans, so a test whose budget is computed from
     ``M_main`` (one holding a build but not a read buffer) pins it.
 
     Args:
-        monkeypatch: Pins ``host_workers.resident_bytes`` for the test.
+        monkeypatch: Pins ``host_workers.process_bytes`` for the test.
 
     Returns:
-        The pinned resident size.
+        The pinned ``M_main``.
     """
-    monkeypatch.setattr(host_workers, "resident_bytes", lambda: STILL_RESIDENT)
-    return STILL_RESIDENT
+    monkeypatch.setattr(host_workers, "process_bytes", lambda: STILL_MAIN_BYTES)
+    return STILL_MAIN_BYTES
 
 
 @pytest.fixture(scope="session")

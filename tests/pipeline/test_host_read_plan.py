@@ -19,10 +19,10 @@ import cloudpickle
 import grain
 import jax
 import numpy as np
-import psutil
 import pytest
 from flax import nnx
 
+from datarax.core import process_memory
 from datarax.core.data_source import HostRead
 from datarax.core.host_resources import available_cpus, HostResources
 from datarax.pipeline import Pipeline
@@ -127,13 +127,14 @@ class TestPlanTerms:
     def test_the_global_order_holds_nothing_per_pipeline(self) -> None:
         assert _terms(_pipeline(_memory(), resources(1))).order_bytes == 0
 
-    def test_m_main_is_the_training_process_s_resident_memory_at_plan_time(self) -> None:
+    def test_m_main_is_the_training_process_s_memory_at_plan_time(self) -> None:
         """A source holding 256 MiB more raises ``M_main`` by about 256 MiB, unpickled.
 
         Both plans are made in this process, the smaller pipeline kept alive, after collecting:
-        between the two readings the resident size moves only by what the allocator returns or
+        between the two readings the process's memory moves only by what the allocator returns or
         keeps of other objects, which P3 measured at about 1 MB; 16 MiB of slack is far above
-        that and far below the 256 MiB the property is about.
+        that and far below the 256 MiB the property is about. On macOS the column's pages count
+        even once the memory compressor holds them, which the resident size leaves out.
         """
         held = 256 << 20
         small_pipe = _pipeline(_memory(length=40), resources(1))
@@ -144,7 +145,7 @@ class TestPlanTerms:
         gc.collect()
         large = _terms(large_pipe).main_bytes
         assert large - small >= held - (16 << 20), (small, large)
-        assert large >= psutil.Process().memory_info().rss - (16 << 20)
+        assert large >= process_memory.current_bytes() - (16 << 20)
 
     def test_a_thread_plan_pickles_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``P`` is a worker's read; threads send none, so a thread plan never serializes."""

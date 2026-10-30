@@ -358,8 +358,9 @@ def efficient(element, key=None):
 
 The host stage reads each batch before the device sees it. How it reads is the pipeline's plan,
 `pipe.host_plan`, which comes from `host_resources`. The RAM budget is the training process's:
-it counts the process's resident memory when a run is planned (the data an in-memory source
-holds included), then the batches in flight and every worker the plan starts.
+it counts the process's memory when a run is planned (its resident size, on macOS its physical
+footprint, which also counts compressed pages; the data an in-memory source holds included),
+then the batches in flight and every worker the plan starts.
 
 ```python
 from datarax import HostResources, Pipeline
@@ -437,7 +438,7 @@ pipeline = Pipeline(source=source, stages=stages, batch_size=256, rngs=nnx.Rngs(
   worker count; without a budget, by the calling thread. Workers write a copy's rows straight
   into its files and send back only each unit's provenance and digest.
 - **The budget counts the build.** `materialize` refuses a budget below the training process's
-  resident memory plus the decoded columns (in RAM) plus one unit, before a worker starts, naming
+  memory plus the decoded columns (in RAM) plus one unit, before a worker starts, naming
   the per-batch read and `directory=` as the ways out. `from_tfds(..., in_memory=True,
   host_resources=...)` builds on one thread and checks the split's decoded size alone, so a budget
   can pass there and be refused by `materialize`.
