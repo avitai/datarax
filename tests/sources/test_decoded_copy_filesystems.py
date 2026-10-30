@@ -27,7 +27,7 @@ from datarax.sources import open_decoded_copy
 from datarax.sources.decoded_copy import _files
 from datarax.sources.decoded_copy._files import CopyLock, refuse_unsupported_filesystem
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from tests.test_common.decoded_copies import IDENTITY, write_copy
+from tests.test_common.decoded_copies import IDENTITY, needs_posix_fallocate, write_copy
 
 
 _PARTITION = type(psutil.disk_partitions(all=True)[0])
@@ -82,6 +82,7 @@ class TestTheFilesystemRefusal:
     def test_a_local_target_is_written(self, mounts: list[Any], target: str, kind: str) -> None:
         assert refuse_unsupported_filesystem(target) == kind
 
+    @needs_posix_fallocate
     def test_a_finished_copy_on_a_refused_mount_still_opens(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

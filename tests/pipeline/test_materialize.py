@@ -27,7 +27,7 @@ from datarax.pipeline import materialization, materialize, Pipeline
 from datarax.pipeline.read_plan import WORKER_BUFFER
 from datarax.sources import from_tfds, MemorySource, MemorySourceConfig, open_decoded_copy
 from datarax.sources.decoded_copy._units import source_layout
-from tests.test_common.decoded_copies import every_record, write_copy
+from tests.test_common.decoded_copies import every_record, needs_posix_fallocate, write_copy
 from tests.test_common.host_plans import STILL_RESIDENT
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.tfds_golden import digests, EAGER_BUILD
@@ -216,6 +216,7 @@ class TestIntoMemory:
 
 class TestWorkersByReadKind:
     @pytest.mark.parametrize("budget", [False, True])
+    @needs_posix_fallocate
     def test_a_gil_free_source_is_decoded_on_the_calling_thread(
         self, tmp_path: Path, started: _Workers, budget: bool
     ) -> None:

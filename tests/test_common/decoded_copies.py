@@ -8,11 +8,14 @@ appended unit by unit, then :func:`~datarax.sources.decoded_copy._files.finish_c
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import pytest
 
 from datarax.core.data_source import (
     DataSourceModule,
@@ -28,6 +31,16 @@ from datarax.sources.decoded_copy._units import source_layout, unit_digest, writ
 
 IDENTITY: dict[str, Any] = {"source": {"kind": "test", "records": 0}, "decoder": {}}
 """An identity for a source that declares none (an in-memory test source)."""
+
+
+needs_posix_fallocate = pytest.mark.skipif(
+    not hasattr(os, "posix_fallocate"),
+    reason=(
+        f"a decoded copy reserves its files with os.posix_fallocate, which {sys.platform} lacks; "
+        "test_without_posix_fallocate_a_copy_is_refused_naming_the_platform covers the refusal"
+    ),
+)
+"""For a test that writes a decoded copy: the writer refuses a platform without the reservation."""
 
 
 def write_copy(

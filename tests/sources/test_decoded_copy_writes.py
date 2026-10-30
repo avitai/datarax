@@ -30,7 +30,7 @@ from datarax.sources.decoded_copy._files import begin_copy, clear_copy
 from datarax.sources.decoded_copy._layout import LayoutColumn
 from datarax.sources.decoded_copy._units import source_layout
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from tests.test_common.decoded_copies import IDENTITY, write_copy
+from tests.test_common.decoded_copies import IDENTITY, needs_posix_fallocate, write_copy
 
 
 _UNIT = 4
@@ -98,6 +98,7 @@ def events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Events:
     return found
 
 
+@needs_posix_fallocate
 class TestTheDurabilityOrder:
     def test_each_partial_is_fsynced_once_after_the_last_unit_then_renamed(
         self, events: _Events
@@ -163,6 +164,7 @@ class TestTheDurabilityOrder:
 
 
 class TestTheReservation:
+    @needs_posix_fallocate
     def test_reserves_each_partial_to_its_full_size(self, tmp_path: Path) -> None:
         layout = source_layout(_source(4096))
 
@@ -175,15 +177,14 @@ class TestTheReservation:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         calls: list[int] = []
-        reserve = os.posix_fallocate
 
         def full(fd: int, offset: int, length: int) -> None:
             calls.append(length)
             if len(calls) == 2:
                 raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
-            reserve(fd, offset, length)
+            os.ftruncate(fd, max(os.fstat(fd).st_size, offset + length))
 
-        monkeypatch.setattr(os, "posix_fallocate", full)
+        monkeypatch.setattr(os, "posix_fallocate", full, raising=False)
         layout = source_layout(_source())
         directory = tmp_path / "copy"
 
@@ -197,13 +198,14 @@ class TestTheReservation:
     def test_without_posix_fallocate_a_copy_is_refused_naming_the_platform(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        monkeypatch.delattr(os, "posix_fallocate")
+        monkeypatch.delattr(os, "posix_fallocate", raising=False)
 
         with pytest.raises(OSError, match=sys.platform):
             with begin_copy(tmp_path / "copy", source_layout(_source()), unit_records=4):
                 pass
 
     @pytest.mark.slow
+    @needs_posix_fallocate
     def test_on_a_real_small_filesystem_the_refusal_frees_what_it_reserved(
         self, tmp_path: Path
     ) -> None:
@@ -259,6 +261,7 @@ class TestTheReservation:
         assert words[2] == words[3], "the refused reservation's blocks are freed"
 
 
+@needs_posix_fallocate
 def test_a_reader_started_before_the_manifest_is_refused(tmp_path: Path) -> None:
     layout = source_layout(_source())
     directory = tmp_path / "copy"

@@ -32,7 +32,7 @@ from datarax.core.index_words import to_words
 from datarax.pipeline import host_workers, materialization, materialize
 from datarax.sources import from_tfds, open_decoded_copy, StreamingDiskSource
 from datarax.sources.decoded_copy._layout import MANIFEST
-from tests.test_common.decoded_copies import every_record, write_copy
+from tests.test_common.decoded_copies import every_record, needs_posix_fallocate, write_copy
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.tfds_golden import digests, EAGER_BUILD
 from tests.test_common.worker_reads import (
@@ -96,6 +96,7 @@ class _Crossing:
 
 class TestWritingInPlace:
     @pytest.mark.parametrize("workers", COUNTS)
+    @needs_posix_fallocate
     def test_the_files_are_the_same_whoever_writes_them(
         self, png_paths: list[str], tmp_path: Path, workers: int
     ) -> None:
@@ -116,6 +117,7 @@ class TestWritingInPlace:
         _same(every_record(copy)[0], every_record(source)[0])
 
     @pytest.mark.skipif(not PROCESS_COUNTS, reason="fewer than two CPUs: no worker processes")
+    @needs_posix_fallocate
     def test_workers_send_back_no_rows_only_provenance_and_a_digest(
         self, png_paths: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -141,6 +143,7 @@ class TestWritingInPlace:
         getattr(sys, "_is_gil_enabled", lambda: True)() is False,
         reason="free-threaded Python runs mp_prefetch on threads: no worker to spy on",
     )
+    @needs_posix_fallocate
     def test_no_worker_flushes_a_map(
         self, png_paths: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -184,6 +187,7 @@ class TestWritingInPlace:
 
     @pytest.mark.tfds
     @pytest.mark.parametrize("workers", COUNTS)
+    @needs_posix_fallocate
     def test_a_tfds_split_s_copy_opens_through_from_tfds(
         self, tfds_fixture: TFDSFixture, tmp_path: Path, workers: int
     ) -> None:
@@ -206,7 +210,7 @@ class TestWritingInPlace:
         assert [p["name"].decode() for p in provenance] == names
 
     @pytest.mark.skipif(not PROCESS_COUNTS, reason="fewer than two CPUs: no worker processes")
-    @pytest.mark.parametrize("ram", [False, True])
+    @pytest.mark.parametrize("ram", [pytest.param(False, marks=needs_posix_fallocate), True])
     def test_a_unit_that_cannot_cross_stops_the_build_naming_it(
         self, png_paths: list[str], tmp_path: Path, ram: bool
     ) -> None:
@@ -224,6 +228,7 @@ class TestWritingInPlace:
                 open_decoded_copy(tmp_path / "copy")
 
 
+@needs_posix_fallocate
 class TestTheDurabilityOrderWithWorkers:
     @pytest.mark.skipif(not PROCESS_COUNTS, reason="fewer than two CPUs: no worker processes")
     def test_files_are_fsynced_after_the_last_unit_arrives_and_the_manifest_last(
@@ -272,6 +277,7 @@ class TestTheDurabilityOrderWithWorkers:
         assert log[-1] == ("fsync", "copy"), "the directory is fsynced last"
 
 
+@needs_posix_fallocate
 class TestReuseAndRebuild:
     def _build(self, paths: list[str], directory: Path, **options: Any) -> Any:
         return materialize(
@@ -422,6 +428,7 @@ class TestReuseAndRebuild:
         assert json.loads(outputs[0]) == list(range(_RECORDS))
 
 
+@needs_posix_fallocate
 def test_a_copy_reads_its_provenance_by_index(png_paths: list[str], tmp_path: Path) -> None:
     copy = materialize(png_source(png_paths), directory=tmp_path / "copy", unit_records=_UNIT)
     words = to_words(np.array([29, 0, 7], dtype=np.uint64))

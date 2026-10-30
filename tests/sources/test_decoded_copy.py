@@ -35,7 +35,12 @@ from datarax.sources.decoded_copy._units import (
     write_unit,
 )
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
-from tests.test_common.decoded_copies import every_record, IDENTITY, write_copy
+from tests.test_common.decoded_copies import (
+    every_record,
+    IDENTITY,
+    needs_posix_fallocate,
+    write_copy,
+)
 from tests.test_common.worker_reads import logged, png_source, PngDecoder, write_png_records
 
 
@@ -190,6 +195,7 @@ class TestProvenanceEncoding:
             encode_provenance({"tags": value})
 
 
+@needs_posix_fallocate
 class TestWritingACopy:
     def test_partial_files_and_no_manifest_until_it_finishes(self, tmp_path: Path) -> None:
         source = _memory_source()
@@ -222,6 +228,7 @@ class TestWritingACopy:
         assert manifest["content"]["algorithm"] == "sha256-of-unit-sha256"
 
 
+@needs_posix_fallocate
 class TestReadingACopy:
     @pytest.mark.parametrize("kind", ["memory", "png"])
     def test_serves_every_record_and_its_provenance_as_the_source_does(
@@ -288,6 +295,7 @@ class TestReadingACopy:
             open_decoded_copy(directory, verify=True)
 
 
+@needs_posix_fallocate
 class TestARefusedCopy:
     def _copy(self, tmp_path: Path) -> Path:
         directory = tmp_path / "copy"

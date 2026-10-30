@@ -34,8 +34,12 @@ from datarax.core.index_words import from_words, to_words
 from datarax.core.operator import OperatorModule
 from datarax.pipeline import materialize, Pipeline
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.decoded_copies import needs_posix_fallocate
 from tests.test_common.placement import PlacementSpy
 from tests.test_common.worker_reads import png_source, stream_of, write_png_records
+
+
+pytestmark = needs_posix_fallocate
 
 
 _RECORDS = 48

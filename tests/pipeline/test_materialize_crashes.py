@@ -32,7 +32,7 @@ import pytest
 from datarax.core.host_resources import available_cpus
 from datarax.pipeline import materialize
 from datarax.sources import open_decoded_copy
-from tests.test_common.decoded_copies import write_copy
+from tests.test_common.decoded_copies import needs_posix_fallocate, write_copy
 from tests.test_common.worker_reads import (
     is_gone,
     png_source,
@@ -167,6 +167,7 @@ def _end_survivors(pids: list[int], *, within: float) -> list[int]:
     return survivors
 
 
+@needs_posix_fallocate
 class TestAKilledBuild:
     @pytest.mark.parametrize("where", list(_SCRIPTS))
     def test_leaves_no_finished_copy_and_its_rerun_writes_fresh_identical_files(
@@ -254,6 +255,7 @@ materialize(png_source(paths), host_resources=resources(workers), directory=dire
 report(names=sorted(names))
 """
 
+    @needs_posix_fallocate
     def test_the_in_place_disk_build_shows_none(self, png_paths: list[str], tmp_path: Path) -> None:
         run = _run(self._BUILD, png_paths, tmp_path / "copy", tmp_path / "logs")
 

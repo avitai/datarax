@@ -13,6 +13,15 @@ import threading
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+import pytest
+
+
+needs_proc = pytest.mark.skipif(
+    not Path("/proc/self/maps").exists(),
+    reason="reads this process's /proc tables, which only Linux has",
+)
+"""For a test that reads ``/proc``, as :func:`mapped` and :func:`open_descriptors` do."""
+
 
 def open_descriptors(paths: Iterable[str | Path]) -> list[str]:
     """The files among ``paths`` this process holds an open descriptor on."""
