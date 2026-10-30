@@ -18,8 +18,9 @@ bytes:
 - ``F``: a worker's own memory; ``P``: what a worker is sent, the read; ``S``: the source's
   working set in a worker; ``O``: the order's working set; ``C``: the decoded columns a build
   holds in the training process (0 for a pipeline's run); ``M_main``: the training process's
-  resident memory when the plan is made, with JAX's runtime and compiler started (the source's
-  data, the model and everything else the process holds).
+  memory when the plan is made (its resident size, on macOS its physical footprint, which also
+  counts compressed pages), with JAX's runtime and compiler started (the source's data, the
+  model and everything else the process holds).
 
 Workers ``k`` for a GIL-bound read is the largest count with::
 
@@ -150,7 +151,7 @@ class HostTerms:
     Attributes:
         unit_bytes: ``E``, one unit as the read returns it.
         device_buffer: ``d``, placed units staged on the device ahead of the consumer's.
-        main_bytes: ``M_main``, the training process's resident memory at plan time.
+        main_bytes: ``M_main``, the training process's memory at plan time.
         order_bytes: ``O``, the order's working set; 0 for the global order.
         sink_bytes: ``C``, the decoded columns a build holds in the training process; 0 for a
             pipeline's run.
@@ -442,16 +443,16 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
 ) -> HostTerms:
     """What a run's reads cost, measured: ``E``, ``O``, ``M_main``, and for processes ``P, S, F``.
 
-    ``M_main`` is the training process's resident memory now, the source's data and the
-    process's runtime included. Under processes the workers' read is built first, so what it
-    shares with them (a stream's offset index, mapped by the source) is resident in the training
-    process once and never added on top; ``P`` is that read as it pickles, ``S`` what it declares
-    (:class:`~datarax.core.host_resources.WorkerFootprint`), and ``F``, unless the caller gives
-    it, the peak of one probe worker reading the run's first unit under the run's settings. A
-    thread plan builds and pickles nothing. The workers' units in ``/dev/shm`` are bounded by the
-    smaller of the caller's share and the free bytes measured, or by the free bytes without a
-    share; under a mesh spanning processes the share is required, since every process on a
-    machine measures the same free bytes and would plan against all of them.
+    ``M_main`` is the training process's memory now (:func:`host_workers.process_bytes`), the
+    source's data and the process's runtime included. Under processes the workers' read is built
+    first, so what it shares with them (a stream's offset index, mapped by the source) is resident
+    in the training process once and never added on top; ``P`` is that read as it pickles, ``S``
+    what it declares (:class:`~datarax.core.host_resources.WorkerFootprint`), and ``F``, unless
+    the caller gives it, the peak of one probe worker reading the run's first unit under the
+    run's settings. A thread plan builds and pickles nothing. The workers' units in ``/dev/shm``
+    are bounded by the smaller of the caller's share and the free bytes measured, or by the free
+    bytes without a share; under a mesh spanning processes the share is required, since every
+    process on a machine measures the same free bytes and would plan against all of them.
 
     Args:
         unit_bytes: ``E``, one unit's host bytes.
@@ -480,7 +481,7 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
         cpus=available_cpus(),
     )
     if path is not HostReadPath.PROCESSES:
-        return dataclasses.replace(terms, main_bytes=host_workers.resident_bytes())
+        return dataclasses.replace(terms, main_bytes=host_workers.process_bytes())
     share = resources.shm_budget_bytes
     if share is None and spans_processes:
         raise ValueError(
@@ -492,7 +493,7 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     worker_read = read()
     read_bytes = host_workers.pickled_bytes(worker_read)
     footprint = worker_read if isinstance(worker_read, WorkerFootprint) else None
-    main_bytes = host_workers.resident_bytes()
+    main_bytes = host_workers.process_bytes()
     worker_bytes = resources.worker_bytes
     if worker_bytes is None:
         worker_bytes = host_workers.probe_worker_bytes(first_unit(worker_read), settings=settings)

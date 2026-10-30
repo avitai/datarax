@@ -615,8 +615,8 @@ def png_paths(tmp_path_factory: pytest.TempPathFactory) -> list[str]:
     return write_png_records(tmp_path_factory.mktemp("png"), 12)
 
 
-def _same_terms_but_resident(measured: HostTerms, planned: HostTerms) -> None:
-    """Every term equal but ``M_main``, the resident size read at a different moment."""
+def _same_terms_but_main(measured: HostTerms, planned: HostTerms) -> None:
+    """Every term equal but ``M_main``, the process's memory read at a different moment."""
     assert dataclasses.replace(measured, main_bytes=0) == dataclasses.replace(planned, main_bytes=0)
 
 
@@ -662,7 +662,7 @@ class TestHostStageMeasuresFromABareSource:
             settings=JaxSettings.current(),
             spans_processes=False,
         )
-        _same_terms_but_resident(measured, planned)
+        _same_terms_but_main(measured, planned)
         direct = stage._terms(  # noqa: SLF001
             source,
             batch_size=4,
@@ -676,7 +676,7 @@ class TestHostStageMeasuresFromABareSource:
             settings=JaxSettings.current(),
             sharding=None,
         )
-        _same_terms_but_resident(direct, planned)
+        _same_terms_but_main(direct, planned)
         pipe.close()
 
     def test_a_thread_plan_s_terms_from_a_bare_source(self) -> None:
@@ -700,7 +700,7 @@ class TestHostStageMeasuresFromABareSource:
             settings=JaxSettings.current(),
             sharding=None,
         )
-        _same_terms_but_resident(direct, planned)
+        _same_terms_but_main(direct, planned)
 
 
 def test_the_moved_names_are_gone_from_core() -> None:

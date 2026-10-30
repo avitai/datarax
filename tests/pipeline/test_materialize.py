@@ -28,7 +28,7 @@ from datarax.pipeline.read_plan import WORKER_BUFFER
 from datarax.sources import from_tfds, MemorySource, MemorySourceConfig, open_decoded_copy
 from datarax.sources.decoded_copy._units import source_layout
 from tests.test_common.decoded_copies import every_record, write_copy
-from tests.test_common.host_plans import STILL_RESIDENT
+from tests.test_common.host_plans import STILL_MAIN_BYTES
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.tfds_golden import digests, EAGER_BUILD
 from tests.test_common.worker_reads import (
@@ -229,7 +229,7 @@ class TestWorkersByReadKind:
             _same(every_record(result)[0], every_record(source)[0])
         assert started.counts == []
 
-    @pytest.mark.usefixtures("still_resident")
+    @pytest.mark.usefixtures("still_main_bytes")
     def test_a_gil_free_build_reads_nothing_ahead_so_its_budget_holds_no_read_buffer(
         self, started: _Workers
     ) -> None:
@@ -238,7 +238,7 @@ class TestWorkersByReadKind:
         unit = _UNIT * rows[0].nbytes
         source = MemorySource(MemorySourceConfig(), {"x": rows})
         budget = HostResources(
-            ram_budget_bytes=STILL_RESIDENT + rows.nbytes + 4 * unit, max_workers=1
+            ram_budget_bytes=STILL_MAIN_BYTES + rows.nbytes + 4 * unit, max_workers=1
         )
 
         result = materialize(source, host_resources=budget, unit_records=_UNIT)

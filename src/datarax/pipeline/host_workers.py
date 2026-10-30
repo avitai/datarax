@@ -23,8 +23,6 @@ import dataclasses
 import io
 import multiprocessing
 import os
-import platform
-import resource
 import signal
 import threading
 from collections.abc import Callable
@@ -39,13 +37,13 @@ import cloudpickle
 import grain
 import jax
 import jax.numpy as jnp
-import psutil
 from absl import flags
 
 # The check that JAX started its backends: JAX exposes it nowhere public, and
 # jax.distributed.initialize refuses a late start with the same call.
 from jax._src import xla_bridge
 
+from datarax.core import process_memory
 from datarax.core.data_source import Provenance
 from datarax.core.prng import host_device
 
@@ -365,17 +363,18 @@ def _zero() -> jax.Array:
     return jnp.zeros((), jnp.float32)
 
 
-def resident_bytes() -> int:
-    """The training process's resident memory, read once JAX's runtime and compiler run.
+def process_bytes() -> int:
+    """The training process's memory, read once JAX's runtime and compiler run.
 
     A first jitted program on the CPU device starts them (once a process; no host transfer, so a
     caller's transfer guard is untouched), so the reading holds them as every later one will.
 
     Returns:
-        The resident set size in bytes.
+        :func:`~datarax.core.process_memory.current_bytes`: the resident size, or on macOS the
+        physical footprint, which also counts the pages the memory compressor holds.
     """
     jax.block_until_ready(jax.jit(_zero, out_shardings=host_device())())
-    return psutil.Process().memory_info().rss
+    return process_memory.current_bytes()
 
 
 def shm_free_bytes() -> int | None:
@@ -391,23 +390,23 @@ def shm_free_bytes() -> int | None:
     return stats.f_bavail * stats.f_frsize
 
 
-def peak_resident_bytes() -> int:
-    """This process's peak resident size, in bytes.
+def peak_process_bytes() -> int:
+    """The most memory this process has occupied, in bytes.
 
     Returns:
-        ``ru_maxrss``, which Linux reports in KiB and macOS in bytes.
+        :func:`~datarax.core.process_memory.peak_bytes`: the peak resident size, or on macOS the
+        lifetime maximum of the physical footprint.
     """
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak if platform.system() == "Darwin" else peak * 1024
+    return process_memory.peak_bytes()
 
 
 def _probe(payload: bytes, settings: JaxSettings, report: Any) -> None:
-    """A probe worker: set up as a worker, read one unit, report the peak resident size."""
+    """A probe worker: set up as a worker, read one unit, report its peak memory."""
     try:
         WorkerSetUp(settings=settings)(0, 1)
         read = cloudpickle.loads(payload)  # the host stage's own read, sent by its parent
         read()
-        report.send(peak_resident_bytes())
+        report.send(peak_process_bytes())
     except Exception as error:  # noqa: BLE001 - sent back to the training process, raised there
         report.send(f"{type(error).__name__}: {error}")
     finally:
@@ -417,16 +416,18 @@ def _probe(payload: bytes, settings: JaxSettings, report: Any) -> None:
 def probe_worker_bytes(read: Callable[[], Any], *, settings: JaxSettings) -> int:
     """A worker's own memory ``F``: one spawned worker set up as the run's reads one unit.
 
-    The probe's peak resident size holds the interpreter, the imports, JAX's CPU runtime, the
-    unpickled read, its naming compile and one unit's read; resident size counts pages shared
-    with other processes too, so it errs toward fewer workers. It costs one worker start.
+    The probe's peak memory (:func:`peak_process_bytes`) holds the interpreter, the imports,
+    JAX's CPU runtime, the unpickled read, its naming compile and one unit's read. Linux's
+    resident size counts pages shared with other processes too (the libraries' code), so there it
+    errs toward fewer workers; macOS's footprint counts dirty and compressed pages, not clean ones
+    such as those. It costs one worker start.
 
     Args:
         read: Reads one unit of the run when called; it pickles.
         settings: The run's JAX settings.
 
     Returns:
-        The probe's peak resident size, in bytes.
+        The probe's peak memory, in bytes.
 
     Raises:
         RuntimeError: If the probe failed to read, naming its error.
@@ -464,10 +465,10 @@ __all__ = [
     "crossing_provenance",
     "in_workers",
     "mark_grain_worker_flag",
-    "peak_resident_bytes",
+    "peak_process_bytes",
     "pickled_bytes",
     "probe_worker_bytes",
     "received_provenance",
-    "resident_bytes",
+    "process_bytes",
     "shm_free_bytes",
 ]

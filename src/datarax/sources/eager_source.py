@@ -433,7 +433,7 @@ class EagerSource(DataSourceModule):
         return self.length
 
     def order_working_bytes(self, order: BlockOrder) -> int:  # noqa: ARG002 - nothing to hold
-        """0: the records are host columns, already the training process's resident memory.
+        """0: the records are host columns, already in the training process's memory.
 
         Args:
             order: The block order a run reads in.

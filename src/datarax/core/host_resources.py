@@ -39,7 +39,7 @@ class HostResources:
 
     Attributes:
         ram_budget_bytes: Host RAM the training process and its host stage may use: the
-            process's resident memory when a run is planned, the units in flight and every
+            process's memory when a run is planned, the units in flight and every
             worker it starts.
         max_workers: The most read threads or worker processes, at most the CPUs available.
         worker_bytes: A worker's own memory (interpreter, imports, JAX's CPU runtime, its
@@ -102,7 +102,7 @@ class OrderWorkingSet(Protocol):
 
     Every ``INDEXED`` source implements it: a source read from storage reports one buffer's
     records' stored bytes (:func:`~datarax.core.block_order.buffer_bytes`), an in-memory source
-    0, since its records are already the training process's resident memory, and a mix the sum
+    0, since its records are already in the training process's memory, and a mix the sum
     of its children's. The plan charges it to the budget as the order's term, ``O``.
     """
 

@@ -361,6 +361,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `substrax.testing.report` and the test reads it with `ChildResult.report_as`, instead of parsing
   the child's last line of standard output: `tests/test_common/processes.run_processes`, its three
   child programs, and every test that read a `run_python` child's last line.
+- `datarax.pipeline.host_workers.resident_bytes` and `peak_resident_bytes` are
+  `process_bytes` and `peak_process_bytes`: on macOS they read the physical footprint, not the
+  resident size.
 - The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
   notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
   at `eaff31ab`: PreAct ResNet-18 with PyTorch's initialization (11,171,274 parameters, as the
@@ -929,6 +932,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The multi-process tests no longer fail when Gloo writes `[Gloo] Rank 1 is connected to 1 peer
   ranks...` after a process's report: the report travels on its own channel, which no library
   writes to, where the last line of standard output was read before.
+- On macOS a RAM budget counts the training process's physical footprint as `M_main`, and a
+  worker's peak footprint as `F`, where both read the resident size: macOS leaves the pages its
+  memory compressor holds out of the resident size, so the budget counted less than the process
+  occupied (256 MiB held raised `M_main` by 171.8 MiB on macos-14). Linux still reads the
+  resident size.
 - MixUp/CutMix and Poisson noise no longer make the host wait for the GPU on every batch.
   `BatchMixOperator` drew its mixing ratio with `jax.random.beta` and `NoiseOperator(mode="poisson")`
   its counts with `jax.random.poisson`, whose default rejection samplers lower to `while` loops; on a
