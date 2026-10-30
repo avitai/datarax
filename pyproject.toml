@@ -25,10 +25,11 @@ classifiers = [
 dependencies = [
   "array-record>=0.8.4",
   "calibrax>=0.1.14",
-  # The flax, jax, orbax and numpy floors are what every release since 0.1.5 has
-  # resolved and run CI against. Below flax 0.12.1 nnx Variable lacks set_value /
-  # get_value, which pipeline/iteration.py calls at every yield boundary.
-  "flax>=0.12.9",
+  # The jax, orbax and numpy floors are what every release since 0.1.5 has resolved and
+  # run CI against. flax 0.12.9 declares jax>=0.11.1 yet fails to import on jax 0.12
+  # (jax.experimental.hijax has no HiPrimitive), so the flax floor is the first release
+  # that imports on every jax this floor admits.
+  "flax>=0.12.10",
   "jax>=0.11.1",
   "jaxtyping>=0.2.20",
   "lazy-loader>=0.5", # datarax.sources exports its optional integrations from __init__.pyi
