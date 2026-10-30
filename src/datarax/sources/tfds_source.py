@@ -42,6 +42,7 @@ import numpy as np
 import tensorflow_datasets as tfds
 
 from datarax.core.data_source import DataSourceModule
+from datarax.core.field_paths import spelling
 from datarax.core.host_resources import HostResources
 from datarax.core.host_values import HostValue
 from datarax.core.spec import JAX_ARRAY_KINDS
@@ -49,6 +50,9 @@ from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin
 from datarax.sources._tfds_identity import split_identity, SplitOrigin
 from datarax.sources._tfds_prepared import (
+    decoded_infos,
+    decoded_names,
+    feature_tree,
     kept_features,
     prepare_call,
     prepared_builder,
@@ -59,6 +63,7 @@ from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRe
 from datarax.sources.decoded_copy import open_decoded_copy
 from datarax.sources.decoded_copy._units import build_in_memory
 from datarax.sources.eager_source import EagerSource
+from datarax.sources.source_ops import KeyFilter
 from datarax.sources.tfds_streaming_source import TFDSStreamingConfig, TFDSStreamingSource
 
 
@@ -96,8 +101,8 @@ class TFDSEagerConfig(SourceConfigBase):
             directory (``TFDS_DATA_DIR``, else ``~/tensorflow_datasets``) when ``None``
         as_supervised: If True, keeps only the dataset's supervised features
             (``info.supervised_keys``), under their own names
-        include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
-        exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
 
     Note:
         The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
@@ -150,8 +155,7 @@ class _ExampleDecoder:
 
     features: Any
     keys: tuple[str, ...] | None
-    include_keys: AbstractSet[str] | None
-    exclude_keys: AbstractSet[str] | None
+    key_filter: KeyFilter
     origin: SplitOrigin
 
     def source_identity(self) -> dict[str, Any]:  # noqa: DOC502 - split_identity raises
@@ -168,26 +172,21 @@ class _ExampleDecoder:
             ValueError: If a kept feature is a ``Video``, which decodes every frame, far beyond
                 its stored size, so no decoded copy of it is written.
         """
-        kept = kept_features(dict(self.features), self.keys, self.include_keys, self.exclude_keys)
+        kept = kept_features(feature_tree(self.features), self.keys, self.key_filter)
         return split_identity(
             self.origin,
             kept,
             {
                 "keys": self.keys,
-                "include_keys": self.include_keys,
-                "exclude_keys": self.exclude_keys,
+                "include_keys": self.key_filter.include,
+                "exclude_keys": self.key_filter.exclude,
             },
         )
 
     def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
         """One kept mapping of decoded features per record."""
         return [
-            kept_features(
-                self.features.deserialize_example_np(record),
-                self.keys,
-                self.include_keys,
-                self.exclude_keys,
-            )
+            kept_features(self.features.deserialize_example_np(record), self.keys, self.key_filter)
             for record in records
         ]
 
@@ -213,27 +212,27 @@ def _per_batch_split(  # noqa: DOC502 - _array_record_builder and supervised_key
         split: The split, slices included (``"train[:5000]"``).
         data_dir: The data directory; TFDS's default when ``None``.
         as_supervised: If True, keeps only the supervised features, under their own names.
-        include_keys: Optional set of keys to include.
-        exclude_keys: Optional set of keys to exclude.
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
 
     Returns:
         An ``ArrayRecordSourceModule`` over the split.
 
     Raises:
         FileNotFoundError: If the dataset is not prepared as ArrayRecord in the data directory.
-        ValueError: If ``as_supervised`` is asked of a dataset without supervised keys.
+        ValueError: If ``as_supervised`` is asked of a dataset without supervised keys, or a
+            filter names a feature the dataset does not have.
     """
     builder = _array_record_builder(name, data_dir)
     keys = tuple(supervised_keys(builder.info, name)) if as_supervised else None
-    return _split_read(builder, split, keys, include_keys, exclude_keys)
+    key_filter = KeyFilter.resolved(
+        "from_tfds", decoded_names(builder.info.features), include_keys, exclude_keys
+    )
+    return _split_read(builder, split, keys, key_filter)
 
 
 def _split_read(
-    builder: Any,
-    split: str,
-    keys: tuple[str, ...] | None,
-    include_keys: AbstractSet[str] | None,
-    exclude_keys: AbstractSet[str] | None,
+    builder: Any, split: str, keys: tuple[str, ...] | None, key_filter: KeyFilter
 ) -> ArrayRecordSourceModule:
     """``split`` of ``builder``'s ArrayRecord copy, decoded per batch keeping the given features."""
     info = builder.info
@@ -249,43 +248,41 @@ def _split_read(
     return ArrayRecordSourceModule(
         ArrayRecordSourceConfig(),
         info.splits[split].file_instructions,
-        decode=_ExampleDecoder(info.features, keys, include_keys, exclude_keys, origin=origin),
+        decode=_ExampleDecoder(info.features, keys, key_filter, origin=origin),
     )
 
 
-def _decoded_bytes(features: Any, path: str = "") -> int:
+def _decoded_bytes(features: Any) -> int:
     """The bytes one record's numeric features decode to, at their stored dtypes.
 
-    Strings and other non-numeric features are a record's provenance, not columns, and their
-    size is not known before reading; they are not counted.
+    Each decoded array is read from TFDS's own description of the feature (``decoded_infos``),
+    so a ``Sequence`` counts its length. Strings and other non-numeric arrays are a record's
+    provenance, not columns, and their size is not known before reading; they are not counted.
 
     Args:
-        features: A TFDS feature, or a mapping of them (a record's kept features, or a
-            ``FeaturesDict``, which maps its names to features without being a ``Mapping``).
-        path: The feature's path, for the refusal.
+        features: A record's kept features, as ``feature_tree`` nests them.
 
     Returns:
         The bytes.
 
     Raises:
-        ValueError: If a numeric feature has no fixed shape, naming it and its shape.
+        ValueError: If a numeric array has no fixed shape (a ``Sequence`` of no fixed length, an
+            image of no fixed size), naming it and its shape.
     """
-    if callable(getattr(features, "items", None)):
-        return sum(
-            _decoded_bytes(feature, f"{path}/{key}" if path else str(key))
-            for key, feature in features.items()
-        )
-    dtype = np.dtype(features.np_dtype)
-    if dtype.kind not in JAX_ARRAY_KINDS:
-        return 0
-    shape = tuple(features.shape)
-    if any(size is None for size in shape):
-        raise ValueError(
-            f"feature {path!r} has shape {shape}, so its decoded size is not known before "
-            "reading: an in-memory build under a RAM budget holds features of a fixed shape, as "
-            "a batch's shapes are static"
-        )
-    return math.prod(shape) * dtype.itemsize
+    total = 0
+    for keys, info in decoded_infos(features):
+        dtype = np.dtype(info.np_dtype)
+        if dtype.kind not in JAX_ARRAY_KINDS:
+            continue
+        shape = tuple(info.shape)
+        if any(size is None for size in shape):
+            raise ValueError(
+                f"feature {spelling(keys)!r} has shape {shape}, so its decoded size is not known "
+                "before reading: an in-memory build under a RAM budget holds features of a fixed "
+                "shape, as a batch's shapes are static"
+            )
+        total += math.prod(shape) * dtype.itemsize
+    return total
 
 
 def _refuse_over_budget(  # noqa: PLR0913 - what the decoded size is computed from
@@ -293,8 +290,7 @@ def _refuse_over_budget(  # noqa: PLR0913 - what the decoded size is computed fr
     dataset: str,
     split: str,
     keys: Sequence[str] | None,
-    include_keys: AbstractSet[str] | None,
-    exclude_keys: AbstractSet[str] | None,
+    key_filter: KeyFilter,
     resources: HostResources,
 ) -> None:
     """Refuse an in-memory build of ``split`` whose decoded size is above the caller's budget.
@@ -307,15 +303,14 @@ def _refuse_over_budget(  # noqa: PLR0913 - what the decoded size is computed fr
         dataset: The dataset's name.
         split: The split, slices included.
         keys: The supervised features ``as_supervised`` keeps, or ``None``.
-        include_keys: Features to include, or ``None``.
-        exclude_keys: Features to exclude, or ``None``.
+        key_filter: The source's filter, resolved against the dataset's features.
         resources: The caller's budget.
 
     Raises:
         ValueError: If the decoded size is above ``resources.ram_budget_bytes``, naming the size,
             the budget and the per-batch read; or a kept numeric feature has no fixed shape.
     """
-    kept = kept_features(dict(info.features), keys, include_keys, exclude_keys)
+    kept = kept_features(feature_tree(info.features), keys, key_filter)
     size = info.splits[split].num_examples * _decoded_bytes(kept)
     if size > resources.ram_budget_bytes:
         raise ValueError(
@@ -394,7 +389,13 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
         info = builder.info
         self._dataset_info = HostValue(info)
         keys = self.supervised_keys(dataset) if config.as_supervised else None
-        kept = kept_features(dict(info.features), keys, config.include_keys, config.exclude_keys)
+        key_filter = KeyFilter.resolved(
+            type(config).__name__,
+            decoded_names(info.features),
+            config.include_keys,
+            config.exclude_keys,
+        )
+        kept = kept_features(feature_tree(info.features), keys, key_filter)
         if not kept or info.splits[split].num_examples == 0:
             raise ValueError(
                 f"{dataset} {split} produced no records after loading and filtering; check the "
@@ -406,12 +407,11 @@ class TFDSEagerSource(DatasetSourceMixin, EagerSource):
                 dataset,
                 split,
                 keys,
-                config.include_keys,
-                config.exclude_keys,
+                key_filter,
                 host_resources,
             )
         kept_keys = None if keys is None else tuple(keys)
-        records = _split_read(builder, split, kept_keys, config.include_keys, config.exclude_keys)
+        records = _split_read(builder, split, kept_keys, key_filter)
         self._store(*build_in_memory(records))
 
     def supervised_keys(self, dataset: str) -> list[str]:
@@ -467,8 +467,8 @@ def from_tfds(
         decoded_dir: The directory of the split's decoded copy, read instead of the split
             (with ``in_memory=False``), or ``None``
         as_supervised: If True, keeps only the supervised features, under their own names
-        include_keys: Optional set of keys to include
-        exclude_keys: Optional set of keys to exclude
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
 
     Returns:
         TFDSEagerSource or ArrayRecordSourceModule for an ArrayRecord copy, TFDSStreamingSource

@@ -15,7 +15,7 @@ Key Features:
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, cast, final
+from typing import Any, cast, final, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +26,16 @@ from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import ArrayValue, Batch, Element
+from datarax.core.field_paths import (
+    field_listing,
+    field_paths,
+    FieldExistsError,
+    FieldName,
+    FieldNotFoundError,
+    get_field,
+    path_label,
+    resolve,
+)
 from datarax.core.module import DataraxModule
 from datarax.core.prng import per_record_keys, record_key
 
@@ -264,6 +274,54 @@ def require_distinct(operators: Sequence["OperatorModule"]) -> None:
         raise ValueError(
             "the same operator instance appears twice; it would draw the same values at each "
             "place. Build one instance per place."
+        )
+
+
+class CreatedField(NamedTuple):
+    """A field an operator creates under a name datarax chose (W1), and the parameter naming it.
+
+    Attributes:
+        name: The created field's name.
+        parameter: The configuration parameter that holds the name, for the refusal's fix.
+    """
+
+    name: FieldName
+    parameter: str
+
+
+def _held(keys: tuple[str, ...], node: Any) -> tuple[str, str]:
+    """How a batch holds a field, per record, and what replacing it would replace."""
+    if isinstance(node, dict):
+        inner = [(*keys, *sub) for sub in field_paths(node)]
+        return f"as a group of {len(inner)} fields ({field_listing(inner)})", "the whole group"
+    if hasattr(node, "dtype") and hasattr(node, "shape"):
+        return f"({node.dtype}{list(node.shape[1:])})", "that value"
+    return f"({type(node).__name__})", "that value"
+
+
+def refuse_existing_creates(operator: "OperatorModule", data: PyTree) -> None:
+    """Refuse a declared create whose field the incoming batch already has (W2, W3).
+
+    Args:
+        operator: The operator about to run.
+        data: The batch's data it receives.
+
+    Raises:
+        FieldExistsError: Naming the operator, the field, how the record holds it and the fixes.
+    """
+    for created in operator.created_fields():
+        try:
+            keys = resolve(data, created.name)
+        except FieldNotFoundError:
+            continue
+        held, replaces = _held(keys, get_field(data, keys))
+        raise FieldExistsError(
+            creator=type(operator).__name__,
+            keys=keys,
+            held=held,
+            replaces=replaces,
+            config=type(operator.config).__name__,
+            parameter=created.parameter,
         )
 
 
@@ -521,7 +579,7 @@ class OperatorModule(DataraxModule):
                 f"{jax.tree.structure(current)}; got {jax.tree.structure(replacement)}"
             )
         mismatched = [
-            jax.tree_util.keystr(path)
+            path_label(path)
             for (path, new), old in zip(
                 jax.tree_util.tree_leaves_with_path(replacement),
                 jax.tree.leaves(current),
@@ -652,8 +710,22 @@ class OperatorModule(DataraxModule):
             ) from error
         return batch.replace(data=data, states=states)
 
+    def created_fields(self) -> tuple[CreatedField, ...]:
+        """The fields this operator creates under names datarax chose (W1), checked on each call.
+
+        A create refuses a field the incoming record already has unless its configuration says
+        ``overwrite=True`` (W2); a name the user typed, such as a ``target_key``, replaces and is
+        not declared here. An operator that declares nothing gets no check: its writes replace
+        or create as user code does, and the pipeline's post-stage check still holds them to the
+        naming rules.
+
+        Returns:
+            The created fields, empty by default.
+        """
+        return ()
+
     @final
-    def __call__(self, batch: Batch) -> Batch:
+    def __call__(self, batch: Batch) -> Batch:  # noqa: DOC502 - refuse_existing_creates raises
         """Apply the operator to a batch: the one entry point.
 
         Computes the batch's statistics, derives one key per record from its identity (none for
@@ -666,7 +738,12 @@ class OperatorModule(DataraxModule):
 
         Returns:
             Transformed batch.
+
+        Raises:
+            FieldExistsError: If the batch already has a field this operator declares it creates
+                (:meth:`created_fields`).
         """
+        refuse_existing_creates(self, batch.data)
         stats = self.compute_statistics(batch)
         if self.stochastic and self.deterministic:
             if type(self).apply_deterministic is OperatorModule.apply_deterministic:

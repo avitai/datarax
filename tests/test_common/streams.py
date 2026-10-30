@@ -27,6 +27,7 @@ from datarax.core.config import StructuralConfig
 from datarax.core.data_source import RecordIdentity
 from datarax.core.host_values import HostValue
 from datarax.core.prng import pass_generator
+from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources import StreamChunk, StreamingSourceBase
 from datarax.sources.stream_iterator import chunk_size
 
@@ -58,9 +59,19 @@ class RecordStream(StreamingSourceBase):
             kind: ``STREAM_IDS`` (records named by position) or ``ARRIVAL``.
             texts: Each record's text, kept as its provenance.
             chunk: Records per chunk the pass yields, or ``None`` for the pass's read size.
+
+        Raises:
+            TypeError: If a column holds values a JAX array cannot hold, such as text.
         """
         super().__init__(RecordStreamConfig())
-        self._columns = nnx.data({name: np.asarray(column) for name, column in columns.items()})
+        held = {name: np.asarray(column) for name, column in columns.items()}
+        for name, column in held.items():
+            if column.dtype.kind not in JAX_ARRAY_KINDS:
+                raise TypeError(
+                    f"RecordStream column {name!r} holds {column.dtype}, which no device holds; "
+                    "pass text as texts=, the records' provenance"
+                )
+        self._columns = nnx.data(held)
         self._size = len(next(iter(self._columns.values())))
         self._texts = HostValue(texts)
         self._kind = kind

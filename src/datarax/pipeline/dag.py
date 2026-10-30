@@ -18,6 +18,7 @@ from flax import nnx
 from jax.typing import ArrayLike
 
 from datarax.core.element_batch import Batch
+from datarax.core.field_paths import FieldExistsError, KeyTuple, record_problems
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -122,32 +123,96 @@ class OperatorDag(nnx.Module):
             sink=names[-1] if names else None,
         )
 
-    def __call__(self, batch: Batch) -> Batch:
+    def __call__(self, batch: Batch) -> Batch:  # noqa: DOC503 - re-raised located; helpers raise
         """Run every node over ``batch`` and return the sink's output.
 
         Args:
             batch: The input batch.
+
+        Every node's output is held to the naming rules (``record_problems``), whether or not the
+        node declared its writes. The check reads structure only: it runs while the DAG is traced
+        and on every eager call, never on a cached jitted call.
 
         Returns:
             The sink node's output, or ``batch`` for a DAG without stages.
 
         Raises:
             TypeError: If a node returns anything but a ``Batch``.
+            ValueError: If a node returns a record breaking the naming rules, naming the stage.
+            FieldExistsError: If a stage creates a field its input already has, naming the stage
+                and the field's first writer.
         """
         if self.sink is None:
             return batch
         outputs: dict[str, Batch] = {}
         for name, predecessors in zip(self.order, self.predecessors, strict=True):
             inputs = tuple(outputs[p] for p in predecessors) if predecessors else (batch,)
-            output = self.stages[name](*inputs)
+            stage = f"stage {name!r} ({type(self.stages[name]).__name__})"
+            try:
+                output = self.stages[name](*inputs)
+            except FieldExistsError as error:
+                writer = _first_writer(error.keys, batch, outputs, self.stages)
+                raise error.located(creator=stage, writer=writer) from error
             if not isinstance(output, Batch):
                 raise TypeError(
                     f"DAG node {name!r} ({type(self.stages[name]).__name__}) returned "
                     f"{type(output).__name__}; a node returns a Batch, e.g. "
                     "batch.replace(data={**batch.data, ...})"
                 )
+            _refuse_broken_names(stage, output)
             outputs[name] = output
         return outputs[self.sink]
+
+
+def _refuse_broken_names(stage: str, output: Batch) -> None:
+    """Refuse a stage's output that breaks the naming rules (the post-stage check).
+
+    Args:
+        stage: The stage, as the refusal names it.
+        output: What the stage returned.
+
+    Raises:
+        ValueError: Naming the stage and every problem of its record.
+    """
+    problems = record_problems(output.data)
+    if problems:
+        fix = " Return one of them under another key." if any(p.other for p in problems) else ""
+        raise ValueError(
+            f"{stage} returned a record in which "
+            + "; ".join(str(problem) for problem in problems)
+            + f".{fix}"
+        )
+
+
+def _holds(batch: Batch, keys: KeyTuple) -> bool:
+    node = batch.data
+    for key in keys:
+        if not isinstance(node, dict) or key not in node:
+            return False
+        node = node[key]
+    return True
+
+
+def _first_writer(
+    keys: KeyTuple, batch: Batch, outputs: Mapping[str, Batch], stages: Mapping[str, nnx.Module]
+) -> str | None:
+    """The first stage, in the DAG's order, whose output holds the field ``keys``.
+
+    Args:
+        keys: The field's key tuple.
+        batch: The DAG's input.
+        outputs: The outputs of the stages run so far, in order.
+        stages: The DAG's nodes by name.
+
+    Returns:
+        The stage as a refusal names it, or ``None`` when the field came with the DAG's input.
+    """
+    if _holds(batch, keys):
+        return None
+    for name, output in outputs.items():
+        if _holds(output, keys):
+            return f"stage {name!r} ({type(stages[name]).__name__})"
+    return None
 
 
 __all__ = ["OperatorDag", "Records", "name_records"]

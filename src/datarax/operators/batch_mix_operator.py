@@ -31,7 +31,7 @@ from flax import nnx
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import field_listing, field_paths, refuse_field_nodes
 from datarax.core.operator import OperatorModule
 from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 
@@ -91,7 +91,7 @@ class BatchMixOperator(OperatorModule):
         # Type narrowing for pyright
         self.config: BatchMixOperatorConfig = config
 
-    def apply_batch(  # noqa: DOC503 - refuse_maybe raises the TypeError
+    def apply_batch(  # noqa: DOC503 - refuse_field_nodes raises the TypeError
         self, batch: Batch, keys: jax.Array | None, stats: dict[str, Any] | None
     ) -> Batch:
         """Mix every record with a partner record of the batch.
@@ -116,14 +116,15 @@ class BatchMixOperator(OperatorModule):
         data = batch.data
         field = self.config.data_field
         if not isinstance(data, dict) or field not in data:
-            available = sorted(data) if isinstance(data, dict) else type(data).__name__
-            raise ValueError(
-                f"BatchMixOperator mixes data[{field!r}], which this batch lacks: {available}"
+            available = (
+                field_listing(field_paths(data)) if isinstance(data, dict) else type(data).__name__
             )
-        refuse_maybe(
-            data[field],
-            "BatchMixOperator mixes a field's values between records",
-            f"data[{field!r}]",
+            raise ValueError(
+                f"BatchMixOperator mixes the data field {field!r}, which this batch lacks; its "
+                f"data fields: {available}"
+            )
+        refuse_field_nodes(
+            data[field], "BatchMixOperator mixes a field's values between records", (field,)
         )
         if batch.batch_size == 0:
             # No record to mix and no first record's key: every (absent) record keeps all of

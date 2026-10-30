@@ -46,6 +46,8 @@ from datarax.core.data_source import (
     refuse_unnamed,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.field_nodes import is_field_node
+from datarax.core.field_paths import KeyTuple, node_spellings, path_label
 from datarax.core.host_resources import order_working_bytes
 from datarax.core.index_words import (
     add,
@@ -63,7 +65,12 @@ from datarax.core.index_words import (
 )
 from datarax.core.maybe import Maybe
 from datarax.core.spec import spec_mismatches, SpecMismatchError
-from datarax.sources.eager_source import bind_columns, bound_columns, eager_sources
+from datarax.sources.eager_source import (
+    bind_columns,
+    bound_columns,
+    eager_sources,
+    EagerSource,
+)
 from datarax.sources.memory_source import MemorySource
 from datarax.typing import DataDict
 
@@ -296,14 +303,9 @@ def _present_spec() -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct((), jnp.bool_)
 
 
-def _is_field(node: Any) -> bool:
-    """A ``Maybe`` is one field, not two leaves."""
-    return isinstance(node, Maybe)
-
-
 def _fields_of(tree: Any) -> dict[_Path, Any]:
-    """Each field of a record's spec or a batch's data by its path, a ``Maybe`` as one field."""
-    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=_is_field)
+    """Each field of a record's spec or a batch's data by its path, a field node as one field."""
+    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=is_field_node)
     return dict(flat)
 
 
@@ -328,7 +330,7 @@ def _nested(fields: Mapping[_Path, Any]) -> dict[str, Any]:
         if not all(isinstance(step, jax.tree_util.DictKey) for step in path):
             raise TypeError(
                 f"a mix joins records whose fields are nested dictionaries; field "
-                f"{jax.tree_util.keystr(path)} is not"
+                f"{path_label(path)} is not"
             )
     return traverse_util.unflatten_dict(
         {tuple(step.key for step in path): field for path, field in fields.items()}
@@ -348,12 +350,55 @@ def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> No
         for other, nested in held.items():
             if other != path and other[: len(path)] == path:
                 raise SpecMismatchError(
-                    f"a mix's children disagree on field {jax.tree_util.keystr(path)}:",
+                    f"a mix's children disagree on field {path_label(path)}:",
                     [
-                        f"child {holders[0][0]} holds values at {jax.tree_util.keystr(path)}, "
-                        f"child {nested[0][0]} fields under it ({jax.tree_util.keystr(other)})"
+                        f"child {holders[0][0]} holds values at {path_label(path)}, "
+                        f"child {nested[0][0]} fields under it ({path_label(other)})"
                     ],
                 )
+
+
+def _spellings_of(source: DataSourceModule) -> dict[str, tuple[str, KeyTuple]]:
+    """Each spelling a child names, with the namespace and key tuple of its node."""
+    held = {name: ("data", keys) for name, keys in node_spellings(source.element_spec()).items()}
+    if isinstance(source, EagerSource):
+        for name in source.provenance_names():
+            held.setdefault(name, ("provenance", (name,)))
+    return held
+
+
+def _refuse_spelling_conflicts(sources: Sequence[DataSourceModule]) -> None:
+    """Refuse a spelling two children give to different nodes, or to data and to provenance.
+
+    One spelling names one node across a mix (N0). ``union_spec`` compares the children's fields
+    by key tuple, so a nested ``('meta', 'id')`` in one child and a literal ``('meta/id',)`` in
+    another, both spelled ``meta/id``, reach it as two fields. A child's provenance names are
+    known at construction only for a source holding its records (``EagerSource``); a stream's are
+    checked where it is bound to its reader.
+
+    Args:
+        sources: The mix's children, in order.
+
+    Raises:
+        SpecMismatchError: Naming the spelling and how each child holds it.
+    """
+    first: dict[str, tuple[int, tuple[str, KeyTuple]]] = {}
+    for child, source in enumerate(sources):
+        for name, node in _spellings_of(source).items():
+            earlier, seen = first.setdefault(name, (child, node))
+            if seen == node:
+                continue
+            if seen[0] == node[0]:
+                holders = f"child {earlier} holds {seen[1]!r}, child {child} holds {node[1]!r}"
+            else:
+                holders = (
+                    f"child {earlier} holds {seen[0]} field {seen[1]!r}, child {child} "
+                    f"{node[0]} field {node[1]!r}"
+                )
+            problem = (
+                f"{holders}, both spelled {name!r}. Rename one in its adapter, by its key tuple."
+            )
+            raise SpecMismatchError(f"a mix's children disagree on field {name!r}:", [problem])
 
 
 def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> Any:
@@ -376,7 +421,7 @@ def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> 
         problems = spec_mismatches(first, value)
         if problems:
             raise SpecMismatchError(
-                f"a mix's children disagree on field {jax.tree_util.keystr(path)}: child "
+                f"a mix's children disagree on field {path_label(path)}: child "
                 f"{first_child} holds {first.shape} {first.dtype}, child {child} "
                 f"{value.shape} {value.dtype}:",
                 problems,
@@ -561,7 +606,9 @@ class MixDataSourcesNode(DataSourceModule):
 
         Raises:
             ValueError: If the weights and sources differ in number, Grain's proportions for
-                the weights pass one word, or a source is refused (see the checks it calls).
+                the weights pass one word, a source is refused (see the checks it calls), or two
+                children give one spelling to different nodes, or to data in one and provenance
+                in another.
         """
         super().__init__(config, name=name or "MixDataSourcesNode")
         weights = config.weights
@@ -580,6 +627,7 @@ class MixDataSourcesNode(DataSourceModule):
         self._proportions = proportions
         self._layout()
         self.element_spec()
+        _refuse_spelling_conflicts(self._sources)
 
     @property
     def sources(self) -> tuple[DataSourceModule, ...]:

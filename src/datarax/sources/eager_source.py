@@ -41,10 +41,15 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch, Element
+from datarax.core.field_paths import (
+    field_name,
+    field_names,
+    fields_named,
+    node_spellings,
+)
 from datarax.core.host_values import HostColumns, HostProvenance
 from datarax.core.index_words import low_words, to_words
 from datarax.core.spec import array_to_spec_strip_leading, device_spec, JAX_ARRAY_KINDS
-from datarax.sources._field_paths import field_name, field_names
 from datarax.sources._index_validation import validate_index_batch
 
 
@@ -78,7 +83,9 @@ def is_array_leaf(value: Any) -> bool:
 _ABSENT = object()
 
 
-def split_record(record: Any) -> tuple[PyTree | None, dict[str, Any]]:
+def split_record(  # noqa: DOC502 - _split raises the ValueError
+    record: Any,
+) -> tuple[PyTree | None, dict[str, Any]]:
     """Split one record into its array part and its provenance.
 
     A record is a mapping (nested mappings included) of values, or a single value. Numeric values
@@ -90,23 +97,37 @@ def split_record(record: Any) -> tuple[PyTree | None, dict[str, Any]]:
 
     Returns:
         The array part, or ``None`` when the record has no numeric value, and the provenance.
+
+    Raises:
+        ValueError: If two provenance values have one spelling, as a nested ``{"meta": {"id"}}``
+            beside a literal ``"meta/id"``: the provenance is keyed by spelling and would keep
+            only one.
     """
     provenance: dict[str, Any] = {}
-    part = _split(record, (), provenance)
+    part = _split(record, (), provenance, {})
     return (None if part is _ABSENT else part), provenance
 
 
-def _split(node: Any, path: tuple[str, ...], provenance: dict[str, Any]) -> Any:
+def _split(
+    node: Any, path: tuple[str, ...], provenance: dict[str, Any], paths: dict[str, tuple[str, ...]]
+) -> Any:
     if isinstance(node, Mapping):
         part = {}
         for key, child in node.items():
-            value = _split(child, (*path, str(key)), provenance)
+            value = _split(child, (*path, str(key)), provenance, paths)
             if value is not _ABSENT:
                 part[key] = value
         return part if part else _ABSENT
     if is_array_leaf(node):
         return np.asarray(node)
-    provenance[field_name(path)] = node
+    name = field_name(path)
+    if name in provenance:
+        first, second = sorted((paths[name], path))
+        raise ValueError(
+            f"a record's provenance: {fields_named(name, [repr(first), repr(second)])}"
+        )
+    provenance[name] = node
+    paths[name] = path
     return _ABSENT
 
 
@@ -403,8 +424,8 @@ class EagerSource(DataSourceModule):
             provenance: One mapping per record, or nothing.
 
         Raises:
-            ValueError: If the columns disagree on their record count, or the provenance is not
-                one mapping per record.
+            ValueError: If the columns disagree on their record count, the provenance is not one
+                mapping per record, or a data field and a provenance value share a spelling.
         """
         host = jax.tree.map(np.asarray, columns)
         length = column_length(host)
@@ -412,8 +433,23 @@ class EagerSource(DataSourceModule):
             raise ValueError(
                 f"provenance holds {len(provenance)} records but the columns hold {length}"
             )
+        names = {name for mapping in provenance for name in mapping}
+        for name, keys in node_spellings(host).items():
+            if name in names:
+                holders = [f"data field {keys!r}", f"provenance field {(name,)!r}"]
+                raise ValueError(f"{type(self).__name__}: {fields_named(name, holders)}")
         self.data = host
         self._provenance = HostProvenance(tuple(MappingProxyType(dict(p)) for p in provenance))
+
+    def provenance_names(self) -> frozenset[str]:
+        """The provenance keys this source's records hold, each a spelling.
+
+        Read from the provenance the source holds, so it costs one pass over the records.
+
+        Returns:
+            The union of every record's provenance keys.
+        """
+        return frozenset(name for mapping in self._provenance.value for name in mapping)
 
     @property
     def length(self) -> int:

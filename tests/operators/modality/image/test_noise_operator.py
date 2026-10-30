@@ -718,9 +718,9 @@ class TestNoiseOperatorEdgeCases:
         assert jnp.allclose(result["other"], data["other"])
 
     def test_nested_field_access(self):
-        """Test with nested field access using dot notation."""
+        """A nested field is named by its spelling, the keys joined by "/"."""
         config = NoiseOperatorConfig(
-            field_key="data.image",
+            field_key="data/image",
             mode="gaussian",
             noise_std=0.1,
         )

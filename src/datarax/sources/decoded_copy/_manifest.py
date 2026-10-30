@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from datarax.sources._field_paths import by_field
+from datarax.core.field_paths import by_field
 from datarax.sources.decoded_copy._layout import COPY_FORMAT, MANIFEST, unit_count, unit_rows
 from datarax.sources.decoded_copy._units import content_digest, unit_digest
 from datarax.sources.streaming_disk_source import DiskColumn

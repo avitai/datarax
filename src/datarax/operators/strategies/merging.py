@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import refuse_field_nodes
 
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,7 @@ def merge_outputs_conditional(
     raise ValueError(f"Unknown merge_strategy: {merge_strategy}")
 
 
-def _refuse_missing_values(  # noqa: DOC502 - refuse_maybe raises the TypeError
+def _refuse_missing_values(  # noqa: DOC502 - refuse_field_nodes raises the TypeError
     outputs: list[PyTree], merge_strategy: str | None
 ) -> None:
     """Refuse a ``Maybe`` in any output: a merge would combine its presence as data.
@@ -141,11 +141,10 @@ def _refuse_missing_values(  # noqa: DOC502 - refuse_maybe raises the TypeError
         TypeError: Naming the field, when an output holds a ``Maybe``.
     """
     for output in outputs:
-        refuse_maybe(
+        refuse_field_nodes(
             output,
             f"a {merge_strategy or 'concat'} merge combines the operators' data leaf by leaf "
             "(pass merge_fn to decide what a missing value means)",
-            "data",
         )
 
 
