@@ -33,6 +33,7 @@ from datarax.pipeline import host_workers, materialization, materialize
 from datarax.sources import from_tfds, open_decoded_copy, StreamingDiskSource
 from datarax.sources.decoded_copy._layout import MANIFEST
 from tests.test_common.decoded_copies import every_record, write_copy
+from tests.test_common.host_resources import descriptor_path
 from tests.test_common.tfds_fixture import FIXTURE, TFDSFixture
 from tests.test_common.tfds_golden import digests, EAGER_BUILD
 from tests.test_common.worker_reads import (
@@ -229,14 +230,12 @@ class TestTheDurabilityOrderWithWorkers:
     def test_files_are_fsynced_after_the_last_unit_arrives_and_the_manifest_last(
         self, png_paths: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        if not Path("/proc/self/fd").is_dir():
-            pytest.skip("names an fsynced descriptor through /proc, which this platform lacks")
         log: list[tuple[str, str]] = []
         fsync, rename, replace = os.fsync, os.rename, os.replace
         arrival = materialization.check_arrival
 
         def spied_fsync(fd: int) -> None:
-            log.append(("fsync", Path(os.readlink(f"/proc/self/fd/{fd}")).name))
+            log.append(("fsync", Path(descriptor_path(fd)).name))
             fsync(fd)
 
         def spied_rename(src: Any, dst: Any) -> None:

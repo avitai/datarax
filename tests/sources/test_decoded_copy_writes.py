@@ -31,6 +31,7 @@ from datarax.sources.decoded_copy._layout import LayoutColumn
 from datarax.sources.decoded_copy._units import source_layout
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from tests.test_common.decoded_copies import IDENTITY, write_copy
+from tests.test_common.host_resources import descriptor_path
 
 
 _UNIT = 4
@@ -44,10 +45,6 @@ def _source(records: int = 13) -> MemorySource:
             for i in range(records)
         ],
     )
-
-
-def _path_of(fd: int) -> str:
-    return os.readlink(f"/proc/self/fd/{fd}")
 
 
 class _Events:
@@ -71,8 +68,6 @@ class _Events:
 @pytest.fixture
 def events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Events:
     """Records fsync, rename, replace, unlink and each finished unit in the writing process."""
-    if not Path("/proc/self/fd").is_dir():
-        pytest.skip("names an fsynced descriptor through /proc, which this platform lacks")
     found = _Events(tmp_path / "copy")
     fsync, rename, replace, unlink = os.fsync, os.rename, os.replace, os.unlink
 
@@ -83,7 +78,7 @@ def events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Events:
 
         return recorded
 
-    monkeypatch.setattr(os, "fsync", spy("fsync", fsync, _path_of))
+    monkeypatch.setattr(os, "fsync", spy("fsync", fsync, descriptor_path))
     monkeypatch.setattr(os, "rename", spy("rename", rename, lambda src, dst: str(src)))
     monkeypatch.setattr(os, "replace", spy("replace", replace, lambda src, dst: str(dst)))
     monkeypatch.setattr(os, "unlink", spy("unlink", unlink, lambda path, **_: str(path)))

@@ -31,7 +31,13 @@ from datarax.sources.streaming_disk_source import (
 )
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.device_arrays import arrays_made_since
-from tests.test_common.host_resources import live, mapped, open_descriptors, released
+from tests.test_common.host_resources import (
+    live,
+    mapped,
+    needs_proc,
+    open_descriptors,
+    released,
+)
 
 
 _ROWS = 40
@@ -173,6 +179,7 @@ class TestNothingOfADroppedSourceIsKept:
     count, the configuration), never the source's memory map.
     """
 
+    @needs_proc
     def test_no_map_is_left(self, tmp_path: Path) -> None:
         path = tmp_path / "data.npy"
         np.save(path, _array())
