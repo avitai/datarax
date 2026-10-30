@@ -40,13 +40,16 @@ jobs:
           uv venv
           uv sync --locked --extra dev --extra test --extra data --extra wandb
 
-      # `uv pip install` on top of the locked environment; every later step calls the
-      # environment's own binaries, because `uv run` would re-sync to the lock and undo
-      # the upgrade.
+      # The upgrade resolves the project's requirements with those extras, so newer grain and
+      # orbax-checkpoint bring only releases every installed package admits; `uv pip install
+      # --upgrade <name>` alone does not hold the installed packages' bounds. `uv pip check`
+      # names any conflict left. Every later step calls the environment's own binaries,
+      # because `uv run` would re-sync to the lock and undo the upgrade.
       - name: Upgrade grain and orbax-checkpoint to their newest releases
         run: |
-          uv pip install --upgrade grain orbax-checkpoint
-          .venv/bin/python -c "import grain, orbax.checkpoint as ocp; print('grain', grain.__version__); print('orbax-checkpoint', ocp.__version__)"
+          uv pip install -e ".[dev,test,data,wandb]" --upgrade-package grain --upgrade-package orbax-checkpoint
+          uv pip check
+          .venv/bin/python -c "import flax, grain, jax, orbax.checkpoint as ocp, google.protobuf as pb; print('grain', grain.__version__, 'orbax-checkpoint', ocp.__version__, 'jax', jax.__version__, 'flax', flax.__version__, 'protobuf', pb.__version__)"
 
       - name: Run the fast test subset
         run: |
