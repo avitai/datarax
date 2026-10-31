@@ -15,7 +15,7 @@ In-memory sources read through ``datarax.sources.EagerSource``; streams build on
 from __future__ import annotations
 
 from collections.abc import Mapping, Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import jax
@@ -32,6 +32,10 @@ from datarax.core.field_paths import (
     KeyTuple,
     resolve,
 )
+
+
+# What a record keeps, by key: the value kept whole (None) or cut by the plan below it.
+type KeepPlan = dict[str, KeepPlan | None]
 
 
 def partition_length(length: int, num_workers: int = 1, shard_id: int = 0) -> int:
@@ -123,16 +127,35 @@ class KeyFilter:
     """``include_keys`` or ``exclude_keys`` resolved once against a dataset's fields.
 
     A filter holds field names (N3), so ``meta/score`` names the nested field ``score`` of the
-    group ``meta``; the names resolve at construction, an unknown one refused listing the fields,
-    and records are then filtered by key tuple with no name search per record.
+    group ``meta``. The names resolve at construction, an unknown one refused listing the fields,
+    and resolution also decides what a record keeps: each record is then only cut to that decision,
+    and a record no filter names is returned as it is. A TFDS stream and an ArrayRecord read filter
+    every record they decode, so nothing is decided per record.
 
     Attributes:
         include: The key tuples kept, with everything below them, or ``None`` for every field.
         exclude: The key tuples dropped, or ``None`` for none.
+        plan: What a record keeps, decided at resolution: each kept key's value is kept whole
+            (``None``) or cut by the plan below it; ``None`` when the filter names nothing. Not
+            part of the filter's identity, which is ``include`` and ``exclude``.
     """
 
     include: frozenset[KeyTuple] | None = None
     exclude: frozenset[KeyTuple] | None = None
+    plan: KeepPlan | None = field(default=None, compare=False, hash=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Refuse a filter that names fields without the plan resolution decides.
+
+        Raises:
+            TypeError: If ``include`` or ``exclude`` is given without a plan.
+        """
+        if self.plan is None and (self.include is not None or self.exclude is not None):
+            raise TypeError(
+                "a KeyFilter that names fields decides what a record keeps against the "
+                "dataset's fields: build it with "
+                "KeyFilter.resolved(owner, fields, include_keys, exclude_keys)"
+            )
 
     @classmethod
     def resolved(  # noqa: DOC502 - _resolved_names raises the ValueError
@@ -157,22 +180,25 @@ class KeyFilter:
         Raises:
             ValueError: If a name is not a field of the dataset, listing its fields.
         """
-        return cls(
-            include=_resolved_names(owner, fields, "include_keys", include_keys),
-            exclude=_resolved_names(owner, fields, "exclude_keys", exclude_keys),
-        )
+        include = _resolved_names(owner, fields, "include_keys", include_keys)
+        exclude = _resolved_names(owner, fields, "exclude_keys", exclude_keys)
+        if include is None and exclude is None:
+            return cls()
+        return cls(include=include, exclude=exclude, plan=_plan(fields, (), include, exclude))
 
     def keep(self, record: Any) -> dict[str, Any]:
         """The fields of ``record`` the filter keeps; a group it empties is dropped.
 
         Args:
-            record: A decoded record, or a dataset's features as nested mappings; a group is
-                a mapping and anything else one field, kept or dropped whole.
+            record: A decoded record, or a dataset's features as nested mappings, holding the
+                fields the filter was resolved against or a subset of them; a group is a mapping
+                and anything else one field, kept or dropped whole.
 
         Returns:
-            The kept fields, nested as ``record``.
+            ``record`` itself when the filter names nothing, else its kept fields, nested as
+            ``record``.
         """
-        return _kept(record, (), self.include, self.exclude)
+        return record if self.plan is None else _applied(record, self.plan)
 
 
 def _resolved_names(
@@ -192,24 +218,48 @@ def _resolved_names(
     return frozenset(resolved)
 
 
-def _kept(
+def _plan(
     node: Any,
     path: KeyTuple,
     include: frozenset[KeyTuple] | None,
     exclude: frozenset[KeyTuple] | None,
-) -> dict[str, Any]:
-    kept: dict[str, Any] = {}
+) -> KeepPlan:
+    """What a record keeps of ``node``, the fields at ``path``, decided once at resolution.
+
+    A group is opened only where a name lies below it; any other kept node is kept whole.
+    """
+    plan: KeepPlan = {}
     for key, child in node.items():
         here = (*path, key)
         is_kept, below = _include_below(here, include)
         if not is_kept or (exclude is not None and here in exclude):
             continue
-        if isinstance(child, Mapping) and (below is not None or exclude is not None):
-            inner = _kept(child, here, below, exclude)
+        if isinstance(child, Mapping) and (below is not None or _excludes_below(here, exclude)):
+            inner = _plan(child, here, below, exclude)
             if inner or not child:
-                kept[key] = inner
+                plan[key] = inner
         else:
-            kept[key] = child
+            plan[key] = None
+    return plan
+
+
+def _excludes_below(here: KeyTuple, exclude: frozenset[KeyTuple] | None) -> bool:
+    """Whether ``exclude`` drops a node strictly below the one at ``here``."""
+    return exclude is not None and any(
+        len(keys) > len(here) and keys[: len(here)] == here for keys in exclude
+    )
+
+
+def _applied(record: Mapping[str, Any], plan: KeepPlan) -> dict[str, Any]:
+    """``record`` cut to ``plan``: a value the plan opens but which is no mapping is kept whole."""
+    kept: dict[str, Any] = {}
+    for key, value in record.items():
+        if key not in plan:
+            continue
+        below = plan[key]
+        kept[key] = (
+            value if below is None or not isinstance(value, Mapping) else _applied(value, below)
+        )
     return kept
 
 
