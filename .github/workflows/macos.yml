@@ -42,8 +42,8 @@ jobs:
           echo "unchanged=$unchanged" >> "$GITHUB_OUTPUT"
 
   unit_tests:
-    name: Unit Tests (macos-14, Python ${{ matrix.python-version }})
-    runs-on: macos-14
+    name: Unit Tests (macos-15, Python ${{ matrix.python-version }})
+    runs-on: macos-15
     needs: main_moved
     if: needs.main_moved.outputs.unchanged != 'true'
     strategy:
@@ -99,4 +99,4 @@ jobs:
     if: needs.main_moved.outputs.unchanged != 'true'
     uses: ./.github/workflows/build-verification.yml
     with:
-      os: macos-14
+      os: macos-15

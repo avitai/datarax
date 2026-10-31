@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build:
     name: Package Build Verification (${{ inputs.os || 'ubuntu-latest' }}, Python ${{ matrix.python-version }})
-    # A push or pull request builds on ubuntu; macos.yml passes macos-14 nightly and before a
+    # A push or pull request builds on ubuntu; macos.yml passes macos-15 nightly and before a
     # release.
     runs-on: ${{ inputs.os || 'ubuntu-latest' }}
     strategy:
