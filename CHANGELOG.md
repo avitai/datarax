@@ -357,6 +357,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The nightly macOS lane in `macos.yml`, its unit tests and the package build it runs before a
+  release, runs on `macos-15`. GitHub retires the `macos-14` image on 2026-11-02
+  (actions/runner-images#13518), and its scheduled brownouts already cancel jobs that ask for it.
 - Requires substrax 0.1.25. A child process a test starts reports its result with
   `substrax.testing.report` and the test reads it with `ChildResult.report_as`, instead of parsing
   the child's last line of standard output: `tests/test_common/processes.run_processes`, its three
