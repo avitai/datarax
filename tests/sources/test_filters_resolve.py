@@ -7,6 +7,7 @@ name such as ``meta/score`` filters that nested feature.
 
 from __future__ import annotations
 
+import pickle
 from typing import Any
 
 import datasets
@@ -19,6 +20,7 @@ from datarax.sources import (
     from_tfds,
     HFEagerConfig,
     HFEagerSource,
+    source_ops,
     tfds_source,
     TFDSEagerConfig,
     TFDSEagerSource,
@@ -184,6 +186,70 @@ class TestTFDSFeatureStructure:
         """Only a ``FeaturesDict`` opens; an unbuilt ``Video`` recurses on any attribute read."""
         video = object.__new__(tfds.features.Video)
         assert KeyFilter().keep(feature_tree({"clip": video}))["clip"] is video
+
+
+FIELDS = {"id": None, "image": None, "label": None, "meta": {"score": None, "mask": None}}
+
+
+def _record() -> dict[str, Any]:
+    return {
+        "id": b"train_16399",
+        "image": np.zeros((32, 32, 3), np.uint8),
+        "label": np.int64(3),
+        "meta": {"score": np.float32(0.5), "mask": np.ones(2, bool)},
+    }
+
+
+class TestTheResolvedFilter:
+    """Resolution decides what a record keeps; each record is then only cut to that decision.
+
+    The filter runs on every record a TFDS stream or an ArrayRecord read decodes, so a decision
+    made at construction must not be made again per record (measured on a CIFAR-10 record: a
+    per-key walk cost 0.7 us where returning the record cost 0.08 us).
+    """
+
+    def test_an_unfiltered_record_is_kept_as_it_is(self) -> None:
+        record = _record()
+        assert KeyFilter().keep(record) is record
+        assert KeyFilter.resolved("Config", FIELDS, None, None).keep(record) is record
+
+    def test_a_resolved_filter_decides_nothing_per_record(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        key_filter = KeyFilter.resolved("Config", FIELDS, None, {"id", "meta/mask"})
+
+        def decided_again(*_: Any) -> None:
+            raise AssertionError("the filter decided again for a record")
+
+        monkeypatch.setattr(source_ops, "_include_below", decided_again)
+        record = _record()
+        kept = key_filter.keep(record)
+        assert set(kept) == {"image", "label", "meta"} and set(kept["meta"]) == {"score"}
+
+    def test_a_group_no_exclusion_reaches_is_kept_whole(self) -> None:
+        record = _record()
+        kept = KeyFilter.resolved("Config", FIELDS, None, {"id"}).keep(record)
+        assert kept["meta"] is record["meta"]
+        assert set(kept) == {"image", "label", "meta"}
+
+    def test_a_group_the_filter_empties_is_dropped(self) -> None:
+        key_filter = KeyFilter.resolved("Config", FIELDS, None, {"meta/score", "meta/mask"})
+        assert set(key_filter.keep(_record())) == {"id", "image", "label"}
+
+    def test_a_filter_applies_to_a_record_narrowed_to_its_supervised_keys(self) -> None:
+        key_filter = KeyFilter.resolved("Config", FIELDS, {"image", "meta/score"}, None)
+        narrowed = {key: _record()[key] for key in ("image", "label")}
+        assert set(key_filter.keep(narrowed)) == {"image"}
+
+    def test_a_filter_naming_fields_is_built_by_resolution(self) -> None:
+        with pytest.raises(TypeError, match=r"KeyFilter\.resolved"):
+            KeyFilter(exclude=frozenset({("id",)}))
+
+    def test_a_resolved_filter_pickles_to_a_worker_with_its_decision(self) -> None:
+        key_filter = KeyFilter.resolved("Config", FIELDS, None, {"id"})
+        copied = pickle.loads(pickle.dumps(key_filter))
+        assert copied == key_filter and hash(copied) == hash(key_filter)
+        assert set(copied.keep(_record())) == {"image", "label", "meta"}
 
 
 class TestTFDSDecodedSize:

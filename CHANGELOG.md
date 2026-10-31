@@ -20,7 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the naming rules, worded once for every refusal; `field_listing(paths)` lists fields in name
   order; `fields_named` words a spelling naming several nodes.
 - `datarax.sources.source_ops.KeyFilter`: `include_keys` or `exclude_keys` resolved once against a
-  dataset's fields, then applied by key tuple.
+  dataset's fields, which also decides what a record keeps (`KeyFilter.plan`). Each record a TFDS
+  stream or an ArrayRecord read decodes is then only cut to that decision, and a record no filter
+  names is returned as it is. A filter that names fields is built with `KeyFilter.resolved(...)`;
+  `KeyFilter(include=...)` or `KeyFilter(exclude=...)` without a plan is refused.
 - `EagerSource.provenance_names()`: the provenance keys a source's records hold.
 - A decoded copy is written on macOS. Its files are reserved there with `fcntl(F_PREALLOCATE)`
   and then sized, where Linux uses `os.posix_fallocate`; before, `materialize(directory=...)`
