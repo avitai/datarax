@@ -31,6 +31,7 @@ from datarax.pipeline import Pipeline
 from datarax.sources.array_record_source import ArrayRecordSourceConfig, ArrayRecordSourceModule
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
 from datarax.sources.mixed_source import MixDataSourcesConfig, MixDataSourcesNode
+from tests.test_common.field_labels import unbracketed
 from tests.test_common.mixing import grain_mix, grain_mix_indices, offsets_of, Sized, SizedConfig
 from tests.test_common.streams import non_array_state_leaves, RecordStream
 from tests.test_common.worker_reads import write_records
@@ -127,7 +128,7 @@ class TestTheChildren:
 
     def test_children_with_different_records_are_refused_naming_the_field(self) -> None:
         wide = MemorySource(MemorySourceConfig(), {"x": np.zeros((4, 3), np.float32)})
-        with pytest.raises(ValueError, match=r"\['x'\].*\(\).*\(3,\)"):
+        with pytest.raises(ValueError, match=unbracketed("x") + r".*\(\).*\(3,\)"):
             _mix([_memory(np.arange(4)), wide], (0.5, 0.5))
 
     def test_children_with_different_fields_refuse_the_traced_read_naming_the_host_read(

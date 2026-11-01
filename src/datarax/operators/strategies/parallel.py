@@ -11,8 +11,7 @@ from flax.typing import Dtype
 from jaxtyping import PyTree
 
 from datarax.core.element_batch import Element
-from datarax.core.field_paths import get_field, set_field
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import get_field, refuse_field_nodes, resolve, set_field
 from datarax.core.operator import apply_where, OperatorModule, statistics_for_child
 from datarax.operators.strategies.base import CompositionStrategyImpl
 from datarax.operators.strategies.merging import merge_output_sequence, merge_outputs_conditional
@@ -78,7 +77,7 @@ class ParallelStrategy(CompositionStrategyImpl):
             stats: One entry per child, or ``None``.
 
         Returns:
-            The record with the merged data and the last operator's state.
+            The record with the merged data and the last operator's state, weight and marks.
         """
         outputs = self._apply_each(operators, element, stats)
         merged = merge_output_sequence(
@@ -87,7 +86,7 @@ class ParallelStrategy(CompositionStrategyImpl):
             self.merge_axis,
             self.merge_fn,
         )
-        return element.replace(data=merged, state=outputs[-1].state)
+        return outputs[-1].replace(data=merged)
 
 
 type MixtureWeights = jax.Array | tuple[float, ...]
@@ -112,7 +111,7 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
         """Initialize with the fields to combine and the weights to combine them with.
 
         Args:
-            mix_fields: Dotted paths of the data fields to combine.
+            mix_fields: Names of the data fields to combine, as ``core.field_paths`` names them.
             weights: One weight per operator, for this call: fixed Python numbers, or an array
                 (the softmax of learnable logits, or read from the record).
             dtype: The dtype array weights mix in, ``None`` for the promotion of the field and
@@ -137,16 +136,15 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
 
         Returns:
             The record with each mix field replaced by its weighted sum and the last operator's
-            state.
+            state, weight and marks.
         """
         outputs = self._apply_each(operators, element, stats)
         mixed = element.data
-        for path in self.mix_fields:
+        for name in self.mix_fields:
+            path = resolve(outputs[0].data, name)
             fields = [get_field(output.data, path) for output in outputs]
             for field in fields:
-                refuse_maybe(
-                    field, "WEIGHTED_PARALLEL mixes its fields as arrays", f"data field {path!r}"
-                )
+                refuse_field_nodes(field, "WEIGHTED_PARALLEL mixes its fields as arrays", path)
             stacked = jnp.stack(fields)
             if isinstance(self.weights, tuple):
                 # Fixed weights are constants, not parameters: they mix in the field's dtype
@@ -155,7 +153,7 @@ class WeightedParallelStrategy(CompositionStrategyImpl):
                 # Learnable or per-record weights mix as a Flax layer does
                 stacked, weights = promote_dtype((stacked, self.weights), dtype=self.dtype)
             mixed = set_field(mixed, path, jnp.tensordot(weights, stacked, axes=1))
-        return element.replace(data=mixed, state=outputs[-1].state)
+        return outputs[-1].replace(data=mixed)
 
 
 class ConditionalParallelStrategy(CompositionStrategyImpl):
@@ -199,11 +197,18 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
 
         Returns:
             The record with the merged data of the operators whose condition held and the last
-            operator's state.
+            operator's state, weight and marks.
         """
         conditions = [condition(element.data) for condition in self.conditions]
         outputs = [
-            apply_where(operator, condition, element, statistics_for_child(stats, index))
+            apply_where(
+                operator,
+                condition,
+                element,
+                statistics_for_child(stats, index),
+                owner="CONDITIONAL_PARALLEL",
+                position=index,
+            )
             for index, (operator, condition) in enumerate(zip(operators, conditions, strict=True))
         ]
         merged = merge_outputs_conditional(
@@ -213,4 +218,4 @@ class ConditionalParallelStrategy(CompositionStrategyImpl):
             self.merge_axis,
             self.merge_fn,
         )
-        return element.replace(data=merged, state=outputs[-1].state)
+        return outputs[-1].replace(data=merged)

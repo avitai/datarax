@@ -97,7 +97,7 @@ Config for `BatchMixOperator` (MixUp/CutMix). Always stochastic.
 |-------|------|---------|-------------|
 | `mode` | `str` | `"mixup"` | `"mixup"` or `"cutmix"` |
 | `alpha` | `float` | `1.0` | Beta distribution parameter for mixing ratio |
-| `data_field` | `str` | `"image"` | Field containing the data to mix; labels are left untouched, and each record's partner and the mixing ratio are written to `states[MIX_PARTNER]` and `batch_state[MIX_LAMBDA]` for the loss |
+| `data_field` | `str` | `"image"` | Field containing the data to mix; labels are left untouched, and each row's partner and kept fraction are written to `batch.mix` (`partners`, `lams`) for the loss |
 | `stochastic` | `bool` | `True` | Always `True` (forced) |
 | `stream_name` | `str` | `"batch_mix"` | RNG stream name |
 

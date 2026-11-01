@@ -385,7 +385,8 @@ def _record_data(record: Any, position: int) -> Any:
         The record's values.
 
     Raises:
-        ValueError: If an ``Element`` carries an index or state, which the source would drop.
+        ValueError: If an ``Element`` carries an index, state, a weight other than 1 or marks,
+            which the source would drop.
     """
     if not isinstance(record, Element):
         return record
@@ -398,5 +399,10 @@ def _record_data(record: Any, position: int) -> Any:
         raise ValueError(
             f"record {position} is an Element with state; the source serves records' data, so "
             "an Element given to it carries data only"
+        )
+    if float(record.weight) != 1.0 or jax.tree.leaves((record.masked, record.imputed)):
+        raise ValueError(
+            f"record {position} is an Element with a weight or marks; the source serves records' "
+            "data, so an Element given to it carries data only"
         )
     return record.data

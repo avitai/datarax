@@ -140,14 +140,16 @@ class TestModalityOperatorHelperMethods:
         assert jnp.array_equal(result, jnp.array([1, 2, 3]))
 
     def test_extract_field_missing_raises_key_error(self):
-        """_extract_field should raise KeyError for missing field."""
+        """_extract_field should raise KeyError for missing field, listing the record's fields."""
         config = ModalityOperatorConfig(field_key="image")
         rngs = nnx.Rngs(0)
         operator = ConcreteModalityOperator(config, rngs=rngs)
 
         data = {"mask": jnp.array([1, 1, 0])}
 
-        with pytest.raises(KeyError, match="Field 'image' not found"):
+        with pytest.raises(
+            KeyError, match="'image' names no field of the record; its fields: 'mask'"
+        ):
             operator._extract_field(data, "image")
 
     def test_apply_clip_range_clips_values(self):

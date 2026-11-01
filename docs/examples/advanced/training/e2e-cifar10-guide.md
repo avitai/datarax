@@ -78,7 +78,6 @@ from substrax.testing.compiles import compiled_programs
 
 from datarax.core.config import BatchMixOperatorConfig
 from datarax.core.element_batch import Batch
-from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators import (
     ElementOperator,
     ElementOperatorConfig,
@@ -157,7 +156,8 @@ The reference augments each training image with `RandomCrop(32, padding=4)` (zer
 each record's crop offset and flip are drawn from the record's own key. `BatchMixOperator`
 comes last, as the reference mixes the normalized batch: it draws one ratio lambda per batch
 from Beta(alpha, alpha), pairs each record with a partner from a random permutation, and records
-both for the loss (`batch_state[MIX_LAMBDA]`, `states[MIX_PARTNER]`). The labels stay integers.
+both for the loss (`batch.mix.lams`, one per row, and `batch.mix.partners`). The labels stay
+integers.
 
 One pipeline serves all epochs: `reset()` starts the next epoch, whose order the pipeline
 shuffles anew. The reference's loader keeps the last batch of an epoch short (50,000 = 390 x 128
@@ -374,11 +374,11 @@ optimizer = nnx.Optimizer(
 
 
 def mixed_targets(batch: Batch) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Each record's label, its partner's label and the ratio; without MixUp the ratio is 1."""
+    """Each record's label, its partner's label and its ratio; without MixUp the ratio is 1."""
     labels = batch["label"]
-    if MIX_LAMBDA not in batch.batch_state:
+    if batch.mix is None:
         return labels, labels, jnp.ones(())
-    return labels, labels[batch.states[MIX_PARTNER]], batch.batch_state[MIX_LAMBDA]
+    return labels, labels[batch.mix.partners], jnp.asarray(batch.mix.lams)
 
 
 @nnx.jit

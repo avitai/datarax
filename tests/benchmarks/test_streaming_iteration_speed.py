@@ -71,6 +71,7 @@ _STREAM_PATH_PER_BATCH = {
     "chunk_size": 3,
     "to_words": 1,
     "from_arrays": 1,
+    "_is_padding": 1,
     "_namespace": 1,
     "_namespace.<locals>.<genexpr>": 1,
     "_record_axis": 1,

@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from datarax.core.element_batch import Batch
-from datarax.sources._field_paths import by_field, nested
+from datarax.core.field_paths import by_field, nested
 
 
 COPY_FORMAT = 1
