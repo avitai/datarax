@@ -170,4 +170,11 @@ class ProbabilisticOperator(OperatorModule):
             return self.operator.apply_record(element, child_stats)
 
         should_apply = jax.random.uniform(require_key(key, self), shape=()) < self.probability
-        return apply_where(self.operator, should_apply, element, child_stats)
+        return apply_where(
+            self.operator,
+            should_apply,
+            element,
+            child_stats,
+            owner=type(self).__name__,
+            position=0,
+        )

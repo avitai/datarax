@@ -41,7 +41,7 @@ class EnsembleStrategy(CompositionStrategyImpl):
             stats: One entry per child, or ``None``.
 
         Returns:
-            The record with the reduced data and the last operator's state.
+            The record with the reduced data and the last operator's state, weight and marks.
 
         Raises:
             ValueError: If ``self.mode`` is not one of mean/sum/max/min.
@@ -62,4 +62,4 @@ class EnsembleStrategy(CompositionStrategyImpl):
             reduced = jax.tree.map(lambda *args: jnp.min(jnp.stack(args), axis=0), *datas)
         else:
             raise ValueError(f"Unknown ensemble mode: {self.mode}")
-        return element.replace(data=reduced, state=outputs[-1].state)
+        return outputs[-1].replace(data=reduced)

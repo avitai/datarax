@@ -61,8 +61,8 @@ import numpy as np
 from flax import nnx
 from substrax.artifacts import resolve_output_dir
 
+from datarax.core import Batch, Mix
 from datarax.core.config import BatchMixOperatorConfig
-from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from datarax.operators import ElementOperator, ElementOperatorConfig
 from datarax.operators.batch_mix_operator import BatchMixOperator
 
@@ -112,10 +112,11 @@ loss    = λ * CE(pred, y) + (1 - λ) * CE(pred, y[partner])
 ```
 
 The labels themselves are never mixed. The operator records each record's partner row in
-`states[MIX_PARTNER]` and λ in `batch_state[MIX_LAMBDA]`, and the loss reads them: this is the
-loss of the published implementations (`mixup_criterion` in facebookresearch/mixup-cifar10
-`train.py`, and the CutMix branch of clovaai/CutMix-PyTorch `train.py`). Integer class labels
-stay integers, so nothing ever averages two class indices into a third.
+`batch.mix.partners` and λ in `batch.mix.lams`, one per row, each row holding the batch's one
+draw, and the loss reads them: this is the loss of the published implementations
+(`mixup_criterion` in facebookresearch/mixup-cifar10 `train.py`, and the CutMix branch of
+clovaai/CutMix-PyTorch `train.py`). Integer class labels stay integers, so nothing ever averages
+two class indices into a third.
 """
 
 # %% [markdown]
@@ -245,6 +246,13 @@ def create_mixup_pipeline(alpha=0.4, seed=42):
     )
 
 
+def mix_of(batch: Batch) -> Mix:
+    """The partners and coefficients a mixed batch carries; these pipelines mix every batch."""
+    if batch.mix is None:
+        raise ValueError("this batch was not mixed")
+    return batch.mix
+
+
 # Get MixUp batch
 mixup_pipeline = create_mixup_pipeline(alpha=0.4)
 mixup_batch = next(iter(mixup_pipeline))
@@ -252,8 +260,8 @@ mixup_batch = next(iter(mixup_pipeline))
 print("\nMixUp batch:")
 print(f"  Image shape: {mixup_batch['image'].shape}")
 print(f"  Labels (unchanged integers): {mixup_batch['label'][:8]}")
-print(f"  Partner of each record: {mixup_batch.states[MIX_PARTNER][:8]}")
-print(f"  Mixing ratio λ: {float(mixup_batch.batch_state[MIX_LAMBDA]):.3f}")
+print(f"  Partner of each record: {mix_of(mixup_batch).partners[:8]}")
+print(f"  Mixing ratio λ: {float(mix_of(mixup_batch).lams[0]):.3f}")
 
 # %% [markdown]
 """
@@ -273,9 +281,9 @@ def denormalize_cifar10(images):
 
 def mixed_title(batch, i):
     """Record ``i``'s class and its partner's, each with its weight in the loss."""
-    lam = float(batch.batch_state[MIX_LAMBDA])
+    lam = float(mix_of(batch).lams[i])
     own = CIFAR10_CLASSES[int(batch["label"][i])][:3]
-    other = CIFAR10_CLASSES[int(batch["label"][batch.states[MIX_PARTNER][i]])][:3]
+    other = CIFAR10_CLASSES[int(batch["label"][mix_of(batch).partners[i]])][:3]
     return f"{own}:{lam:.1f} {other}:{1 - lam:.1f}"
 
 
@@ -376,7 +384,7 @@ cutmix_batch = next(iter(cutmix_pipeline))
 
 print("\nCutMix batch:")
 print(f"  Image shape: {cutmix_batch['image'].shape}")
-print(f"  Fraction of each image kept, λ: {float(cutmix_batch.batch_state[MIX_LAMBDA]):.3f}")
+print(f"  Fraction of each image kept, λ: {float(mix_of(cutmix_batch).lams[0]):.3f}")
 
 # %%
 # Plot CutMix samples
@@ -461,8 +469,8 @@ which the cell below checks.
 # %%
 def mixed_cross_entropy(logits, batch):
     """Cross-entropy of mixed records: λ CE(y) + (1 - λ) CE(y[partner]), per record."""
-    lam = batch.batch_state[MIX_LAMBDA]
-    partner = batch.states[MIX_PARTNER]
+    lam = mix_of(batch).lams
+    partner = mix_of(batch).partners
     labels = batch["label"]
     log_probs = jax.nn.log_softmax(logits)
     own = -jnp.take_along_axis(log_probs, labels[:, None], axis=1)[:, 0]
@@ -472,9 +480,9 @@ def mixed_cross_entropy(logits, batch):
 
 logits = jax.random.normal(jax.random.key(0), (BATCH_SIZE, NUM_CLASSES))
 for name, batch in (("MixUp", mixup_batch), ("CutMix", cutmix_batch)):
-    lam = batch.batch_state[MIX_LAMBDA]
+    lam = mix_of(batch).lams[:, None]  # one per row, broadcast over the classes
     soft = lam * jax.nn.one_hot(batch["label"], NUM_CLASSES) + (1 - lam) * jax.nn.one_hot(
-        batch["label"][batch.states[MIX_PARTNER]], NUM_CLASSES
+        batch["label"][mix_of(batch).partners], NUM_CLASSES
     )
     soft_ce = -jnp.sum(soft * jax.nn.log_softmax(logits), axis=1)
     difference = float(jnp.max(jnp.abs(mixed_cross_entropy(logits, batch) - soft_ce)))
@@ -495,10 +503,10 @@ cutmix_lambdas = []
 
 for i in range(20):
     mixup_lambdas.append(
-        float(next(iter(create_mixup_pipeline(alpha=0.4, seed=i))).batch_state[MIX_LAMBDA])
+        float(mix_of(next(iter(create_mixup_pipeline(alpha=0.4, seed=i)))).lams[0])
     )
     cutmix_lambdas.append(
-        float(next(iter(create_cutmix_pipeline(alpha=1.0, seed=i + 100))).batch_state[MIX_LAMBDA])
+        float(mix_of(next(iter(create_cutmix_pipeline(alpha=1.0, seed=i + 100)))).lams[0])
     )
 
 # %%
@@ -567,13 +575,13 @@ def main():
     mixup_pipeline = create_mixup_pipeline(alpha=0.4)
     mixup_batch = next(iter(mixup_pipeline))
     print(f"MixUp batch shape: {mixup_batch['image'].shape}")
-    print(f"MixUp λ = {float(mixup_batch.batch_state[MIX_LAMBDA]):.2f}")
+    print(f"MixUp λ = {float(mix_of(mixup_batch).lams[0]):.2f}")
 
     # Test CutMix
     cutmix_pipeline = create_cutmix_pipeline(alpha=1.0)
     cutmix_batch = next(iter(cutmix_pipeline))
     print(f"CutMix batch shape: {cutmix_batch['image'].shape}")
-    print(f"CutMix λ = {float(cutmix_batch.batch_state[MIX_LAMBDA]):.2f}")
+    print(f"CutMix λ = {float(mix_of(cutmix_batch).lams[0]):.2f}")
 
     print("\nTutorial completed successfully!")
 

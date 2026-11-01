@@ -110,8 +110,8 @@ class TestPlanTerms:
         pipe = _pipeline(_memory(width=6, dtype=np.float64), resources(1))
         terms = pipe.host_plan.terms
         assert terms is not None
-        identity = 2 * 4 + 4 + 4  # index words, epoch and draw, a record
-        assert terms.unit_bytes == 4 * (6 * 8 + identity)
+        row = 2 * 4 + 4 + 4 + 4  # index words, epoch, draw and weight, a record
+        assert terms.unit_bytes == 4 * (6 * 8 + row)
 
     def test_a_chunk_s_unit_is_k_batches(self) -> None:
         pipe = _pipeline(_memory(), resources(1))

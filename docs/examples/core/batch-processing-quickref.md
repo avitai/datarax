@@ -23,6 +23,9 @@ array, so a batch passes through `jax.jit`, `vmap`, `scan` and sharding like a d
 | `states` | pytree, leading axis `B` | Per-record processing state |
 | `indices` | `uint32 (B, 2)` | Each record's 64-bit index, as two words |
 | `epochs`, `draws` | `int32 (B,)` | Each record's epoch and draw within it |
+| `weights` | `float32 (B,)` | Each row's weight: 1 for a record, 0 for a padding row |
+| `masked`, `imputed` | bool pytrees, leading axis `B` | Marks in the data's nesting: values hidden as targets, values filled in |
+| `mix` | `Mix` or `None` | A mixing operator's partners and coefficients, one per row |
 | `batch_state` | pytree | Batch-level arrays, without a record axis |
 
 A record's identity keys its randomness in every stochastic operator. File names and other

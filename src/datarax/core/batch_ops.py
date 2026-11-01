@@ -8,11 +8,18 @@ views, until the batch is placed. The padding operations (``mask``, ``compact``,
 ``record_count``) are step operations and use ``jax.numpy``. Called eagerly on device arrays every
 operation works, one dispatch per leaf.
 
-A padding row carries ``PADDING_INDEX`` and ``state_keys.WEIGHT`` 0; filtering keeps a batch's
-static shape by turning rows into padding rather than removing them.
+A padding row carries ``PADDING_INDEX`` and weight 0, wherever an index is written; filtering keeps
+a batch's static shape by turning rows into padding rather than removing them. Every typed
+attribute of a batch (``weights``, ``masked``, ``imputed``, ``mix``) has the record axis first, so
+the row operations carry it with its rows; only ``batch_state`` has no record axis.
+
+A mix's partners are row numbers of the batch the mixing operator returned. A row operation moves
+them with their rows and does not renumber them, so read them against that batch: after
+``slice_rows``, ``take``, ``split``, ``concatenate`` or ``compact`` a partner number names a row
+of the mixed batch, not of the result.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from types import ModuleType
 
 import jax
@@ -24,7 +31,6 @@ from jaxtyping import PyTree
 
 from datarax.core.element_batch import ArrayValue, Batch, Element, PADDING_INDEX
 from datarax.core.index_words import MAX_RECORDS, WORD_BITS
-from datarax.core.state_keys import WEIGHT
 
 
 def _namespace(*leaves: object) -> ModuleType:
@@ -76,16 +82,18 @@ def _map_rows(batch: Batch, fn: Callable[[ArrayValue], ArrayValue]) -> Batch:
     return rows.replace(batch_state=batch.batch_state)
 
 
-def _is_padding(indices: ArrayValue) -> jax.Array:
-    return jnp.all(jnp.asarray(indices) == PADDING_INDEX, axis=-1)
+def _is_padding(indices: ArrayValue) -> ArrayValue:
+    """Which rows' indices are ``PADDING_INDEX``, in the indices' own namespace.
+
+    Each word is compared on its own, so a host batch's answer is a NumPy array computed without a
+    Python-level NumPy call, and a traced batch's a traced one.
+    """
+    return (indices[..., 0] == PADDING_INDEX[0]) & (indices[..., 1] == PADDING_INDEX[1])
 
 
-def _weights(batch: Batch) -> jax.Array:
-    """Each row's weight: the batch's own, or 1."""
-    states: Mapping[str, PyTree] = batch.states
-    if WEIGHT in states:
-        return jnp.asarray(states[WEIGHT])
-    return jnp.ones(batch.batch_size, jnp.float32)
+def _padding_weights(indices: ArrayValue, weights: ArrayValue) -> ArrayValue:
+    """``weights`` with 0 wherever ``indices`` is ``PADDING_INDEX``: a padding row has weight 0."""
+    return weights * (~_is_padding(indices)).astype(np.float32)
 
 
 def from_arrays(  # noqa: DOC502 - _record_axis raises the ValueError
@@ -101,7 +109,8 @@ def from_arrays(  # noqa: DOC502 - _record_axis raises the ValueError
     Without ``indices``, row ``i`` is named ``(2**31, i)``, so each row keys its randomness on its
     position: the same arrays draw the same values on every call, and no two rows share a key. The
     name's top bit is set, so it is no source's record: a lookup by record refuses it.
-    Without ``epochs``, every row is of epoch 0. Every row is draw 0.
+    Without ``epochs``, every row is of epoch 0. Every row is draw 0. Every row weighs 1, and a row
+    whose index is ``PADDING_INDEX`` weighs 0. No field is marked and the batch is not mixed.
 
     Args:
         data: The records' values, every leaf with the record axis first.
@@ -119,12 +128,17 @@ def from_arrays(  # noqa: DOC502 - _record_axis raises the ValueError
     states = {} if states is None else states
     size = _record_axis((data, states), "a batch's data and states")
     xp = _namespace(*jax.tree.leaves(data))
+    indices = _row_indices(size, xp) if indices is None else indices
     return Batch(
         data,
         states=states,
-        indices=_row_indices(size, xp) if indices is None else indices,
+        indices=indices,
         epochs=xp.zeros(size, xp.int32) if epochs is None else epochs,
         draws=xp.zeros(size, xp.int32),
+        weights=(~_is_padding(indices)).astype(np.float32),
+        masked={},
+        imputed={},
+        mix=None,
         batch_state={} if batch_state is None else batch_state,
     )
 
@@ -133,8 +147,9 @@ def from_stacked(records: Element) -> Batch:
     """Build a batch from an ``Element`` whose every leaf carries a leading record axis.
 
     That is what batching ``Element`` records produces: Grain's ``batch``, a stack of the
-    records' leaves, or a ``vmap`` returning ``Element``. The identities are the records' own;
-    records built without an index are named ``(2**31, row)``, as ``from_arrays`` names them.
+    records' leaves, or a ``vmap`` returning ``Element``. The identities, weights and marks are the
+    records' own; records built without an index are named ``(2**31, row)``, as ``from_arrays``
+    names them, and a record whose index is ``PADDING_INDEX`` weighs 0 whatever it carried.
 
     Args:
         records: The stacked records.
@@ -160,26 +175,41 @@ def from_stacked(records: Element) -> Batch:
         indices=index,
         epochs=records.epoch,
         draws=records.draw,
+        weights=_padding_weights(index, records.weight),
+        masked=records.masked,
+        imputed=records.imputed,
+        mix=None,
         batch_state={},
     )
 
 
 def element(batch: Batch, i: int | jax.Array) -> Element:
-    """Return row ``i`` as an ``Element``: its values, state and identity.
+    """Return row ``i`` as an ``Element``: its values, state, identity, weight and marks.
 
     Args:
         batch: The batch.
         i: The row, a Python int or a traced integer.
 
     Returns:
-        The record; the batch-level state is not part of it.
+        The record; the batch-level state and the batch's mix are not part of it.
     """
     row = _map_rows(batch, lambda x: x[i])
-    return Element(row.data, state=row.states, index=row.indices, epoch=row.epochs, draw=row.draws)
+    return Element(
+        row.data,
+        state=row.states,
+        index=row.indices,
+        epoch=row.epochs,
+        draw=row.draws,
+        weight=row.weights,
+        masked=row.masked,
+        imputed=row.imputed,
+    )
 
 
 def slice_rows(batch: Batch, start: int, stop: int) -> Batch:
     """Return rows ``start:stop``, with the batch-level state; a NumPy view on the host.
+
+    A mix's partners keep their row numbers in the mixed batch (see the module).
 
     Args:
         batch: The batch.
@@ -194,6 +224,8 @@ def slice_rows(batch: Batch, start: int, stop: int) -> Batch:
 
 def take(batch: Batch, rows: ArrayValue) -> Batch:
     """Return the given rows, in the given order, with the batch-level state.
+
+    A mix's partners keep their row numbers in the mixed batch (see the module).
 
     Args:
         batch: The batch.
@@ -311,26 +343,26 @@ def record_count(batch: Batch) -> jax.Array:
     Returns:
         The count.
     """
-    return jnp.sum(~_is_padding(batch.indices), dtype=jnp.int32)
+    return jnp.sum(~_is_padding(jnp.asarray(batch.indices)), dtype=jnp.int32)
 
 
 def mask(batch: Batch, keep: ArrayLike) -> Batch:
     """Turn the rows not kept into padding, at the batch's shape.
 
-    A row not kept gets ``PADDING_INDEX`` and weight 0; a kept row keeps its weight (1 when the
-    batch carries none). A padding row stays padding. Values are untouched.
+    A row not kept gets ``PADDING_INDEX`` and weight 0; a kept row keeps its weight. A padding row
+    stays padding. Values are untouched.
 
     Args:
-        batch: The batch; ``states`` is a mapping.
+        batch: The batch.
         keep: bool ``(B,)``, the rows to keep.
 
     Returns:
         The masked batch.
     """
-    keep = jnp.asarray(keep, bool) & ~_is_padding(batch.indices)
-    weights = _weights(batch)
+    keep = jnp.asarray(keep, bool) & ~_is_padding(jnp.asarray(batch.indices))
+    weights = jnp.asarray(batch.weights)
     return batch.replace(
-        states={**batch.states, WEIGHT: jnp.where(keep, weights, jnp.zeros_like(weights))},
+        weights=jnp.where(keep, weights, jnp.zeros_like(weights)),
         indices=jnp.where(keep[:, None], batch.indices, PADDING_INDEX),
     )
 
@@ -338,22 +370,24 @@ def mask(batch: Batch, keep: ArrayLike) -> Batch:
 def compact(batch: Batch, keep: ArrayLike) -> tuple[Batch, jax.Array]:
     """Move the kept rows first, in order, and make the rest padding, at the batch's shape.
 
+    A mix's partners keep their row numbers in the mixed batch (see the module).
+
     Args:
-        batch: The batch; ``states`` is a mapping.
+        batch: The batch.
         keep: bool ``(B,)``, the rows to keep; a padding row is never kept.
 
     Returns:
         The compacted batch and the number of kept rows, a traced int32 scalar.
     """
-    keep = jnp.asarray(keep, bool) & ~_is_padding(batch.indices)
+    keep = jnp.asarray(keep, bool) & ~_is_padding(jnp.asarray(batch.indices))
     count = jnp.sum(keep, dtype=jnp.int32)
     order = jnp.nonzero(keep, size=batch.batch_size, fill_value=0)[0]
     taken = _map_rows(batch, lambda x: jnp.take(x, order, axis=0))
     tail = jnp.arange(batch.batch_size) >= count
-    weights = _weights(taken)
+    weights = jnp.asarray(taken.weights)
     return (
         taken.replace(
-            states={**taken.states, WEIGHT: jnp.where(tail, jnp.zeros_like(weights), weights)},
+            weights=jnp.where(tail, jnp.zeros_like(weights), weights),
             indices=jnp.where(tail[:, None], PADDING_INDEX, taken.indices),
         ),
         count,

@@ -288,6 +288,23 @@ class TestRecordsBecomeColumns:
         with pytest.raises(ValueError, match="state"):
             _memory(records)
 
+    @pytest.mark.parametrize(
+        "typed",
+        [{"weight": np.float32(0.5)}, {"masked": {"x": np.True_}}, {"imputed": {"x": np.True_}}],
+        ids=["weight", "masked", "imputed"],
+    )
+    def test_an_element_carrying_a_weight_or_marks_is_refused(self, typed: dict) -> None:
+        records = [Element({"x": np.zeros(2)}, **typed)]
+        with pytest.raises(ValueError) as caught:
+            _memory(records)
+        assert str(caught.value) == (
+            "record 0 is an Element with a weight or marks; the source serves records' data, so "
+            "an Element given to it carries data only"
+        )
+
+    def test_an_element_at_the_default_weight_and_no_marks_is_served(self) -> None:
+        assert _memory([Element({"x": np.zeros(2)})]) is not None
+
     def test_records_with_nothing_numeric_are_refused(self) -> None:
         with pytest.raises(ValueError, match="numeric"):
             _memory([{"name": "a"}, {"name": "b"}])
