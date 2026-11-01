@@ -44,4 +44,6 @@ class BranchingStrategy(CompositionStrategyImpl):
         Returns:
             The record from the selected branch.
         """
-        return apply_selected(operators, self.router(element.data), element, stats)
+        return apply_selected(
+            operators, self.router(element.data), element, stats, owner="BRANCHING"
+        )

@@ -22,7 +22,6 @@ from typing import Any, TypedDict
 import numpy as np
 
 from datarax.core.index_words import from_words
-from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 from tests.test_common import multi_process_pipelines as built
 from tests.test_common.multi_process_scenarios import host_rows, merged_rows, PROGRAM
 from tests.test_common.processes import run_processes
@@ -124,6 +123,7 @@ class TestEveryGlobalBatchIsOneProcesssBatch:
         assert len(first["batches"]) == len(reference) == 4
         for k, batch in enumerate(reference):
             ours = (first["batches"][k], second["batches"][k])
+            assert batch.mix is not None
             assert merged_rows([b["rows"] for b in ours]) == _records(batch.indices)
             np.testing.assert_array_equal(
                 merged_rows([b["value"] for b in ours]), host_rows(batch["value"])
@@ -131,8 +131,10 @@ class TestEveryGlobalBatchIsOneProcesssBatch:
             np.testing.assert_array_equal(
                 merged_rows([b["image"] for b in ours]), host_rows(batch["image"])
             )
-            assert merged_rows([b["partner"] for b in ours]) == host_rows(batch.states[MIX_PARTNER])
-            assert ours[0]["lam"] == ours[1]["lam"] == float(batch.batch_state[MIX_LAMBDA])
+            assert merged_rows([b["partner"] for b in ours]) == host_rows(batch.mix.partners)
+            # Every row holds the batch's one coefficient, on both processes.
+            assert ours[0]["lam"] == ours[1]["lam"]
+            assert set(np.asarray(batch.mix.lams).tolist()) == {ours[0]["lam"]}
 
     def test_the_streams_counts_written_back_equal_one_processs(self) -> None:
         first, second = run_processes(PROGRAM, DrawsReport, "draws")

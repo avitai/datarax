@@ -5,8 +5,8 @@ Three different things, with three representations:
 | | meaning | the value | marked by |
 |---|---|---|---|
 | missing | the record has no value for the field | does not exist; its slot holds zeros | `present` inside the field: the field is a `Maybe(value, present)` in `data` |
-| masked | the value exists and an operator hides it from the model | kept in `data`: it is the target | `state[state_keys.MASKED][field]`, written by the operator |
-| padding | a row that is not a record | zeros | `state[state_keys.WEIGHT] = 0` and `PADDING_INDEX` ([batch_ops](batch_ops.md)) |
+| masked | the value exists and an operator hides it from the model | kept in `data`: it is the target | `masked[field]`, a bool mark the operator writes |
+| padding | a row that is not a record | zeros | `weights` 0 and `PADDING_INDEX` ([batch_ops](batch_ops.md)) |
 
 Every field exists in every record at its static shape, so batches with different fields missing
 share one structure and one compiled program. `present` is a bool per record (leading axis `B` in a
@@ -45,11 +45,14 @@ A `Maybe` moves through every batch operation (`element`, `take`, `split`, `conc
 `stack`, `mask`, `compact`) and through placement (`batch_ops.shardings`) with its rows, at any
 nesting depth in `data`. A spec describes it as a `Maybe` of two `jax.ShapeDtypeStruct`s.
 
-## Filling and masking: what an operator records in `state`
+## Filling and masking: the `imputed` and `masked` marks
 
-An operator that fills a missing value returns the field with `present` set and records
-`state[IMPUTED][field]`, so a loss can tell observed values from imputed ones. An operator that
-hides a present value keeps it in `data` as the target and records `state[MASKED][field]`.
+An operator that fills a missing value returns the field with `present` set and marks
+`imputed[field]`, so a loss can tell observed values from imputed ones. An operator that hides a
+present value keeps it in `data` as the target and marks `masked[field]`. A mark is a bool array
+in the data's nesting, at the field's shape or a prefix of it: `()` marks a whole value, the
+field's shape marks each element. Inside a pipeline every stage's marks are checked against its
+data, and a mark naming no field, or at a shape that is not a prefix, is refused naming the stage.
 
 ```python
 from typing import Any
@@ -60,7 +63,6 @@ import numpy as np
 from flax import nnx
 from datarax.core import Element, Maybe, OperatorModule, batch_ops
 from datarax.core.config import OperatorConfig
-from datarax.core.state_keys import IMPUTED, MASKED
 
 
 class FillFromImage(OperatorModule):
@@ -78,7 +80,7 @@ class FillFromImage(OperatorModule):
         value = jnp.where(fill, self.project(element.data["image"].reshape(-1)), caption.value)
         return element.replace(
             data={**element.data, "caption": Maybe(value, caption.present | fill)},
-            state={**element.state, IMPUTED: {"caption": fill}},
+            imputed={**element.imputed, "caption": fill},
         )
 
 
@@ -90,7 +92,7 @@ class MaskImage(OperatorModule):
     ) -> Element:
         assert key is not None
         hidden = jax.random.bernoulli(key, 0.5, element.data["image"].shape)
-        return element.update_state({MASKED: {"image": hidden}})
+        return element.replace(masked={**element.masked, "image": hidden})
 
 
 present = np.array([True, False, True, False])
@@ -99,13 +101,13 @@ batch = batch_ops.from_arrays({"image": np.ones((4, 2, 2, 3), np.float32), "capt
 
 filled = FillFromImage(rngs=nnx.Rngs(0))(batch)
 print(filled["caption"].present)  # [ True  True  True  True]
-print(filled.states[IMPUTED]["caption"])  # [False  True False  True]
+print(filled.imputed["caption"])  # [False  True False  True]
 
 masked = MaskImage(
     OperatorConfig(stochastic=True, stream_name="mask"), rngs=nnx.Rngs(mask=0)
 )(filled)
 assert np.array_equal(masked["image"], filled["image"])  # the target is kept
-print(masked.states[MASKED]["image"].shape)  # (4, 2, 2, 3)
+print(masked.masked["image"].shape)  # (4, 2, 2, 3)
 ```
 
 A built-in operator that treats a field as an array (`MapOperator` over the field, the parallel
@@ -117,8 +119,8 @@ unchanged.
 
 ## See Also
 
-- [Element and Batch](element_batch.md) - The record and batch types a `Maybe` lives in
-- [State keys](state_keys.md) - `MASKED`, `IMPUTED`, `WEIGHT` and the mixing entries
+- [Element and Batch](element_batch.md) - The record and batch types a `Maybe` lives in, and
+  their `weight`, `masked` and `imputed`
 - [Batch operations](batch_ops.md) - Padding rows: `mask`, `compact`, `record_count`
 
 ---

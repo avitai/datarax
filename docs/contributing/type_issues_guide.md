@@ -425,7 +425,7 @@ batch = batch_ops.from_stacked(batch_ops.stack(elements))
 image = batch["image"]
 label = batch.get("label")
 
-# ✅ Map over the values only: jax.tree.map(f, batch) also reaches indices and states
+# ✅ Map over the values only: jax.tree.map(f, batch) also reaches identities, weights and states
 shapes = jax.tree.map(lambda x: x.shape, batch.data)
 ```
 
@@ -437,6 +437,7 @@ shapes = jax.tree.map(lambda x: x.shape, batch.data)
 | `batch.data` | `PyTree` | The whole data pytree |
 | `batch.states`, `batch.batch_state` | `PyTree` | Per-record and batch-level state |
 | `batch.indices`, `batch.epochs`, `batch.draws` | `jax.Array` | Record identities |
+| `batch.weights`, `batch.masked`, `batch.imputed`, `batch.mix` | `jax.Array`, `PyTree`, `Mix \| None` | Row weights, marks, a mixing operator's partners and coefficients |
 | `batch.batch_size` | `int` | The number of rows, static |
 | `batch_ops.element(batch, i)` | `Element` | One record |
 

@@ -8,10 +8,11 @@ Supported modes:
 - mixup: each image becomes ``lam * x + (1 - lam) * x[partner]`` (Zhang et al. 2018)
 - cutmix: a box of the partner's image is pasted into each image (Yun et al. 2019)
 
-Labels are left untouched. The operator writes what it did for the loss to read: each record's
-partner row in ``states[MIX_PARTNER]`` and the fraction of each image kept in
-``batch_state[MIX_LAMBDA]``, so ``lam * loss(y) + (1 - lam) * loss(y[partner])`` is the mixed
-loss for integer and one-hot labels alike.
+Labels are left untouched. The operator writes what it did for the loss to read in
+``batch.mix``: each row's partner row in ``mix.partners`` and the fraction of each image kept in
+``mix.lams``, one per row, so ``lams * loss(y) + (1 - lams) * loss(y[partners])`` is the mixed
+loss for integer and one-hot labels alike. A batch is mixed once: a second mixing operator is
+refused (``MixedTwiceError``), since a loss reads one partner and one coefficient per row.
 
 ``lam`` is drawn from Beta(alpha, alpha) with JAX's loop-free sampler (``method="approximate"``),
 so a GPU queues the batch program without the host waiting on it; JAX's default rejection sampler
@@ -30,10 +31,9 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.config import BatchMixOperatorConfig
-from datarax.core.element_batch import Batch
+from datarax.core.element_batch import Batch, Mix, MixedTwiceError
 from datarax.core.field_paths import field_listing, field_paths, refuse_field_nodes
 from datarax.core.operator import OperatorModule
-from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
 
 
 logger = logging.getLogger(__name__)
@@ -58,8 +58,7 @@ class BatchMixOperator(OperatorModule):
         x_mixed = mask * x_a + (1 - mask) * x_b
         λ is the fraction of each image kept.
 
-    Labels are untouched; ``states[MIX_PARTNER]`` and ``batch_state[MIX_LAMBDA]`` tell the loss
-    how the records were mixed.
+    Labels are untouched; ``batch.mix`` tells the loss how the records were mixed.
 
     Examples:
         ```python
@@ -103,16 +102,19 @@ class BatchMixOperator(OperatorModule):
             stats: Unused.
 
         Returns:
-            The batch with ``data_field`` mixed, labels untouched, each record's partner row in
-            ``states[MIX_PARTNER]`` and the kept fraction in ``batch_state[MIX_LAMBDA]``.
+            The batch with ``data_field`` mixed, labels untouched, and ``mix`` holding each row's
+            partner row and kept fraction: MixUp's in the field's dtype, CutMix's float32.
 
         Raises:
+            MixedTwiceError: If the batch is already mixed.
             ValueError: If the data has no ``data_field``, or CutMix's field is not a batch of
                 images ``(B, H, W, C)``.
             TypeError: If ``data_field`` is a ``Maybe``: a missing value has nothing to mix.
         """
         del stats
         assert keys is not None  # a stochastic operator is always handed keys
+        if batch.mix is not None:
+            raise MixedTwiceError(type(self).__name__)
         data = batch.data
         field = self.config.data_field
         if not isinstance(data, dict) or field not in data:
@@ -127,12 +129,9 @@ class BatchMixOperator(OperatorModule):
             data[field], "BatchMixOperator mixes a field's values between records", (field,)
         )
         if batch.batch_size == 0:
-            # No record to mix and no first record's key: every (absent) record keeps all of
-            # itself, which the state says as it would for any batch.
-            return batch.replace(
-                states={**batch.states, MIX_PARTNER: jnp.zeros((0,), jnp.int32)},
-                batch_state={**batch.batch_state, MIX_LAMBDA: jnp.ones((), data[field].dtype)},
-            )
+            # No record to mix and no first record's key: the batch is mixed, with no rows.
+            dtype = data[field].dtype if self.config.mode == "mixup" else jnp.float32
+            return batch.replace(mix=Mix(jnp.zeros((0,), jnp.int32), jnp.ones((0,), dtype)))
         if self.config.mode == "mixup":
             k_lambda, k_partner = jax.random.split(keys[0])
             box_keys = None
@@ -149,11 +148,9 @@ class BatchMixOperator(OperatorModule):
             mixed, kept = values[partner] + lam * (values - values[partner]), lam
         else:
             mixed, kept = _cutmix(values, values[partner], lam, box_keys, field)
-        return batch.replace(
-            data={**data, field: mixed},
-            states={**batch.states, MIX_PARTNER: partner},
-            batch_state={**batch.batch_state, MIX_LAMBDA: kept},
-        )
+        # The batch's one draw, written to every row.
+        lams = jnp.broadcast_to(kept, (batch.batch_size,))
+        return batch.replace(data={**data, field: mixed}, mix=Mix(partner, lams))
 
 
 def _cutmix(

@@ -13,10 +13,9 @@ accident. Missing slots hold zeros rather than NaN: a NaN hidden behind ``jnp.wh
 the gradient NaN while the loss stays finite.
 
 Two other cases have their own representation. A value an operator hides from the model but keeps
-as the target (masked pretraining) stays in ``data`` and is marked in
-``state[state_keys.MASKED][field]``; an operator that fills a missing value sets ``present`` and
-marks ``state[state_keys.IMPUTED][field]``. A row that is not a record is padding
-(``state[state_keys.WEIGHT]`` 0).
+as the target (masked pretraining) stays in ``data`` and is marked in ``Element.masked``; an
+operator that fills a missing value sets ``present`` and marks ``Element.imputed``. A row that is
+not a record is padding (``Batch.weights`` 0).
 """
 
 from dataclasses import dataclass

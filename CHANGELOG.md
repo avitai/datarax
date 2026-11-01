@@ -298,9 +298,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every transform carry it with its rows, and batches differing only in presence compile once.
   It has no arithmetic: `*`, `+`, `==` against a number, `jnp` reductions and `np.asarray` raise
   `TypeError`; `value_or(fill)` reads it, broadcasting `present` over the value's trailing axes.
-- `state_keys.MASKED` (`state[MASKED][field]`: a present value an operator hides and keeps as the
-  target) and `state_keys.IMPUTED` (`state[IMPUTED][field]`: a missing value an operator filled,
-  with the field's `present` set).
+- `Element.masked` and `Element.imputed` (`Batch.masked`, `Batch.imputed`): bool marks in the
+  data's nesting, at a field's shape or a prefix of it, for a present value an operator hides and
+  keeps as the target, and for a missing value an operator filled, with the field's `present` set.
+  A pipeline refuses a stage whose marks name no data field, or sit at a shape that is not a
+  prefix of the field's, naming the stage.
 - `RandomCropOperator` pads each record and crops it at an offset drawn from the record's own
   key, with torchvision's `RandomCrop` semantics: padding as one int, (left/right, top/bottom) or
   (left, top, right, bottom); modes constant (with `fill`), edge, reflect and symmetric; top and
@@ -814,18 +816,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrapper's own key serves only its own decision. A child draws the same values at top level, in a
   sequential composite and inside a per-record wrapper. Draws of every wrapper with a stochastic
   child change. The same operator instance twice in one wrapper is refused.
+- A per-record wrapper that applies its child to some records (`ProbabilisticOperator`,
+  `SelectorOperator`, BRANCHING, CONDITIONAL_SEQUENTIAL, CONDITIONAL_PARALLEL) carries the weight
+  and marks a child writes through every branch: where the child does not apply, the record keeps
+  its own weight, and a mark it lacked is False. A user `state` entry only some branches write, or
+  drop, is refused naming the wrapper, the child and the entry, as is a mark written at two
+  shapes; jax raised its own error naming none.
 - A SEQUENTIAL or DYNAMIC_SEQUENTIAL composite calls each child on the whole batch in turn, so it
   holds whole-batch children and each child fits its statistics on its own input. Every other
   composite strategy, `ProbabilisticOperator` and `SelectorOperator` decide or merge per record and
   refuse a child that works on the whole batch, or a chain whose later child fits statistics per
   batch. A composite draws nothing itself: it is deterministic and takes no `rngs`; a
   `ProbabilisticOperator` is stochastic only when `0 < probability < 1`.
-- `BatchMixOperator` mixes `data_field` only and leaves labels untouched: it writes each record's
-  partner row to `states[MIX_PARTNER]` and the mixing ratio (MixUp's `lam`, CutMix's fraction of
-  the image kept) to `batch_state[MIX_LAMBDA]` (`datarax.core.state_keys`), and the loss reads
-  them, `lam * CE(y) + (1 - lam) * CE(y[partner])`. Integer class labels are no longer averaged.
-  `label_field` is removed; a batch without `data_field`, or a CutMix field that is not
-  `(B, H, W, C)`, is refused.
+- `BatchMixOperator` mixes `data_field` only and leaves labels untouched: it writes `batch.mix`,
+  a `Mix(partners, lams)` holding each row's partner row and its coefficient (MixUp's `lam` in the
+  field's dtype, CutMix's float32 fraction of the image kept; the batch's one draw in every row),
+  and the loss reads them, `lams * CE(y) + (1 - lams) * CE(y[partners])`. Integer class labels are
+  no longer averaged. `label_field` is removed; a batch without `data_field`, or a CutMix field
+  that is not `(B, H, W, C)`, is refused, and so is a batch already mixed (`MixedTwiceError`,
+  naming both stages inside a DAG). A mix's partners are row numbers of the mixed batch, which row
+  operations move without renumbering.
 - `SamplerModule` is generic in the index it emits (`SamplerModule[int]`,
   `SlidingWindowSampler` a `SamplerModule[jax.Array]`); a data source's `__iter__`, `__next__`
   and `__getitem__` are declared as yielding the PyTrees they return. Pyright's
@@ -849,17 +859,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass through `jax.jit`, `nnx.jit` in graph and tree mode, `nnx.jit_partial`, `vmap`, `scan`,
   `checkpoint`, `cond` and `shard_map`, and batches differing only in their values share one
   compiled program. A `Batch` holds `data`, `states`, `indices` (uint32 `(B, 2)`, each record's
-  64-bit index as two words), `epochs`, `draws` and `batch_state`; `batch["image"]`,
+  64-bit index as two words), `epochs`, `draws`, `weights` (float32 `(B,)`: 1 for a record, 0
+  for a padding row), `masked`, `imputed`, `mix` and `batch_state`; `batch["image"]`,
   `batch.get(...)` and `in` read its data, and `dict`, `**`, iteration, `len` and `batch[0]` raise.
-  An `Element` holds `data`, `state`, `index`, `epoch` and `draw`; `Element(x)` names no index,
-  and records stacked without one are keyed by their rows. `Batch` is no longer an `nnx.Module`:
-  its getters (`get_data`, `get_element(s)`, `get_states`, `get_batch_state`,
+  An `Element` holds `data`, `state`, `index`, `epoch`, `draw`, `weight` (1 by default), `masked`
+  and `imputed`; `Element(x)` names no index, and records stacked without one are keyed by their
+  rows. `state` and `batch_state` hold only the user's names. A source given `Element` records
+  refuses one carrying a weight or marks, as it refuses an index or state. `Batch` is no longer
+  an `nnx.Module`: its getters (`get_data`, `get_element(s)`, `get_states`, `get_batch_state`,
   `get/set_batch_metadata`, `update_batch_state`), `Batch.from_parts`, `slice`,
   `split_for_devices` and `compute_stats` are removed.
 - Batch operations are pure functions in `datarax.core.batch_ops`: `from_arrays`, `from_stacked`,
   `stack`, `element`, `slice_rows`, `take`, `split`, `concatenate`, `mask`, `compact`,
   `record_count` and `shardings`. A padding row carries `PADDING_INDEX` (both words all ones) and
-  `state_keys.WEIGHT` 0; `mask` and `compact` keep the batch's shape.
+  weight 0 wherever an index is written; `mask` and `compact` keep the batch's shape.
 - A record's key is `per_record_keys(base_key, indices, epochs, draws)`: its epoch, its draw and
   both words of its index folded into the operator's base key, so indices past `2^32` keep
   distinct keys and a record served twice in one epoch draws twice. Every stochastic operator's
