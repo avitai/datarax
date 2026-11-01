@@ -54,8 +54,7 @@ assert batch["image"].shape == (2, 32, 32, 3)
 - [index_words](index_words.md) - 64-bit record indices as two uint32 words
 - [block_order](block_order.md) - An order reading a few blocks of consecutive records at a time
 - [batch_ops](batch_ops.md) - Building, slicing, regrouping and padding batches
-- [maybe](maybe.md) - Missing (`Maybe`), masked (`MASKED`) and padded values
-- [state_keys](state_keys.md) - The per-record state entries datarax writes
+- [maybe](maybe.md) - Missing (`Maybe`), masked (`masked`) and padded values
 - [spec](spec.md) - Element specs: data as given or as JAX arrays, and batch validation
 - [prng](prng.md) - The named `nnx.Rngs` streams and per-record key derivation
 

@@ -620,6 +620,66 @@ def record_problems(tree: Any) -> tuple[RecordProblem, ...]:
     return tuple(problems)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MarkProblem:
+    """One ``masked`` or ``imputed`` mark that its batch's data cannot carry.
+
+    Attributes:
+        keys: The mark's key tuple, in the data's nesting.
+        shape: The mark's per-record shape.
+        field_shape: The field's per-record shape, or ``None`` when the keys name no field.
+    """
+
+    keys: KeyTuple
+    shape: tuple[int, ...]
+    field_shape: tuple[int, ...] | None = None
+
+
+def _per_record_shape(node: Any) -> tuple[int, ...]:
+    """A batch node's shape after the record axis; a field node's is its first leaf's."""
+    leaf = jax.tree.leaves(node)[0] if is_field_node(node) else node
+    return tuple(getattr(leaf, "shape", ())[1:])
+
+
+def mark_problems(data: Any, marks: Any) -> tuple[MarkProblem, ...]:
+    """Every mark of a batch's ``masked`` or ``imputed`` that its data cannot carry.
+
+    A mark sits at a field's key tuple, in the data's own nesting; a field node is one field, so
+    its mark sits at the node. Its per-record shape is a prefix of the field's: ``()`` marks the
+    whole value, ``(L,)`` each of a field's ``L`` tokens. Like :func:`record_problems` it reads
+    structure only.
+
+    Args:
+        data: The batch's data.
+        marks: The batch's ``masked`` or ``imputed``: bool marks nested as the data is.
+
+    Returns:
+        The problems, empty when every mark names a field at a prefix of its shape.
+    """
+    problems: list[MarkProblem] = []
+
+    def walk(node: Any, keys: KeyTuple) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                walk(child, (*keys, key))
+            return
+        shape = _per_record_shape(node)
+        try:
+            field = _walk(data, keys)
+        except KeyError:
+            problems.append(MarkProblem(keys=keys, shape=shape))
+            return
+        if isinstance(field, dict):
+            problems.append(MarkProblem(keys=keys, shape=shape))
+            return
+        field_shape = _per_record_shape(field)
+        if field_shape[: len(shape)] != shape:
+            problems.append(MarkProblem(keys=keys, shape=shape, field_shape=field_shape))
+
+    walk(marks, ())
+    return tuple(problems)
+
+
 # ---------------------------------------------------------------------------- field nodes
 
 
@@ -874,6 +934,8 @@ __all__ = [
     "get_field",
     "is_exotic",
     "label",
+    "mark_problems",
+    "MarkProblem",
     "name_label",
     "name_order",
     "nested",

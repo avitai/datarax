@@ -193,4 +193,6 @@ class SelectorOperator(OperatorModule):
             require_key(key, self), len(self.operators), shape=(), p=jnp.asarray(self.weights)
         )
 
-        return apply_selected(list(self.operators), selected, element, stats)
+        return apply_selected(
+            list(self.operators), selected, element, stats, owner=type(self).__name__
+        )

@@ -25,7 +25,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from datarax.core.config import OperatorConfig
-from datarax.core.element_batch import ArrayValue, Batch, Element
+from datarax.core.element_batch import ArrayValue, Batch, Element, MARK_ATTRIBUTES
 from datarax.core.field_paths import (
     field_listing,
     field_paths,
@@ -33,6 +33,8 @@ from datarax.core.field_paths import (
     FieldName,
     FieldNotFoundError,
     get_field,
+    KeyTuple,
+    label,
     path_label,
     resolve,
 )
@@ -142,79 +144,411 @@ def statistics_for_child(stats: dict[str, Any] | None, index: int) -> dict[str, 
     return children[index]
 
 
-def _on_values(
-    child: "OperatorModule", element: Element, stats: dict[str, Any] | None
-) -> Callable[[tuple[PyTree, PyTree]], tuple[PyTree, PyTree]]:
-    """``child`` applied to a record's ``(data, state)``, the record's identity held fixed.
+type _Spec = tuple[tuple[int, ...], Any]
+"""A mark's shape and dtype, as a trace reads them."""
 
-    ``jax.lax.cond`` and ``switch`` return new arrays for everything that passes through them, so a
-    wrapper passes only the record's data and state through its branches and keeps its identity.
+
+def _leaves(tree: PyTree) -> dict[KeyTuple, Any]:
+    """A tree of nested mappings as its leaves by key tuple, in the tree's order."""
+    found: dict[KeyTuple, Any] = {}
+
+    def walk(node: Any, keys: KeyTuple) -> None:
+        if isinstance(node, Mapping):
+            for key, child in node.items():
+                walk(child, (*keys, key))
+        else:
+            found[keys] = node
+
+    walk(tree, ())
+    return found
+
+
+def _nested(leaves: Mapping[KeyTuple, Any]) -> dict[str, Any]:
+    """Nested mappings from leaves by key tuple: the inverse of :func:`_leaves`."""
+    tree: dict[str, Any] = {}
+    for keys, leaf in leaves.items():
+        node = tree
+        for key in keys[:-1]:
+            node = node.setdefault(key, {})
+        node[keys[-1]] = leaf
+    return tree
+
+
+def written_fields(received: PyTree, returned: PyTree) -> frozenset[KeyTuple]:
+    """The leaves ``returned`` holds that are not the arrays ``received`` held at their keys.
+
+    Decided by array identity, so it is asked while tracing: a child that leaves an entry alone
+    returns the very array it was given, and jax forwards an untouched array through ``cond``,
+    ``switch``, ``vmap`` and ``scan`` (a test pins that), while ``x * 1`` is a new one. A leaf
+    ``returned`` adds is written; one it drops is not, and is the caller's to refuse.
+
+    Args:
+        received: What a child was given: nested mappings of arrays.
+        returned: What it returned, nested the same way.
+
+    Returns:
+        The written leaves' key tuples.
+    """
+    before = _leaves(received)
+    return frozenset(
+        keys for keys, leaf in _leaves(returned).items() if before.get(keys) is not leaf
+    )
+
+
+class _Branch(NamedTuple):
+    """What one side of a ``cond`` or ``switch`` returns, as Python values: never an array."""
+
+    name: str
+    entries: tuple[str, ...] | None
+    state_written: frozenset[str]
+    weight_written: bool
+    marks: dict[str, dict[KeyTuple, _Spec]]
+    marks_written: dict[str, frozenset[KeyTuple]]
+
+
+def _specs(tree: PyTree) -> dict[KeyTuple, _Spec]:
+    return {keys: (tuple(leaf.shape), leaf.dtype) for keys, leaf in _leaves(tree).items()}
+
+
+def _entry_names(state: PyTree) -> tuple[str, ...] | None:
+    return tuple(state) if isinstance(state, Mapping) else None
+
+
+def _record_side(element: Element) -> _Branch:
+    """The side of ``apply_where`` that does not apply its child: the record as it is."""
+    return _Branch(
+        name="the record",
+        entries=_entry_names(element.state),
+        state_written=frozenset(),
+        weight_written=False,
+        marks={attribute: _specs(getattr(element, attribute)) for attribute in MARK_ATTRIBUTES},
+        marks_written={attribute: frozenset() for attribute in MARK_ATTRIBUTES},
+    )
+
+
+def _branch(
+    child: "OperatorModule", position: int, element: Element, stats: dict[str, Any] | None
+) -> _Branch:
+    """Trace ``child`` once more on the record (``jax.eval_shape``) and keep what it writes.
+
+    Only Python values leave the trace: key names, which entries were written, and the marks'
+    shapes and dtypes.
+    """
+    found: dict[str, Any] = {}
+
+    def probe(given: Element) -> dict[str, PyTree]:
+        out = child.apply_record(given, stats)
+        found["entries"] = _entry_names(out.state)
+        found["state_written"] = (
+            frozenset(keys[0] for keys in written_fields(given.state, out.state))
+            if found["entries"] is not None and _entry_names(given.state) is not None
+            else frozenset()
+        )
+        found["weight_written"] = out.weight is not given.weight
+        found["marks_written"] = {
+            attribute: written_fields(getattr(given, attribute), getattr(out, attribute))
+            for attribute in MARK_ATTRIBUTES
+        }
+        return {attribute: getattr(out, attribute) for attribute in MARK_ATTRIBUTES}
+
+    shapes = jax.eval_shape(probe, element)
+    return _Branch(
+        name=f"child {position} ({type(child).__name__})",
+        entries=found["entries"],
+        state_written=found["state_written"],
+        weight_written=found["weight_written"],
+        marks={attribute: _specs(shapes[attribute]) for attribute in MARK_ATTRIBUTES},
+        marks_written=found["marks_written"],
+    )
+
+
+class _Alignment(NamedTuple):
+    """What every side carries through ``cond``/``switch``, and the keys the result holds.
+
+    ``entries`` is ``None`` for a record whose state is not a mapping: it is carried whole.
+    """
+
+    entries: tuple[str, ...] | None
+    state: tuple[str, ...]
+    weight: bool
+    marks: dict[str, dict[KeyTuple, _Spec]]
+    mark_keys: dict[str, tuple[KeyTuple, ...]]
+
+
+def _aligned_state(owner: str, element: Element, sides: Sequence[_Branch]) -> tuple[str, ...]:
+    """The user state entries every side returns; refused by name where the sides differ."""
+    own = cast(Mapping[str, Any], element.state)
+    every = dict.fromkeys(key for side in sides for key in cast(tuple[str, ...], side.entries))
+    for key in every:
+        holders = [side for side in sides if key in cast(tuple[str, ...], side.entries)]
+        if len(holders) == len(sides):
+            continue
+        if key in own:
+            lacking = next(side for side in sides if side not in holders)
+            raise TypeError(
+                f"{owner}: {lacking.name} drops state entry {key!r} where it applies, and the "
+                f"record keeps {key!r} where it does not. Return every state entry the record "
+                "has."
+            )
+        raise TypeError(
+            f"{owner}: {holders[0].name} writes state entry {key!r} only where it applies, and "
+            f"the record has no {key!r} where it does not. Give {key!r} a value before the "
+            f"{owner}."
+        )
+    return cast(tuple[str, ...], sides[0].entries)
+
+
+def _kept_marks(
+    owner: str, attribute: str, element: Element, sides: Sequence[_Branch]
+) -> tuple[KeyTuple, ...]:
+    """The record's own marks every side returns; refused where some sides drop one."""
+    kept_by_all: list[KeyTuple] = []
+    for keys in _leaves(getattr(element, attribute)):
+        lacking = [side for side in sides if keys not in side.marks[attribute]]
+        if lacking and len(lacking) < len(sides):
+            raise TypeError(
+                f"{owner}: {lacking[0].name} drops the mark {label(keys)} in {attribute} where "
+                "it applies, and the record keeps it where it does not. Return every mark the "
+                "record has."
+            )
+        if not lacking:
+            kept_by_all.append(keys)
+    return tuple(kept_by_all)
+
+
+def _written_marks(
+    owner: str, attribute: str, element: Element, sides: Sequence[_Branch]
+) -> dict[KeyTuple, _Spec]:
+    """The marks some side writes, each at one shape: the record's own, if it has one."""
+    own = _specs(getattr(element, attribute))
+    written: dict[KeyTuple, _Spec] = {}
+    writer = dict.fromkeys(own, "the record")
+    for side in sides:
+        for keys in side.marks_written[attribute]:
+            spec = side.marks[attribute][keys]
+            known = written.get(keys, own.get(keys))
+            if known is not None and known[0] != spec[0]:
+                raise TypeError(
+                    f"{owner} marks {label(keys)} in {attribute} with shapes {known[0]} "
+                    f"({writer[keys]}) and {spec[0]} ({side.name}); a mark has one shape in "
+                    "every branch."
+                )
+            written.setdefault(keys, spec)
+            writer.setdefault(keys, side.name)
+    return written
+
+
+def _aligned(  # noqa: DOC502 - _kept_marks, _written_marks and _aligned_state raise
+    owner: str, element: Element, sides: Sequence[_Branch]
+) -> _Alignment:
+    """What the sides write, checked to fit one structure; refused by name where none does.
+
+    A typed attribute some side writes is carried by every side: the record's own array, or
+    False at the writer's shape for a mark, where a side does not write it. An entry no side
+    writes stays out of ``cond``/``switch`` and is the record's own array.
+
+    Args:
+        owner: Who applies the children, as the refusal names it.
+        element: The record.
+        sides: What each side of the ``cond`` or ``switch`` returns.
+
+    Returns:
+        What every side carries, and the entries and marks the result holds.
+
+    Raises:
+        TypeError: If the sides return different user state entries (one adds or drops an
+            entry the others do not), drop a mark the record has where another keeps it, or
+            write one mark at two shapes; the text names the owner, the child and the entry.
+    """
+    whole = _entry_names(element.state) is None or any(s.entries is None for s in sides)
+    marks: dict[str, dict[KeyTuple, _Spec]] = {}
+    mark_keys: dict[str, tuple[KeyTuple, ...]] = {}
+    for attribute in MARK_ATTRIBUTES:
+        kept = _kept_marks(owner, attribute, element, sides)
+        marks[attribute] = _written_marks(owner, attribute, element, sides)
+        mark_keys[attribute] = kept + tuple(keys for keys in marks[attribute] if keys not in kept)
+    return _Alignment(
+        entries=None if whole else _aligned_state(owner, element, sides),
+        state=tuple(dict.fromkeys(key for side in sides for key in sorted(side.state_written))),
+        weight=any(side.weight_written for side in sides),
+        marks=marks,
+        mark_keys=mark_keys,
+    )
+
+
+def _carried(
+    alignment: _Alignment, element: Element, fallback: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The entries ``alignment`` carries, read from ``element``.
+
+    A mark ``element`` lacks comes from ``fallback`` (what the side was given), else is False at
+    its writer's shape.
+    """
+    if alignment.entries is None:
+        state: PyTree = element.state
+    else:
+        state = {key: element.state[key] for key in alignment.state if key in element.state}
+    carried: dict[str, Any] = {"state": state}
+    if alignment.weight:
+        carried["weight"] = element.weight
+    for attribute in MARK_ATTRIBUTES:
+        given = _leaves(getattr(element, attribute))
+        carried[attribute] = {
+            keys: given[keys]
+            if keys in given
+            else (fallback[attribute][keys] if fallback is not None else jnp.zeros(*spec))
+            for keys, spec in alignment.marks[attribute].items()
+        }
+    return carried
+
+
+def _restored(
+    element: Element, data: PyTree, carried: dict[str, Any], alignment: _Alignment
+) -> Element:
+    """The record with ``data`` and the carried entries, and its own arrays everywhere else."""
+    if alignment.entries is None:
+        state: PyTree = carried["state"]
+    else:
+        state = {
+            key: carried["state"][key] if key in carried["state"] else element.state[key]
+            for key in alignment.entries
+        }
+    marks = {}
+    for attribute in MARK_ATTRIBUTES:
+        own = _leaves(getattr(element, attribute))
+        marks[attribute] = _nested(
+            {
+                keys: carried[attribute][keys] if keys in carried[attribute] else own[keys]
+                for keys in alignment.mark_keys[attribute]
+            }
+        )
+    return element.replace(
+        data=data, state=state, weight=carried.get("weight", element.weight), **marks
+    )
+
+
+def _given(
+    element: Element, data: PyTree, carried: dict[str, Any], alignment: _Alignment
+) -> Element:
+    """What a side is given: the record, with its data and the carried entries in place."""
+    if alignment.entries is None:
+        state: PyTree = carried["state"]
+    else:
+        state = {**element.state, **carried["state"]}
+    marks = {
+        attribute: _nested({**_leaves(getattr(element, attribute)), **carried[attribute]})
+        for attribute in MARK_ATTRIBUTES
+    }
+    return element.replace(
+        data=data, state=state, weight=carried.get("weight", element.weight), **marks
+    )
+
+
+def _on_values(
+    child: "OperatorModule", element: Element, stats: dict[str, Any] | None, alignment: _Alignment
+) -> Callable[[tuple[PyTree, dict[str, Any]]], tuple[PyTree, dict[str, Any]]]:
+    """``child`` applied to a record's data and carried entries, the rest of the record fixed.
+
+    ``jax.lax.cond`` and ``switch`` return new arrays for everything that passes through them, so
+    a wrapper passes only the record's data and the entries some side writes through them, and
+    keeps the record's identity and every other entry as it is.
 
     Args:
         child: The operator a branch applies, in its own mode.
-        element: The record, whose identity the branch keeps.
+        element: The record.
         stats: The child's statistics.
+        alignment: What every side carries.
 
     Returns:
-        A branch function from ``(data, state)`` to ``(data, state)``.
+        A branch function from ``(data, carried)`` to ``(data, carried)``.
     """
 
-    def run(values: tuple[PyTree, PyTree]) -> tuple[PyTree, PyTree]:
-        out = child.apply_record(element.replace(data=values[0], state=values[1]), stats)
-        return out.data, out.state
+    def run(values: tuple[PyTree, dict[str, Any]]) -> tuple[PyTree, dict[str, Any]]:
+        data, carried = values
+        out = child.apply_record(_given(element, data, carried, alignment), stats)
+        return out.data, _carried(alignment, out, fallback=carried)
 
     return run
 
 
-def apply_where(
+def apply_where(  # noqa: DOC502 - _aligned raises the TypeError
     child: "OperatorModule",
     should_apply: bool | jax.Array,
     element: Element,
     stats: dict[str, Any] | None,
+    *,
+    owner: str,
+    position: int,
 ) -> Element:
     """Apply ``child`` to the record where ``should_apply`` holds, else return it unchanged.
+
+    Both sides carry the same entries: the weight and any mark ``child`` writes (the record's
+    own, or False, where it does not apply), and any user state entry it writes. An entry it does
+    not write is the record's own array. A user state entry the record lacks, which ``child``
+    adds, has no value where it does not apply, and is refused by name.
 
     Args:
         child: The operator to apply, in its own mode (``apply_record``).
         should_apply: Whether to apply it; a traced boolean is decided by ``jax.lax.cond``.
         element: The record.
         stats: The child's statistics.
+        owner: Who applies it, as the refusal names it: a wrapper's class or a strategy.
+        position: The child's position in its owner.
 
     Returns:
         The record, transformed or not.
+
+    Raises:
+        TypeError: If the two sides cannot carry one structure (see :func:`_aligned`).
     """
-    data, state = jax.lax.cond(
+    sides = [_branch(child, position, element, stats), _record_side(element)]
+    alignment = _aligned(owner, element, sides)
+    data, carried = jax.lax.cond(
         should_apply,
-        _on_values(child, element, stats),
+        _on_values(child, element, stats, alignment),
         lambda values: values,
-        (element.data, element.state),
+        (element.data, _carried(alignment, element)),
     )
-    return element.replace(data=data, state=state)
+    return _restored(element, data, carried, alignment)
 
 
-def apply_selected(
+def apply_selected(  # noqa: DOC502 - _aligned raises the TypeError
     children: Sequence["OperatorModule"],
     selected: int | jax.Array,
     element: Element,
     stats: dict[str, Any] | None,
+    *,
+    owner: str,
 ) -> Element:
     """Apply the child at ``selected`` to the record; ``jax.lax.switch`` runs only that branch.
+
+    Every branch carries the same entries, as in :func:`apply_where`; a user state entry only
+    some children return is refused, naming the first that writes it.
 
     Args:
         children: The candidate operators.
         selected: The index of the one to apply; out of range is clamped, as ``switch`` does.
         element: The record.
         stats: One entry per child (``child_statistics``), or ``None``.
+        owner: Who selects, as the refusal names it: a wrapper's class or a strategy.
 
     Returns:
         The record, transformed by the selected child.
+
+    Raises:
+        TypeError: If the branches cannot carry one structure (see :func:`_aligned`).
     """
+    stats_of = [statistics_for_child(stats, index) for index in range(len(children))]
+    sides = [
+        _branch(child, index, element, stats_of[index]) for index, child in enumerate(children)
+    ]
+    alignment = _aligned(owner, element, sides)
     branches = [
-        _on_values(child, element, statistics_for_child(stats, index))
+        _on_values(child, element, stats_of[index], alignment)
         for index, child in enumerate(children)
     ]
-    data, state = jax.lax.switch(selected, branches, (element.data, element.state))
-    return element.replace(data=data, state=state)
+    data, carried = jax.lax.switch(selected, branches, (element.data, _carried(alignment, element)))
+    return _restored(element, data, carried, alignment)
 
 
 def _require_identity_kept(element: Element, out: Element, operator: "OperatorModule") -> None:
@@ -673,7 +1007,7 @@ class OperatorModule(DataraxModule):
             transform: Maps a record and its key to the transformed record.
 
         Returns:
-            The batch with every record's data and state transformed.
+            The batch with every record's data, state, weight and marks transformed.
 
         Raises:
             ValueError: If ``transform`` changes a record's identity.
@@ -686,29 +1020,54 @@ class OperatorModule(DataraxModule):
         def one(
             data: PyTree,
             state: PyTree,
+            weight: ArrayValue,
+            masked: PyTree,
+            imputed: PyTree,
             index: ArrayValue,
             epoch: ArrayValue,
             draw: ArrayValue,
             key: jax.Array | None,
-        ) -> tuple[PyTree, PyTree]:
-            element = Element(data, state=state, index=index, epoch=epoch, draw=draw)
+        ) -> tuple[PyTree, PyTree, ArrayValue, PyTree, PyTree]:
+            element = Element(
+                data,
+                state=state,
+                index=index,
+                epoch=epoch,
+                draw=draw,
+                weight=weight,
+                masked=masked,
+                imputed=imputed,
+            )
             out = transform(element, key)
             _require_identity_kept(element, out, self)
-            return out.data, out.state
+            return out.data, out.state, out.weight, out.masked, out.imputed
 
-        inputs = (batch.data, batch.states, batch.indices, batch.epochs, batch.draws, keys)
+        inputs = (
+            batch.data,
+            batch.states,
+            batch.weights,
+            batch.masked,
+            batch.imputed,
+            batch.indices,
+            batch.epochs,
+            batch.draws,
+            keys,
+        )
         try:
             if self.config.batch_strategy == "scan":
-                _, (data, states) = jax.lax.scan(lambda carry, x: (carry, one(*x)), None, inputs)
+                _, records = jax.lax.scan(lambda carry, x: (carry, one(*x)), None, inputs)
             else:
-                data, states = jax.vmap(one)(*inputs)
+                records = jax.vmap(one)(*inputs)
         except TraceContextError as error:
             raise TypeError(
                 f"{type(self).__name__}.apply wrote module state, which one record cannot do "
                 "inside the per-record map (a BatchNorm in training does). Make it a whole-batch "
                 "operator: override apply_batch(batch, keys, stats) instead of apply."
             ) from error
-        return batch.replace(data=data, states=states)
+        data, states, weights, masked, imputed = records
+        return batch.replace(
+            data=data, states=states, weights=weights, masked=masked, imputed=imputed
+        )
 
     def created_fields(self) -> tuple[CreatedField, ...]:
         """The fields this operator creates under names datarax chose (W1), checked on each call.

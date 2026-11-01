@@ -244,7 +244,7 @@ class BatchMixOperatorConfig(OperatorConfig):
         mode: Mixing mode - "mixup" or "cutmix"
         alpha: Beta distribution parameter for mixing ratio (default: 1.0)
         data_field: Field name containing the data to mix (default: "image"); labels are left
-            untouched and the loss reads ``MIX_PARTNER`` and ``MIX_LAMBDA`` from the batch
+            untouched and the loss reads ``batch.mix``
 
     Validation Rules:
 

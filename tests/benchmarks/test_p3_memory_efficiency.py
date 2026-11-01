@@ -22,8 +22,8 @@ from tests.benchmarks.performance_targets import measure_peak_rss_delta_mb
 
 logger = logging.getLogger(__name__)
 
-# One batch: its images, and its indices (two words a record), epochs and draws.
-_BATCH_MB = (64 * 224 * 224 * 3 + 64 * (2 * 4 + 4 + 4)) / 2**20
+# One batch: its images, and its indices (two words a record), epochs, draws and weights.
+_BATCH_MB = (64 * 224 * 224 * 3 + 64 * (2 * 4 + 4 + 4 + 4)) / 2**20
 # The pipeline's own allocator and thread jitter beside its control. Measured in main's CI, 184
 # readings from 2026-10-12 to 2026-10-30: at most 0.4 MB above the control without the extra
 # batch, and 0.09 MB below to 0.07 MB above one batch with it; on a 24-CPU Linux 6.8 machine

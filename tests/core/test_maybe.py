@@ -2,8 +2,8 @@
 
 A missing value's slot holds zeros and ``Maybe`` has no arithmetic, so the fill value is read only
 through ``value_or(fill)`` or with ``present`` in hand. A value an operator hides but keeps as the
-target is marked in ``state[MASKED][field]``; a value an operator fills is marked in
-``state[IMPUTED][field]`` with ``present`` set. Padding rows are a third thing (``WEIGHT`` 0).
+target is marked in ``masked[field]``; a value an operator fills is marked in ``imputed[field]``
+with ``present`` set. Padding rows are a third thing (``weights`` 0).
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.spec import array_to_spec, batched_spec, SpecMismatchError, validate_batch
-from datarax.core.state_keys import IMPUTED, MASKED
 from datarax.pipeline.dag import name_records
 
 
@@ -191,7 +190,7 @@ class MaskTokens(OperatorModule):
         self, element: Element, key: jax.Array | None = None, stats: dict[str, Any] | None = None
     ) -> Element:
         hidden = jax.random.bernoulli(require_key(key, self), 0.5, element.data["tokens"].shape)
-        return element.update_state({MASKED: {"tokens": hidden}})
+        return element.replace(masked={**element.masked, "tokens": hidden})
 
 
 def test_a_masked_value_keeps_its_target() -> None:
@@ -202,7 +201,7 @@ def test_a_masked_value_keeps_its_target() -> None:
     out = jax.jit(lambda b: op(b))(batch)
 
     np.testing.assert_array_equal(out.data["tokens"], tokens)
-    hidden = np.asarray(out.states[MASKED]["tokens"])
+    hidden = np.asarray(out.masked["tokens"])
     assert hidden.dtype == np.bool_ and hidden.shape == (B, 5)
     assert 0 < hidden.sum() < hidden.size
     # A masked-prediction loss reads the hidden positions' targets from data, unchanged.
@@ -213,7 +212,7 @@ def test_a_masked_value_keeps_its_target() -> None:
 
 class CrossModalFill(OperatorModule):
     """Fills a missing image from the text and a missing text from the image, where the other is
-    present; a record missing both stays missing. Marks what it filled in ``state[IMPUTED]``."""
+    present; a record missing both stays missing. Marks what it filled in ``imputed``."""
 
     def __init__(self, *, rngs: nnx.Rngs, strategy: str = "vmap") -> None:
         super().__init__(OperatorConfig(stochastic=False, batch_strategy=strategy))
@@ -235,7 +234,7 @@ class CrossModalFill(OperatorModule):
                 "image": Maybe(image_value, image.present | fill_image),
                 "text": Maybe(text_value, text.present | fill_text),
             },
-            state={IMPUTED: {"image": fill_image, "text": fill_text}},
+            imputed={"image": fill_image, "text": fill_text},
         )
 
 
@@ -280,7 +279,7 @@ def _imputed_loss(model: CrossModalFill, batch: Batch) -> jax.Array:
 
 
 class TestAFill:
-    """An operator that fills a missing value sets ``present`` and marks ``IMPUTED``."""
+    """An operator that fills a missing value sets ``present`` and marks it ``imputed``."""
 
     def test_the_four_presence_cases(self) -> None:
         batch = four_cases_batch()
@@ -288,7 +287,7 @@ class TestAFill:
         out = CrossModalFill(rngs=nnx.Rngs(0))(batch)
 
         image, text = out.data["image"], out.data["text"]
-        imputed = out.states[IMPUTED]
+        imputed = out.imputed
         # both present: kept, nothing imputed
         np.testing.assert_array_equal(image.value[:2], batch.data["image"].value[:2])
         np.testing.assert_array_equal(text.value[:2], batch.data["text"].value[:2])
@@ -498,7 +497,7 @@ class TestSpecs:
 
         assert isinstance(out.data["image"], Maybe)
         assert out.data["image"].present.shape == (B,)
-        assert out.states[IMPUTED]["text"].dtype == jnp.bool_
+        assert out.imputed["text"].dtype == jnp.bool_
 
 
 def test_placement_splits_presence_with_its_rows() -> None:

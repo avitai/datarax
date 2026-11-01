@@ -46,13 +46,13 @@ from datarax.pipeline.read_plan import (
     HostPlan,
     HostReadPath,
     HostTerms,
-    IDENTITY_BYTES,
-    IDENTITY_LEAVES,
     MAX_READ_THREADS,
     measure_terms,
     READ_BUFFER,
     READ_THREADS,
     ReadAccess,
+    ROW_BYTES,
+    ROW_LEAVES,
     spec_bytes,
     THREAD_READ_BUFFER,
     WORKER_BUFFER,
@@ -62,7 +62,8 @@ from tests.test_common.worker_reads import png_source, resources, write_png_reco
 
 
 _MiB = 1 << 20
-_SEGMENTS = 5  # a unit of two data leaves and its records' three identity arrays
+# A unit's segments for the plan's arithmetic; a real unit's count is measured.
+_SEGMENTS = 5
 _BACKLOG_UNITS = math.ceil(DELETION_BACKLOG_SEGMENTS / _SEGMENTS)  # 10 units of 5 segments
 
 
@@ -534,13 +535,13 @@ class TestTheSinkTerm:
 
 
 class TestHostBytes:
-    """A unit's host bytes: its data at the stored dtypes and each record's identity."""
+    """A unit's host bytes: its data at the stored dtypes and each row's identity and weight."""
 
-    def test_a_record_s_identity_is_its_words_epoch_and_draw(self) -> None:
-        assert IDENTITY_BYTES == 2 * 4 + 4 + 4
-        assert IDENTITY_LEAVES == 3
+    def test_a_row_carries_its_index_words_epoch_draw_and_weight(self) -> None:
+        assert ROW_BYTES == 2 * 4 + 4 + 4 + 4
+        assert ROW_LEAVES == 4
 
-    def test_a_unit_s_segments_are_its_non_empty_leaves_and_its_identity_arrays(self) -> None:
+    def test_a_unit_s_segments_are_its_non_empty_leaves_and_its_row_arrays(self) -> None:
         source = MemorySource(
             MemorySourceConfig(),
             {
@@ -549,7 +550,7 @@ class TestHostBytes:
                 "none": np.zeros((10, 0), np.float32),  # Grain sends an empty array by pickle
             },
         )
-        assert host_unit_segments(source) == 2 + IDENTITY_LEAVES
+        assert host_unit_segments(source) == 2 + ROW_LEAVES
 
     def test_a_spec_s_bytes_sum_its_leaves(self) -> None:
         spec = {
@@ -562,7 +563,7 @@ class TestHostBytes:
         assert not jax.config.read("jax_enable_x64")
         source = MemorySource(MemorySourceConfig(), {"x": np.zeros((10, 6), np.float64)})
         assert spec_bytes(declared_spec(source)) == 6 * 4  # as the device holds it
-        assert host_batch_bytes(source, 4) == 4 * (6 * 8 + IDENTITY_BYTES)
+        assert host_batch_bytes(source, 4) == 4 * (6 * 8 + ROW_BYTES)
 
 
 class _Footprint:

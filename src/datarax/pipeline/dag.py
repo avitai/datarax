@@ -10,15 +10,25 @@ train with the model. The pipeline applies it to every batch it serves.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.typing import ArrayLike
 
-from datarax.core.element_batch import Batch
-from datarax.core.field_paths import FieldExistsError, KeyTuple, record_problems
+from datarax.core import batch_ops
+from datarax.core.element_batch import Batch, MARK_ATTRIBUTES, MixedTwiceError
+from datarax.core.field_paths import (
+    field_listing,
+    field_paths,
+    FieldExistsError,
+    KeyTuple,
+    label,
+    mark_problems,
+    MarkProblem,
+    record_problems,
+)
 from datarax.pipeline.topo import topological_sort, validate_dag
 
 
@@ -44,7 +54,8 @@ def name_records(batch: Batch, indices: ArrayLike, epochs: ArrayLike) -> Batch:
         epochs: The epoch of the batch, or of each row ``(B,)``.
 
     Returns:
-        The batch with ``indices`` and ``epochs`` set and ``draws`` 0.
+        The batch with ``indices`` and ``epochs`` set and ``draws`` 0; a row named
+        ``PADDING_INDEX`` weighs 0, as everywhere an index is written.
 
     Raises:
         ValueError: If ``indices`` is not uint32 ``(B, 2)``.
@@ -55,11 +66,13 @@ def name_records(batch: Batch, indices: ArrayLike, epochs: ArrayLike) -> Batch:
             f"record indices are uint32 ({batch.batch_size}, 2) words (hi, lo); got "
             f"{words.dtype} {words.shape}"
         )
-    return batch.replace(
+    named = batch.replace(
         indices=words,
         epochs=jnp.broadcast_to(jnp.asarray(epochs, jnp.int32), (batch.batch_size,)),
         draws=jnp.zeros((batch.batch_size,), jnp.int32),
     )
+    # Keeping every row leaves records as they are and gives each padding row weight 0.
+    return batch_ops.mask(named, jnp.ones(batch.batch_size, bool))
 
 
 class OperatorDag(nnx.Module):
@@ -141,6 +154,8 @@ class OperatorDag(nnx.Module):
             ValueError: If a node returns a record breaking the naming rules, naming the stage.
             FieldExistsError: If a stage creates a field its input already has, naming the stage
                 and the field's first writer.
+            MixedTwiceError: If a mixing stage is given a batch an earlier stage mixed, naming
+                both.
         """
         if self.sink is None:
             return batch
@@ -153,6 +168,8 @@ class OperatorDag(nnx.Module):
             except FieldExistsError as error:
                 writer = _first_writer(error.keys, batch, outputs, self.stages)
                 raise error.located(creator=stage, writer=writer) from error
+            except MixedTwiceError as error:
+                raise MixedTwiceError(stage, _first_mixer(outputs, self.stages)) from error
             if not isinstance(output, Batch):
                 raise TypeError(
                     f"DAG node {name!r} ({type(self.stages[name]).__name__}) returned "
@@ -172,7 +189,7 @@ def _refuse_broken_names(stage: str, output: Batch) -> None:
         output: What the stage returned.
 
     Raises:
-        ValueError: Naming the stage and every problem of its record.
+        ValueError: Naming the stage and every problem of its record or its marks.
     """
     problems = record_problems(output.data)
     if problems:
@@ -182,6 +199,41 @@ def _refuse_broken_names(stage: str, output: Batch) -> None:
             + "; ".join(str(problem) for problem in problems)
             + f".{fix}"
         )
+    for attribute in MARK_ATTRIBUTES:
+        marks = mark_problems(output.data, getattr(output, attribute))
+        if marks:
+            raise ValueError(
+                "; ".join(_mark_text(stage, attribute, problem, output.data) for problem in marks)
+            )
+
+
+def _mark_text(stage: str, attribute: str, problem: MarkProblem, data: Any) -> str:
+    """A mark's problem as the post-stage refusal words it: a field it names, or its shape."""
+    if problem.field_shape is None:
+        return (
+            f"{stage} marks {label(problem.keys)} in {attribute}, which is not a data field; the "
+            f"record's fields are {field_listing(field_paths(data))}"
+        )
+    return (
+        f"{stage} marks {label(problem.keys)} in {attribute} with shape {problem.shape}, which is "
+        f"not a prefix of the field's {problem.field_shape}"
+    )
+
+
+def _first_mixer(outputs: Mapping[str, Batch], stages: Mapping[str, nnx.Module]) -> str | None:
+    """The first stage, in the DAG's order, whose output carries a mix.
+
+    Args:
+        outputs: The outputs of the stages run so far, in order.
+        stages: The DAG's nodes by name.
+
+    Returns:
+        The stage as a refusal names it, or ``None`` when the DAG's input was mixed.
+    """
+    for name, output in outputs.items():
+        if output.mix is not None:
+            return f"stage {name!r} ({type(stages[name]).__name__})"
+    return None
 
 
 def _holds(batch: Batch, keys: KeyTuple) -> bool:

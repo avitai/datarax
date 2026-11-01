@@ -39,6 +39,10 @@ def make_batch(seed: int = 0, size: int = B, epoch: int = 0) -> Batch:
         ),
         epochs=jnp.full((size,), epoch, jnp.int32),
         draws=jnp.zeros((size,), jnp.int32),
+        weights=jnp.ones((size,), jnp.float32),
+        masked={},
+        imputed={},
+        mix=None,
         batch_state={"seen": jnp.zeros((), jnp.int32)},
     )
 
@@ -104,8 +108,8 @@ class TestLayout:
         first, second = make_batch(0), make_batch(1, epoch=3)
 
         assert jax.tree.structure(first) == jax.tree.structure(second)
-        # image, tokens, label, score, indices, epochs, draws, seen
-        assert len(jax.tree.leaves(first)) == 8
+        # image, tokens, label, score, indices, epochs, draws, weights, seen
+        assert len(jax.tree.leaves(first)) == 9
 
     def test_an_element_defaults_to_no_state_no_index_and_epoch_zero(self) -> None:
         element = Element({"x": jnp.ones(3)})

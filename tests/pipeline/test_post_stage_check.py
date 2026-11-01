@@ -325,3 +325,81 @@ class TestEagerCalls:
     def test_disable_jit_still_refuses(self) -> None:
         with jax.disable_jit(), pytest.raises(ValueError, match="'meta/id' names two fields"):
             nnx.jit(lambda dag, batch: dag(batch))(_clash(), _batch())
+
+
+class _Marks(OperatorModule):
+    """Marks ``path`` in ``masked`` (or ``imputed``) with a per-record mark of ``shape``."""
+
+    def __init__(
+        self, path: tuple[str, ...], shape: tuple[int, ...] = (), *, imputed: bool = False
+    ):
+        super().__init__(OperatorConfig())
+        self.path = path
+        self.shape = shape
+        self.imputed = imputed
+
+    def apply(self, element: Element, key: Any = None, stats: Any = None) -> Element:
+        mark: Any = jnp.zeros(self.shape, bool)
+        for part in reversed(self.path):
+            mark = {part: mark}
+        if self.imputed:
+            return element.replace(imputed=mark)
+        return element.replace(masked=mark)
+
+
+@pytest.fixture
+def mark_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the marks rule's runs: one per stage per trace or eager call."""
+    calls: list[int] = []
+    rule = dag_module.mark_problems
+
+    def counted(data: Any, marks: Any) -> Any:
+        calls.append(1)
+        return rule(data, marks)
+
+    monkeypatch.setattr(dag_module, "mark_problems", counted)
+    return calls
+
+
+class TestTheMarks:
+    """A ``masked``/``imputed`` path names a data field, at a prefix of its per-record shape."""
+
+    def test_a_mark_naming_no_field_is_refused(self) -> None:
+        with pytest.raises(ValueError) as caught:
+            OperatorDag.from_stages([_Marks(("tokenz",))])(_batch())
+        assert str(caught.value) == (
+            "stage 'stage_0' (_Marks) marks 'tokenz' in masked, which is not a data field; the "
+            "record's fields are 'id', 'x'"
+        )
+
+    def test_a_mark_wider_than_its_field_is_refused(self) -> None:
+        with pytest.raises(ValueError) as caught:
+            OperatorDag.from_stages([_Marks(("x",), (3,))])(_batch())
+        assert str(caught.value) == (
+            "stage 'stage_0' (_Marks) marks 'x' in masked with shape (3,), which is not a prefix "
+            "of the field's ()"
+        )
+
+    def test_imputed_is_held_to_the_same_rule(self) -> None:
+        with pytest.raises(ValueError, match=r"marks 'nope' in imputed, which is not a data field"):
+            OperatorDag.from_stages([_Marks(("nope",), imputed=True)])(_batch())
+
+    def test_a_mark_on_a_nested_field_at_its_path_is_served(self) -> None:
+        out = OperatorDag.from_stages([_Nest(), _Marks(("meta", "id"))])(_batch())
+        assert np.asarray(out.masked["meta"]["id"]).shape == (2,)
+
+    @pytest.mark.parametrize("graph", [True, False])
+    def test_the_rule_runs_while_tracing_and_never_on_a_cached_call(
+        self, graph: bool, mark_calls: list[int]
+    ) -> None:
+        dag = OperatorDag.from_stages([_Marks(("x",))])
+        apply = nnx.jit(lambda d, batch: d(batch).masked["x"], graph=graph)
+        for _ in range(5):
+            apply(dag, _batch())
+        traced = len(mark_calls)
+        assert traced > 0
+        for _ in range(5):
+            apply(dag, _batch())
+        assert len(mark_calls) == traced  # cached calls run no check
+        dag(_batch())
+        assert len(mark_calls) > traced  # an eager call checks
