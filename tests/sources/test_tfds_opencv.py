@@ -130,7 +130,7 @@ class TestTheDecoderIdentity:
         current = self._identity(tfds_fixture)
         under_pillow = {**current, "decoder": {**current["decoder"], "opencv": None}}
 
-        assert identity_differences(under_pillow, current) == ["decoder/opencv"]
+        assert identity_differences(under_pillow, current) == [("decoder", "opencv")]
 
 
 _THREADS_AFTER = """

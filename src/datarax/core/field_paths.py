@@ -13,6 +13,9 @@ dict keys from the record's root, its key tuple. A key is a non-empty string and
   exactly its path, and is the only way to create a group.
 - A refusal names a node by its spelling in quotes, adding its key tuple where a key on its path
   holds ``/`` or is empty, the only nodes whose spelling hides their structure.
+- Storage names a field by its key tuple, never its spelling: :func:`flat_fields` and
+  :func:`fields_nested` flatten a record and rebuild it, so ``("a/b",)`` and ``("a", "b")`` stay
+  apart. Provenance keys stay spellings (:func:`field_name`).
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from dataclasses import dataclass, fields
 from typing import Any, NoReturn, overload
 
 import jax
+from flax import traverse_util
 from jaxtyping import PyTree
 
 from datarax.core.field_nodes import FieldNode, is_field_node
@@ -847,13 +851,14 @@ def field_parameters(config_type: type) -> tuple[tuple[str, Callable[[Any, str],
     return tuple(found)
 
 
-# ------------------------------------------------------------------- layout of stored columns
+# ------------------------------------------------------------- provenance names, stored fields
 
 
 def field_name(path: Sequence[Any]) -> str:
     """A leaf's name: its path's steps joined by ``/``, a dictionary key by the key itself.
 
-    A step without a ``key`` (a list position, ``SequenceKey``) prints as JAX prints it, ``[0]``;
+    Provenance keys and refusals name a value this way. A step without a ``key`` (a list
+    position, ``SequenceKey``) prints as JAX prints it, ``[0]``;
     ``jax.tree_util.keystr(path, simple=True, separator="/")`` would print ``0`` there instead,
     which a dictionary key named ``0`` also prints.
 
@@ -878,38 +883,55 @@ def field_names(tree: PyTree) -> list[str]:
     return [field_name(path) for path, _ in jax.tree_util.tree_flatten_with_path(tree)[0]]
 
 
-def by_field(tree: PyTree, *, is_leaf: Callable[[Any], bool] | None = None) -> dict[str, Any]:
-    """Every leaf of ``tree`` keyed by its name; :func:`nested` inverts it.
+def flat_fields(tree: PyTree, *, owner: str) -> dict[KeyTuple, Any]:
+    """Every field of a record's data or spec by its key tuple; :func:`fields_nested` inverts it.
+
+    JAX's own walk, a field node as one field: ``None`` is no field, and each level's keys come
+    in sorted order, which is name order. Storage names a field this way, so a field whose key
+    holds ``/`` (``("a/b",)``) and a nested one (``("a", "b")``) stay apart.
 
     Args:
-        tree: A record's pytree, or a JSON document's mappings.
-        is_leaf: What counts as one leaf, as ``jax.tree_util`` takes it; for a JSON document,
-            whatever is not a mapping, so a list is one value and an empty mapping no field.
+        tree: A record's data, a batch's data or a record's spec.
+        owner: Who reads the fields, for a refusal.
 
     Returns:
-        Each leaf, keyed by its name.
+        Each field, keyed by its key tuple.
+
+    Raises:
+        TypeError: If a field sits under a step that is not a dict key (a list, a tuple or
+            another pytree), naming the field.
     """
-    flat = jax.tree_util.tree_flatten_with_path(tree, is_leaf=is_leaf)[0]
-    return {field_name(path): leaf for path, leaf in flat}
+    found: dict[KeyTuple, Any] = {}
+    for path, field in jax.tree_util.tree_flatten_with_path(tree, is_leaf=is_field_node)[0]:
+        if not all(isinstance(step, jax.tree_util.DictKey) for step in path):
+            raise TypeError(
+                f"{owner} reads a record's fields from nested dicts, and field "
+                f"{path_label(path)} is not under dict keys alone; {_NODE_RULE}"
+            )
+        found[tuple(step.key for step in path)] = field
+    return found
 
 
-def nested(leaves: Mapping[str, Any]) -> dict[str, Any]:
-    """Leaves keyed by name as nested mappings, one level per path step.
+def fields_nested(fields: Mapping[KeyTuple, Any]) -> dict[str, Any]:
+    """The record ``fields`` holds, its nesting rebuilt from their key tuples alone.
+
+    The key tuples are prefix-free: no field's keys begin another's. Every caller's construction
+    check guarantees it, since a field cannot also be a group.
 
     Args:
-        leaves: Values keyed by name, :data:`LEVEL` between levels.
+        fields: Each field, keyed by its key tuple.
 
     Returns:
-        The nested mappings.
+        The record, as nested dicts.
+
+    Raises:
+        TypeError: If a key is not a non-empty tuple of strings (a spelling would nest by its
+            characters).
     """
-    tree: dict[str, Any] = {}
-    for name, leaf in leaves.items():
-        *levels, last = name.split(LEVEL)
-        node = tree
-        for level in levels:
-            node = node.setdefault(level, {})
-        node[last] = leaf
-    return tree
+    for keys in fields:
+        if not (isinstance(keys, tuple) and keys and all(isinstance(key, str) for key in keys)):
+            raise TypeError(f"a field is named by its key tuple, a tuple of strings; got {keys!r}")
+    return traverse_util.unflatten_dict(dict(fields))
 
 
 __all__ = [
@@ -922,7 +944,6 @@ __all__ = [
     "KeyTuple",
     "as_field_name",
     "as_field_names",
-    "by_field",
     "create_path",
     "describe",
     "field_listing",
@@ -931,6 +952,8 @@ __all__ = [
     "field_parameters",
     "field_paths",
     "fields_named",
+    "fields_nested",
+    "flat_fields",
     "get_field",
     "is_exotic",
     "label",
@@ -938,7 +961,6 @@ __all__ = [
     "MarkProblem",
     "name_label",
     "name_order",
-    "nested",
     "node_spellings",
     "path_label",
     "record_problems",

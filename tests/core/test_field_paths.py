@@ -20,6 +20,8 @@ from datarax.core.field_paths import (
     as_field_names,
     create_path,
     field_listing,
+    field_name,
+    field_names,
     FieldCreateError,
     FieldNotFoundError,
     get_field,
@@ -293,3 +295,29 @@ def test_the_naming_module_imports_no_record_or_node_type() -> None:
         if name.name.startswith("datarax")
     }
     assert imported == {"datarax.core.field_nodes"}
+
+
+class TestProvenanceNames:
+    """Provenance keys and refusals keep naming a field by its spelling."""
+
+    def test_a_dictionary_key_is_its_key_and_levels_join_with_a_slash(self) -> None:
+        assert field_names({"meta": {"label": 1}}) == ["meta/label"]
+
+    def test_a_list_position_prints_as_jax_prints_it(self) -> None:
+        """``keystr(simple=True)`` would print ``0``, which a key named ``0`` also prints."""
+        assert field_names({"box": [1, 2]}) == ["box/[0]", "box/[1]"]
+
+    def test_field_name_names_one_path(self) -> None:
+        record = {"image": np.zeros(2), "meta": {"label": np.int32(1)}}
+        paths = [path for path, _ in jax.tree_util.tree_flatten_with_path(record)[0]]
+
+        assert [field_name(path) for path in paths] == field_names(record)
+
+
+@pytest.mark.parametrize("name", ["field_name", "field_names"])
+def test_the_module_is_the_one_home_of_field_naming(name: str) -> None:
+    """``eager_source`` reads these names; no second copy of the joiner is kept there."""
+    from datarax.sources import eager_source  # noqa: PLC0415 - the module under test
+
+    assert getattr(eager_source, name) is getattr(field_paths, name)
+    assert f"_{name}" not in vars(eager_source)

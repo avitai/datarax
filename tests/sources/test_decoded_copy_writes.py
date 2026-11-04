@@ -297,7 +297,7 @@ class TestTheReservationOnMacOS:
             from datarax.sources.decoded_copy._layout import ColumnLayout, LayoutColumn
             from datarax.sources.decoded_copy._units import source_layout
             layout = ColumnLayout(
-                columns=(LayoutColumn(name="x", dtype="<f4", shape=(1024,)),), length=1024
+                columns=(LayoutColumn(keys=("x",), dtype="<f4", shape=(1024,)),), length=1024
             )
             def free():
                 s = os.statvfs({str(mount)!r})
@@ -344,4 +344,4 @@ def test_the_format_names_its_lock_file() -> None:
     assert _files.is_copy_file(".lock")
     assert _files.is_copy_file("manifest.json")
     assert not _files.is_copy_file("notes.txt")
-    assert LayoutColumn(name="a/b", dtype="<f4", shape=(2,)).row_bytes == 8
+    assert LayoutColumn(keys=("a", "b"), dtype="<f4", shape=(2,)).row_bytes == 8

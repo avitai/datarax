@@ -86,7 +86,10 @@ in hand (see [Missing values](../core/maybe.md)).
 
 The mix compares the sources' declared specs, the dtypes the device holds. It refuses a field
 whose shape or device dtype differs between two sources, or which holds values in one source and
-nested fields in another, naming the field and both specs. Host columns of one field stored in
+nested fields in another, naming the field and both specs. It reads each source's batches
+through the structure that source declares, and refuses a batch with another structure (a field
+the spec declares and the batch lacks, or another nesting), naming the source and both sets of
+fields: a mixed batch always has the mix's own spec. Host columns of one field stored in
 different dtypes of one kind join at NumPy's lossless promotion: an `int64` label beside an
 `int32` one reads as `int64` on the host in every batch and as `int32` on the device.
 

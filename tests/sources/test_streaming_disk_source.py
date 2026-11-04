@@ -124,7 +124,7 @@ def test_streaming_disk_source_repr_identifies_config(tmp_path: Path) -> None:
     r = repr(source)
     assert "StreamingDiskSource" in r
     assert str(path) in r
-    assert f"feat: {path}@128 float32[12, 3]" in r
+    assert f"'feat': {path}@128 float32[12, 3]" in r
     assert "length=12" in r
 
 
