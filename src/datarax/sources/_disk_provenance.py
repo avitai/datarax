@@ -39,7 +39,7 @@ def encode_provenance(record: Mapping[str, Any]) -> bytes:
     """One record's provenance as UTF-8 JSON, ``bytes`` values base64-encoded under ``"bytes"``.
 
     Args:
-        record: The record's strings and objects, by field path.
+        record: The record's strings and objects, keyed by spelling (``field_name``).
 
     Returns:
         The encoded record.
@@ -70,7 +70,7 @@ def decode_provenance(encoded: bytes) -> dict[str, Any]:
         encoded: The stored record.
 
     Returns:
-        The record's values by field path, ``bytes`` restored.
+        The record's values keyed by spelling, ``bytes`` restored.
     """
     stored = json.loads(encoded.decode("utf-8"))
     raw = {field: base64.b64decode(text) for field, text in stored["bytes"].items()}

@@ -1,12 +1,14 @@
 """A source's records decoded once into columns on disk, or in memory: the one per-unit writer.
 
-A decoded copy holds an indexed source's records as they decode, one ``.npy`` file per numeric
-field (its column) and the records' provenance in one ArrayRecord file of UTF-8 JSON, beside a
-``manifest.json`` written last. It is read back by :func:`open_decoded_copy` as a
-:class:`~datarax.sources.streaming_disk_source.StreamingDiskSource`, which serves what the source
-serves, record for record, from memory maps. The copy is opt-in and has no default directory;
-``datarax.pipeline.materialize`` writes one, through the training process's Grain workers or on
-the calling thread.
+A decoded copy holds an indexed source's records as they decode, one ``.npy`` file per numeric field
+(its column, which the manifest names by the field's key tuple, so ``("a/b",)`` and ``("a", "b")``
+reopen apart) and the records' provenance in one ArrayRecord file of UTF-8 JSON, beside a
+``manifest.json`` written last. A copy stores arrays: a field node (a ``Maybe``) is refused before
+any file is reserved, and an in-memory build keeps it. It is read back by :func:`open_decoded_copy`
+as a :class:`~datarax.sources.streaming_disk_source.StreamingDiskSource`, which serves what the
+source serves, record for record, from memory maps. The copy is opt-in and has no default directory;
+``datarax.pipeline.materialize`` writes one, through the training process's Grain workers or on the
+calling thread.
 
 Records are decoded unit by unit (:data:`UNIT_RECORDS` records) by one writer,
 :func:`write_unit`: it reads the records with the source's own host read and assigns each field
@@ -49,6 +51,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from datarax.core.field_paths import field_listing, label
 from datarax.sources._disk_provenance import DiskProvenance
 from datarax.sources.decoded_copy._manifest import (
     identity_differences,
@@ -92,22 +95,24 @@ def open_decoded_copy(
         if differing:
             raise ValueError(
                 f"{root} is a copy of another source than the one given: it differs in "
-                f"{differing}; rebuild it with datarax.pipeline.materialize(..., rebuild=True)"
+                f"{field_listing(differing)}; rebuild it with "
+                "datarax.pipeline.materialize(..., rebuild=True)"
             )
     columns = []
     for entry in manifest["columns"]:
+        keys = tuple(entry["keys"])
         path = root / entry["file"]
         if not path.is_file():
             raise FileNotFoundError(
-                f"{root}: column {entry['name']!r}'s file {entry['file']} is missing"
+                f"{root}: column {label(keys)}'s file {entry['file']} is missing"
             )
         size = path.stat().st_size
         if size != entry["bytes"]:
             raise ValueError(
-                f"{root}: column {entry['name']!r}'s file {entry['file']} holds {size} bytes, "
+                f"{root}: column {label(keys)}'s file {entry['file']} holds {size} bytes, "
                 f"not the {entry['bytes']} its manifest records: rebuild the copy"
             )
-        column = DiskColumn.from_npy(entry["name"], path)
+        column = DiskColumn.from_npy(keys, path)
         columns.append(column)
     if verify:
         verify_content(root, manifest, columns)

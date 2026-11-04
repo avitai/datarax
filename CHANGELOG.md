@@ -337,53 +337,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generates a variant's data at its configured size and `ScenarioVariant.with_dataset_size(n)`
   sets that size; every `data_generator` takes the number of records to generate.
 
-- **`datarax.pipeline.materialize(source, *, host_resources=None, directory=None,
-  unit_records=256, rebuild=False)`** decodes an indexed source's records once and returns a
-  source serving them, record for record, without decoding again: a `MemorySource` over the
-  decoded columns (`MemorySource.of_columns`, out of NNX state) or, with `directory`, the source's
-  decoded copy there, a `StreamingDiskSource`. A read that decodes in Python is decoded by the
-  worker processes a RAM budget admits (from two; one worker is slower than the calling thread),
-  a GIL-free read and any read without a budget on the calling thread. Workers write a copy's
-  rows in place and send back only each unit's provenance and digest; for RAM they send each
-  decoded unit, copied into the columns. The budget is refused before a worker starts when it
-  cannot hold `M_main + C + E` (`C`, the decoded columns in RAM), naming the per-batch read and
-  `directory=`; `from_tfds(..., in_memory=True, host_resources=...)` checks the decoded size
-  alone. A complete copy of the same source in `directory` is returned as it is (wherever the
-  directory was moved); a changed source, an incomplete copy or `rebuild=True` writes it again
-  under the copy's lock, so N processes on a host build it once. The plan's one-thread warning
-  is shared with the host stage (`datarax.pipeline.read_plan.warn_one_thread`).
-- **Decoded copies** (`datarax.sources.decoded_copy`): a source's records decoded once into one
-  `.npy` file per numeric field and their provenance in one ArrayRecord file of UTF-8 JSON
-  (`bytes` base64-encoded), beside a `manifest.json` written last. `open_decoded_copy(directory,
-  *, identity=None, verify=False)` (exported from `datarax.sources`) opens a finished copy as a
-  `StreamingDiskSource` on any filesystem, refusing a directory without a manifest (an
-  incomplete copy), another copy format (naming both), a column file missing or of another size,
-  an `identity` that differs (naming each field) and, with `verify=True`, a content digest (the
-  SHA-256 of the units' SHA-256s) its bytes no longer give. A copy is identified by what its source
-  declares, `source_identity()` (`datarax.core.data_source.SourceIdentified`), never by paths:
+- **`datarax.pipeline.materialize(source, *, host_resources=None, directory=None, unit_records=256,
+  rebuild=False)`** decodes an indexed source's records once and returns a source serving them,
+  record for record, without decoding again: a `MemorySource` over the decoded columns
+  (`MemorySource.of_columns`, out of NNX state) or, with `directory`, the source's decoded copy
+  there, a `StreamingDiskSource`. Both serve the source's fields by key tuple, so a key holding `/`
+  (COCO's `image/id` beside `image`) comes back as one key and a nested field nested; RAM keeps a
+  field node (a `Maybe`) whole, and records that break the record rules (two fields of one spelling,
+  a list holding fields) are refused before anything is stored. A read that decodes in Python is
+  decoded by the worker processes a RAM budget admits (from two; one worker is slower than the
+  calling thread), a GIL-free read and any read without a budget on the calling thread. Workers
+  write a copy's rows in place and send back only each unit's provenance and digest; for RAM they
+  send each decoded unit, copied into the columns. The budget is refused before a worker starts when
+  it cannot hold `M_main + C + E` (`C`, the decoded columns in RAM), naming the per-batch read and
+  `directory=`; `from_tfds(..., in_memory=True, host_resources=...)` checks the decoded size alone.
+  A complete copy of the same source in `directory` is returned as it is (wherever the directory was
+  moved); a changed source, an incomplete copy or `rebuild=True` writes it again under the copy's
+  lock, so N processes on a host build it once. The plan's one-thread warning is shared with the
+  host stage (`datarax.pipeline.read_plan.warn_one_thread`).
+- **Decoded copies** (`datarax.sources.decoded_copy`, format 2): a source's records decoded once
+  into one `.npy` file per numeric field, which the manifest names by the field's key tuple
+  (`"keys": ["meta", "score"]`), and their provenance in one ArrayRecord file of UTF-8 JSON (`bytes`
+  base64-encoded), beside a `manifest.json` written last. A copy stores arrays: a field node (a
+  `Maybe`) is refused before any file is reserved. `open_decoded_copy(directory, *, identity=None,
+  verify=False)` (exported from `datarax.sources`) opens a finished copy as a `StreamingDiskSource`
+  on any filesystem, refusing a directory without a manifest (an incomplete copy), another copy
+  format (naming both), a column file missing or of another size, an `identity` that differs (naming
+  each field, compared by key tuple) and, with `verify=True`, a content digest (the SHA-256 of the
+  units' SHA-256s) its bytes no longer give. A copy is identified by what its source declares,
+  `source_identity()` (`datarax.core.data_source.SourceIdentified`), never by paths:
   `ArrayRecordSourceModule` declares its files' base names and sizes, its record count and its
-  decode; TFDS's per-batch
-  decode adds the dataset, version, config, split, kept features, `features.json`'s SHA-256 and the
-  versions of the libraries that decode it (`datarax.sources._tfds_identity`, read with substrax's
-  `library_versions`), so a decoder upgrade invalidates a copy; a
-  `StreamingDiskSource` declares its columns and the copy it is. The writer's protocol, internal
-  to the package (`open_decoded_copy` is its one public name):
-  `ColumnLayout`, the one per-unit writer `write_unit` (a field unlike its column is refused, never
+  decode; TFDS's per-batch decode adds the dataset, version, config, split, kept features,
+  `features.json`'s SHA-256 and the versions of the libraries that decode it
+  (`datarax.sources._tfds_identity`, read with substrax's `library_versions`), so a decoder upgrade
+  invalidates a copy; a `StreamingDiskSource` declares its columns (each field's key tuple) and the
+  copy it is. The writer's protocol, internal to the package (`open_decoded_copy` is its one public
+  name): `ColumnLayout` (columns by key tuple, a field node's members kept for RAM by its tree
+  definition), the one per-unit writer `write_unit` (a field unlike its column is refused, never
   cast), `unit_digest`, `CopyLock` (an exclusive `fcntl.flock` on `<copy>/.lock`), `clear_copy`
   (manifest first), `begin_copy` (every `.partial` created fresh and reserved with
   `os.posix_fallocate`, a full disk refused naming the column, the bytes needed and free),
   `finish_copy` (each file fsynced once and renamed, the manifest written last through a fsynced
   temporary file) and `refuse_unsupported_filesystem` (networked and FUSE targets, by
   `psutil.disk_partitions(all=True)`). A TFDS `Video` feature has no copy.
-- `from_tfds(..., in_memory=False, decoded_dir=...)` opens the split's decoded copy, checked
-  against the split it was written from; `decoded_dir` with an in-memory or streamed split is
-  refused.
+- `from_tfds(..., in_memory=False, decoded_dir=...)` opens the split's decoded copy, checked against
+  the split it was written from; a copy of another format (`materialize` rebuilds one), and
+  `decoded_dir` with an in-memory or streamed split, are refused.
 - `StreamingDiskSourceConfig(provenance=DiskProvenance(file, records), content_digest=...)`: a
   column-set source serves its records' provenance by index from one ArrayRecord file, and
   `StreamingDiskSource.source_identity()` declares its columns and the copy they are.
   `DiskProvenance` is exported from `datarax.sources`.
 - `MemorySource.of_columns(columns, provenance=(), *, name=None)`: a source over host columns
-  already decoded (a build's), nested by field and with one provenance mapping per record, held
+  already decoded (a build's), nested by key tuple and with one provenance mapping per record, held
   as given (not copied) as every eager source's columns are.
 - `ArrayRecordSourceModule.source_identity()`.
 
@@ -417,6 +422,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python tuples and Python lists build equal, hashable configurations, and a bare string for
   several fields is refused. `ModalityOperatorConfig.field_key`, `target_key` and
   `auxiliary_fields` take them; `auxiliary_fields` now holds a tuple.
+- Storage names a field by its key tuple, never its spelling:
+  `datarax.core.field_paths.flat_fields(tree, *, owner)` flattens a record by key tuple (a field
+  node one field, a list or other non-dict step refused naming the field) and
+  `fields_nested(fields)` rebuilds the record from key tuples alone. RAM materialize, the in-memory
+  TFDS build, the decoded copy, the disk source and the mix use them, so `("a/b",)` and `("a", "b")`
+  are served apart and COCO's `image` beside `image/id` is stored and read verbatim. The disk
+  source and the mix derive a record's structure once, when built, and a read only places its
+  arrays through it; a mix refuses a source's batch whose structure is not the one that source's
+  `element_spec` declares, naming the source and both sets of fields, where it served the batch
+  unlike the mix's own spec before.
 - `SplitField(fields)` resolves each name against the batch's data, so `"meta/id"` keeps
   `data["meta"]["id"]` inside its group and `("meta", "id")` names that path; it still skips an
   absent field, and refuses a bare string.
@@ -551,9 +566,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte offset, its leading axis the record axis, in place of `path` and `feature_key`.
   `DiskColumn.from_npy(name, path)` is a `.npy` file's array, its offset the header's length (a
   Fortran-ordered file is refused); an uncompressed contiguous HDF5 dataset reads at the offset its
-  file reports. A column's name is its field's path, `/` between levels, so records keep their
-  nesting. Columns hold numeric dtypes and one row per record; a column whose file is shorter than
-  its offset and bytes, a name given twice, or a name that is also another's level is refused. Each
+  file reports. A column's name is its field (`FieldName`, held as given): a key tuple nests
+  (`("meta", "score")`) and a string is one key, `/` and all, since a source receives no record a
+  spelling could resolve against. Columns hold numeric dtypes and one row per record, and are one
+  declaration checked once in any order: a column whose file is shorter than its offset and bytes,
+  an empty or exotic key, a name given twice, a key tuple through another column, a string extending
+  another column (refused offering its key tuple) and two fields of one spelling are refused. Each
   column pickles as its place on disk. `element_spec()` states dtypes as the device holds them, and
   the traced read returns a stored 64-bit column at 32 bits while x64 is off, as the eager sources
   do. `DiskColumn` is exported from `datarax` and `datarax.sources`.
@@ -956,8 +974,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `datarax.core.maybe.refuse_maybe`, `missing_value_error` and `maybe_paths`: a consumer refuses
   field nodes with `datarax.core.field_paths.refuse_field_nodes(tree, consumer, where)`.
-- `datarax.sources._field_paths`: its `field_name`, `field_names`, `by_field`, `nested` and
-  `LEVEL` are in `datarax.core.field_paths`.
+- `datarax.sources._field_paths`: its `field_name`, `field_names` and `LEVEL` are in
+  `datarax.core.field_paths`; its `by_field` and `nested`, which named stored fields by spelling,
+  are removed: storage uses `flat_fields` and `fields_nested`, by key tuple.
 - `datarax.sources.source_ops.filter_keys`: a source filters through `KeyFilter.resolved(...)`
   and `KeyFilter.keep(record)`.
 

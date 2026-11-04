@@ -2,8 +2,9 @@
 
 A column is ``(file, offset, dtype, shape)``: a ``.npy`` file is the case whose offset is its
 header's length, an uncompressed contiguous HDF5 dataset another. Each column is a memory map
-held on the host, out of NNX state, pickling as its place on disk; a column's name is its field's
-path, ``/`` between levels, so a source's records keep their nesting.
+held on the host, out of NNX state, pickling as its place on disk. A column's name is its field:
+a key tuple (``("meta", "score")``) nests, and a string is one key, ``/`` and all, since a source
+receives no record a spelling could resolve against (C3).
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ def columns(tmp_path: Path) -> tuple[DiskColumn, ...]:
     return (
         DiskColumn.from_npy("image", _npy(tmp_path, "image", _images())),
         DiskColumn.from_npy("label", _npy(tmp_path, "label", _labels())),
-        DiskColumn.from_npy("meta/score", _npy(tmp_path, "score", _scores())),
+        DiskColumn.from_npy(("meta", "score"), _npy(tmp_path, "score", _scores())),
     )
 
 
@@ -179,12 +180,6 @@ class TestRefusals:
         with pytest.raises(ValueError, match="'a' names two columns"):
             StreamingDiskSourceConfig(columns=(column, column))
 
-    def test_a_name_that_is_also_a_level_is_refused(self, tmp_path: Path) -> None:
-        leaf = DiskColumn.from_npy("meta", _npy(tmp_path, "a", _scores()))
-        nested = DiskColumn.from_npy("meta/score", _npy(tmp_path, "b", _scores()))
-        with pytest.raises(ValueError, match="'meta' is a column and a level"):
-            StreamingDiskSourceConfig(columns=(leaf, nested))
-
     @pytest.mark.parametrize("name", ["", "a//b", "/a", "a/"])
     def test_an_empty_name_or_level_is_refused(self, name: str, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="empty"):
@@ -226,3 +221,121 @@ class TestTheMapsStayOnTheHost:
             assert len(payload) < 64 * 1024, len(payload)
             copy = pickle.loads(payload)  # nosec B301 - this test's own pickle
             np.testing.assert_array_equal(copy.get_batch(_words([7]))["x"], big[[7]])
+
+
+def _column(tmp_path: Path, name: object, file: str) -> DiskColumn:
+    return DiskColumn.from_npy(name, _npy(tmp_path, file, _scores()))  # type: ignore[arg-type]
+
+
+def _both_orders(first: DiskColumn, second: DiskColumn) -> list[tuple[DiskColumn, ...]]:
+    return [(first, second), (second, first)]
+
+
+class TestAColumnNamedByKeyTuple:
+    def test_a_key_tuple_nests_and_a_string_is_one_key(self, tmp_path: Path) -> None:
+        nested = _column(tmp_path, ("meta", "score"), "a")
+        literal = _column(tmp_path, "a/b", "b")
+
+        spec = _source((nested, literal)).element_spec()
+
+        assert set(spec) == {"meta", "a/b"}
+        assert spec["meta"]["score"].shape == (2,)
+        np.testing.assert_array_equal(
+            _source((nested, literal)).get_batch(_words([3]))["a/b"], _scores()[[3]]
+        )
+
+    def test_a_list_and_a_tuple_build_one_config_and_a_string_another(self, tmp_path: Path) -> None:
+        path = _npy(tmp_path, "a", _scores())
+
+        as_list = DiskColumn.from_npy(["meta", "score"], path)  # type: ignore[arg-type]
+        as_tuple = DiskColumn.from_npy(("meta", "score"), path)
+        as_string = DiskColumn.from_npy("x", path)
+        as_one_key = DiskColumn.from_npy(("x",), path)
+
+        assert as_list == as_tuple
+        assert hash(as_list) == hash(as_tuple)
+        assert as_list.name == ("meta", "score")
+        assert as_string.name == "x"
+        assert as_string != as_one_key, "a string and its one-key tuple are two configs"
+        assert as_string.keys == as_one_key.keys == ("x",)
+
+    @pytest.mark.parametrize("name", [5, [], ["a", 1]])
+    def test_a_name_that_is_neither_a_string_nor_keys_is_refused(
+        self, name: object, tmp_path: Path
+    ) -> None:
+        file = str(tmp_path / "x")
+        with pytest.raises(TypeError, match="names one field"):
+            DiskColumn(
+                name=name,  # type: ignore[arg-type]  # the refused name
+                file=file,
+                offset=0,
+                dtype="uint8",
+                shape=(1,),
+            )
+
+    @pytest.mark.parametrize("keys", [("a/", "b"), ("a", ""), ("a", "b//c")])
+    def test_an_empty_or_exotic_key_in_a_tuple_is_refused(
+        self, keys: tuple[str, ...], tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="is empty or starts or ends with '/' or holds '//'"):
+            DiskColumn(name=keys, file=str(tmp_path / "x"), offset=0, dtype="uint8", shape=(1,))
+
+
+class TestOneDeclaration:
+    """The source's columns are one declaration: checked once over their union, in any order."""
+
+    def test_a_spelling_beside_a_field_is_refused_offering_its_key_tuple(
+        self, tmp_path: Path
+    ) -> None:
+        for columns in _both_orders(
+            _column(tmp_path, "meta", "a"), _column(tmp_path, "meta/score", "b")
+        ):
+            with pytest.raises(
+                ValueError, match=r"'meta/score'.*'meta' is a field.*name=\('meta/score',\)"
+            ):
+                StreamingDiskSourceConfig(columns=columns)
+
+    def test_the_key_tuple_of_that_literal_key_is_accepted(self, tmp_path: Path) -> None:
+        for columns in _both_orders(
+            _column(tmp_path, "meta", "a"), _column(tmp_path, ("meta/score",), "b")
+        ):
+            spec = _source(columns).element_spec()
+            assert set(spec) == {"meta", "meta/score"}
+
+    def test_a_key_tuple_through_a_column_is_refused(self, tmp_path: Path) -> None:
+        for columns in _both_orders(
+            _column(tmp_path, "meta", "a"), _column(tmp_path, ("meta", "score"), "b")
+        ):
+            with pytest.raises(ValueError, match=r"passes through 'meta'"):
+                StreamingDiskSourceConfig(columns=columns)
+
+    def test_two_columns_of_one_spelling_are_refused_naming_both(self, tmp_path: Path) -> None:
+        for columns in _both_orders(
+            _column(tmp_path, ("a", "b"), "a"), _column(tmp_path, ("a/b",), "b")
+        ):
+            both = r"'a/b' names two fields: \('a', 'b'\) and \('a/b',\)"
+            with pytest.raises(ValueError, match=both):
+                StreamingDiskSourceConfig(columns=columns)
+
+    def test_a_spelling_beside_a_group_stays_a_top_level_literal_key(self, tmp_path: Path) -> None:
+        """The source receives no record, so ``meta/score`` resolves against nothing (N3a)."""
+        for columns in _both_orders(
+            _column(tmp_path, ("meta", "x"), "a"), _column(tmp_path, "meta/score", "b")
+        ):
+            spec = _source(columns).element_spec()
+            assert set(spec) == {"meta", "meta/score"}
+            assert set(spec["meta"]) == {"x"}
+
+    def test_a_reopened_copy_of_a_field_beside_a_literal_key_opens(self, tmp_path: Path) -> None:
+        """COCO's shape, every name a key tuple as a copy's manifest holds them."""
+        columns = (
+            _column(tmp_path, ("image",), "a"),
+            _column(tmp_path, ("image/id",), "b"),
+            _column(tmp_path, ("objects", "label"), "c"),
+            _column(tmp_path, ("objects/bbox",), "d"),
+        )
+
+        spec = _source(columns).element_spec()
+
+        assert set(spec) == {"image", "image/id", "objects", "objects/bbox"}
+        assert set(spec["objects"]) == {"label"}

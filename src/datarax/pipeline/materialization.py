@@ -44,6 +44,7 @@ from datarax.core.data_source import (
     RecordIdentity,
     SourceIdentified,
 )
+from datarax.core.field_paths import field_listing, KeyTuple
 from datarax.core.host_resources import HostResources
 from datarax.pipeline import host_workers
 from datarax.pipeline.host_workers import (
@@ -214,11 +215,11 @@ class _DecodeUnit:
 
     def __call__(
         self, unit: int, read: UnitRead | None = None
-    ) -> tuple[int, dict[str, np.ndarray], Any]:
+    ) -> tuple[int, dict[KeyTuple, np.ndarray], Any]:
         """Decode ``unit`` (``read`` if given): its index, rows of every column, provenance."""
         rows = unit_rows(unit, self.layout.length, self.unit_records)
         out = {
-            c.name: np.empty((len(rows), *c.shape), np.dtype(c.dtype)) for c in self.layout.columns
+            c.slot: np.empty((len(rows), *c.shape), np.dtype(c.dtype)) for c in self.layout.columns
         }
         provenance = write_unit(
             self.source, rows, out, layout=self.layout, with_provenance=True, read=read
@@ -371,7 +372,7 @@ def _into_memory(
     units = unit_count(layout.length, unit_records)
     provenance: list[Mapping[str, Any]] = []
 
-    def take(unit: int, rows: Mapping[str, np.ndarray], records: Any) -> None:
+    def take(unit: int, rows: Mapping[KeyTuple, np.ndarray], records: Any) -> None:
         span = unit_rows(unit, layout.length, unit_records)
         for name, column in columns.items():
             column[span.start : span.stop] = rows[name]
@@ -415,7 +416,7 @@ def _reusable(directory: Path, identity: Mapping[str, Any]) -> StreamingDiskSour
         logger.info(
             "%s holds a decoded copy of another source (it differs in %s): rebuilding it",
             directory,
-            differing,
+            field_listing(differing),
         )
         return None
     try:

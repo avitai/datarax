@@ -5,12 +5,14 @@ so the fixture is prepared in a process of its own, before the tests that read i
 
     python -m tests.test_common.tfds_fixture <directory>
 
-It writes three TFDS data directories under ``<directory>``:
+It writes four TFDS data directories under ``<directory>``:
 
 * ``array_record``: :data:`FIXTURE` prepared as ArrayRecord, the format the eager source reads;
 * ``tfrecord``: :data:`FIXTURE` prepared as TFRecord, the format the streaming source reads and
   the eager source refuses;
-* ``ragged``: :data:`RAGGED` prepared as ArrayRecord, whose images differ in shape.
+* ``ragged``: :data:`RAGGED` prepared as ArrayRecord, whose images differ in shape;
+* ``coco``: :data:`COCO` prepared as ArrayRecord, COCO's shape of names: a field ``image`` beside
+  a literal ``image/id``, and a group ``objects`` beside a literal ``objects/bbox``.
 
 :data:`FIXTURE` holds an 8x8 RGB image, a class label, a text name and a nested float score per
 record, with ``("image", "label")`` as its supervised keys, in a ``train`` split of
@@ -30,6 +32,8 @@ import numpy as np
 
 FIXTURE = "datarax_tfds_fixture"
 RAGGED = "datarax_tfds_ragged"
+COCO = "datarax_tfds_coco"
+COCO_RECORDS = 6
 TRAIN_RECORDS = 20
 TEST_RECORDS = 6
 NUM_CLASSES = 3
@@ -47,12 +51,14 @@ class TFDSFixture:
         array_record: The data directory holding :data:`FIXTURE` as ArrayRecord.
         tfrecord: The data directory holding :data:`FIXTURE` as TFRecord.
         ragged: The data directory holding :data:`RAGGED` as ArrayRecord.
+        coco: The data directory holding :data:`COCO` as ArrayRecord.
     """
 
     root: Path
     array_record: Path
     tfrecord: Path
     ragged: Path
+    coco: Path
 
     @classmethod
     def at(cls, root: Path) -> TFDSFixture:
@@ -73,11 +79,13 @@ class TFDSFixture:
             array_record=root / "array_record",
             tfrecord=root / "tfrecord",
             ragged=root / "ragged",
+            coco=root / "coco",
         )
         for data_dir, name in (
             (fixture.array_record, FIXTURE),
             (fixture.tfrecord, FIXTURE),
             (fixture.ragged, RAGGED),
+            (fixture.coco, COCO),
         ):
             if not any((data_dir / name).glob("*/dataset_info.json")):
                 raise FileNotFoundError(
@@ -88,7 +96,7 @@ class TFDSFixture:
 
 
 def prepare(root: Path) -> TFDSFixture:
-    """Prepare the fixture's three data directories under ``root``; this imports TensorFlow.
+    """Prepare the fixture's four data directories under ``root``; this imports TensorFlow.
 
     Args:
         root: The directory to write.
@@ -166,12 +174,46 @@ def prepare(root: Path) -> TFDSFixture:
                     },
                 )
 
+    class DataraxTfdsCoco(tfds.core.GeneratorBasedBuilder):
+        """COCO's names: ``image`` beside ``image/id``, ``objects`` beside ``objects/bbox``."""
+
+        VERSION = tfds.core.Version("1.0.0")
+
+        def _info(self) -> tfds.core.DatasetInfo:
+            features = tfds.features.FeaturesDict(
+                {
+                    "image": tfds.features.Image(shape=IMAGE_SHAPE),
+                    "image/id": tfds.features.Tensor(shape=(), dtype=np.int64),
+                    "objects": {"label": tfds.features.Tensor(shape=(2,), dtype=np.int64)},
+                    "objects/bbox": tfds.features.Tensor(shape=(2, 4), dtype=np.float32),
+                }
+            )
+            return tfds.core.DatasetInfo(builder=self, features=features)
+
+        def _split_generators(self, dl_manager: object) -> dict[str, object]:
+            del dl_manager
+            return {"train": self._generate_examples()}
+
+        def _generate_examples(self) -> object:
+            rng = np.random.default_rng(3)
+            for i in range(COCO_RECORDS):
+                yield (
+                    i,
+                    {
+                        "image": rng.integers(0, 256, IMAGE_SHAPE, dtype=np.uint8),
+                        "image/id": 1000 + i,
+                        "objects": {"label": np.array([i, i + 1], np.int64)},
+                        "objects/bbox": np.full((2, 4), i, np.float32),
+                    },
+                )
+
     tfds.disable_progress_bar()
     DataraxTfdsFixture(
         data_dir=root / "array_record", file_format="array_record"
     ).download_and_prepare()
     DataraxTfdsFixture(data_dir=root / "tfrecord", file_format="tfrecord").download_and_prepare()
     DataraxTfdsRagged(data_dir=root / "ragged", file_format="array_record").download_and_prepare()
+    DataraxTfdsCoco(data_dir=root / "coco", file_format="array_record").download_and_prepare()
     return TFDSFixture.at(root)
 
 
