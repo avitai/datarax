@@ -932,6 +932,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The RAM build's shared-memory test (`tests/pipeline/test_materialize.py::TestIntoMemory::`
+  `test_shared_memory_holds_units_never_the_columns`) counts only its own build's segments, as
+  its docstring says: it subtracts the names the training process holds when the build starts.
+  An earlier build's last unit, which google/grain#1420 keeps alive until a garbage collection,
+  was counted beside the build's own. That failed the scheduled run on `b5311d5` at 11,360 bytes
+  against the bound of 10,192, while across 139 local runs the build's own segments never passed
+  8 of its 13 units. The bound is unchanged. A case with a bound-sized segment held before the
+  build fails the old count and passes this one, and the positive control plants its segment
+  after the baseline, so it exercises the same count. `TestGrainSharedMemorySymptoms` still
+  records #1420.
 - P3's peak-host-memory bound (`tests/benchmarks/test_p3_memory_efficiency.py`) allows the
   pipeline's allocator and thread jitter, 1 MB, beside the one batch of slack for an extra batch
   the pipeline's peak holds now and then when it stages. The extra batch is one batch to within

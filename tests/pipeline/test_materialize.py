@@ -11,8 +11,11 @@ record ``r``, equal bit for bit whatever decoded it. A budget below what the bui
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+from collections.abc import Iterator
+from multiprocessing import shared_memory
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +52,26 @@ COUNTS = (0, 1, *PROCESS_COUNTS)
 _SEGMENT = "psm_"
 """The prefix of a ``multiprocessing.shared_memory`` segment, which a unit crosses in; the
 queues' semaphores and heap arenas beside them hold no unit."""
+
+
+@contextlib.contextmanager
+def _held_segment(size: int) -> Iterator[None]:
+    """A ``psm_`` segment of ``size`` bytes the training process holds for the block."""
+    segment = shared_memory.SharedMemory(create=True, size=size)
+    try:
+        yield
+    finally:
+        segment.close()
+        segment.unlink()
+
+
+def _segment_bytes(pids: list[int], before: set[str]) -> int:
+    """The bytes of the ``psm_`` segments ``pids`` hold, less the names held in ``before``."""
+    return sum(
+        Path("/dev/shm", name).stat().st_size  # nosec B108
+        for name in shm_names_of(pids) - before
+        if name.startswith(_SEGMENT) and Path("/dev/shm", name).exists()  # nosec B108
+    )
 
 
 @pytest.fixture(scope="module")
@@ -157,13 +180,19 @@ class TestIntoMemory:
 
     @pytest.mark.skipif(not Path("/dev/shm").is_dir(), reason="no /dev/shm to inspect (not Linux)")  # nosec B108
     @pytest.mark.skipif(not PROCESS_COUNTS, reason="fewer than two CPUs: no worker processes")
+    @pytest.mark.parametrize(
+        "held_before", [False, True], ids=["alone", "beside_an_earlier_segment"]
+    )
     def test_shared_memory_holds_units_never_the_columns(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_before: bool
     ) -> None:
         """The decoded units cross ``/dev/shm`` a few at a time, as the plan counts them.
 
-        Sampled from the shared-memory files the training process and its workers hold (only this
-        build's, whatever else shares ``/dev/shm``), at every unit the training process takes.
+        Sampled at every unit the training process takes, from the shared-memory files it and its
+        workers hold, less those it held when the build started: only this build's, whatever else
+        shares ``/dev/shm``. An earlier build's units can still be held then (google/grain#1420
+        keeps a finished run's last unit until a garbage collection), and they are not this
+        build's; ``TestGrainSharedMemorySymptoms`` records that defect.
         """
         workers = PROCESS_COUNTS[0]
         source = png_source(write_png_records(tmp_path / "png", 20 * _RECORDS))
@@ -173,20 +202,15 @@ class TestIntoMemory:
         peaks: list[int] = []
         take = materialization.check_arrival
 
-        def sampled(expected: int, arrived: int) -> None:
-            pids = [os.getpid(), *spawned_children(os.getpid())]
-            peaks.append(
-                sum(
-                    Path("/dev/shm", name).stat().st_size  # nosec B108
-                    for name in shm_names_of(pids)
-                    if name.startswith(_SEGMENT) and Path("/dev/shm", name).exists()  # nosec B108
-                )
-            )
-            take(expected, arrived)
+        with _held_segment(bound) if held_before else contextlib.nullcontext():
+            before = shm_names_of([os.getpid()])
 
-        monkeypatch.setattr(materialization, "check_arrival", sampled)
+            def sampled(expected: int, arrived: int) -> None:
+                peaks.append(_segment_bytes([os.getpid(), *spawned_children(os.getpid())], before))
+                take(expected, arrived)
 
-        materialize(source, host_resources=resources(workers), unit_records=_UNIT)
+            monkeypatch.setattr(materialization, "check_arrival", sampled)
+            materialize(source, host_resources=resources(workers), unit_records=_UNIT)
 
         assert peaks and max(peaks) <= bound, (peaks, bound)
         assert bound < layout.nbytes / 5, "the bound is far below the columns, which never cross"
@@ -196,21 +220,13 @@ class TestIntoMemory:
     ) -> None:
         if not Path("/dev/shm").is_dir():  # nosec B108
             pytest.skip("no /dev/shm to inspect (not Linux)")
-        from multiprocessing import shared_memory  # noqa: PLC0415 - the control's own segment
 
         layout = source_layout(png_source(png_paths))
         unit = _UNIT * sum(c.row_bytes for c in layout.columns)
         bound = 2 * (2 * WORKER_BUFFER + 2) * unit + unit
-        segment = shared_memory.SharedMemory(create=True, size=layout.nbytes * 8)
-        try:
-            held = sum(
-                Path("/dev/shm", name).stat().st_size  # nosec B108
-                for name in shm_names_of([os.getpid()])
-                if name.startswith(_SEGMENT)
-            )
-        finally:
-            segment.close()
-            segment.unlink()
+        before = shm_names_of([os.getpid()])
+        with _held_segment(layout.nbytes * 8):
+            held = _segment_bytes([os.getpid()], before)
         assert held > bound
 
 
