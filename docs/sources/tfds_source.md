@@ -30,8 +30,13 @@ Reading, eager or streamed, needs the `data` extra (tensorflow-datasets and Pill
 
 ```bash
 pip install "datarax[data]"          # read prepared datasets with TFDSEagerSource
+pip install "datarax[data,images]"   # decode images with OpenCV, which releases the GIL
 pip install "datarax[data,tfds]"     # also prepare datasets
 ```
+
+With the `images` extra, TFDS decodes images with OpenCV instead of Pillow, and both TFDS sources
+run it on one OpenCV thread in each process that decodes. What changes is listed in
+[Image decoding with OpenCV](../getting_started/installation.md#image-decoding-with-opencv-images).
 
 `import datarax.sources` does not import TFDS. Importing a TFDS source or `from_tfds` does, on that line, so a missing `data` extra fails there with `ModuleNotFoundError: No module named 'tensorflow_datasets'`. Import them at the top of a program, as you would TFDS itself. The first import of TFDS in a process swaps Python's import function for the whole process while it runs (`etils.epy.lazy_imports`), and a garbage collection during that swap leaves Grain worker semaphores linked in `/dev/shm`.
 

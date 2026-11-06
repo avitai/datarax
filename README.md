@@ -75,6 +75,9 @@ uv pip install datarax
 # With data loading support (HuggingFace, TFDS, audio/image libs)
 uv pip install "datarax[data]"
 
+# Also decode TFDS images with OpenCV, which releases the GIL (docs/getting_started/installation.md)
+uv pip install "datarax[data,images]"
+
 # With GPU support (CUDA 12)
 uv pip install "datarax[cuda12]"
 

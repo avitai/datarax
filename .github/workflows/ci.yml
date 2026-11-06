@@ -303,8 +303,9 @@ jobs:
           # slow), and several of them import both. The data extra declares
           # tensorflow-datasets without tensorflow, so the scripts died with
           # ModuleNotFoundError. The job had been skipped behind a failing lint gate, so
-          # nothing reported it.
-          uv sync --locked --extra dev --extra test --extra data --extra tfds --extra examples --extra wandb
+          # nothing reported it. images: TFDS decodes images with OpenCV once it is
+          # installed, and tests/sources/test_tfds_opencv.py tests that path.
+          uv sync --locked --extra dev --extra test --extra data --extra tfds --extra examples --extra images --extra wandb
 
       - name: Setup PYTHONPATH for tests
         run: |

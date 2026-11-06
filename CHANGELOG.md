@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `images` extra (`opencv-python-headless>=5.0.0.93`, also in `all`, `all-cpu` and
+  `all-macos`). TFDS decodes images with OpenCV whenever `cv2` imports, so with the extra both
+  TFDS sources decode with OpenCV, whose decode releases the GIL: a CIFAR-10 record in 27 us
+  against Pillow's 47 us, on one desktop thread. RGB and grayscale JPEGs, and PNGs, decode to the
+  same pixels as with Pillow; a CMYK JPEG decodes to 3-channel RGB where Pillow returned its 4
+  CMYK channels, against a 3-channel feature; Pillow's limit of 178,956,970 pixels gives way to
+  OpenCV's `OPENCV_IO_MAX_IMAGE_PIXELS` (2^30 by default). The TFDS sources run OpenCV on one
+  thread in each process that decodes (`datarax.sources._tfds_opencv`), as mmengine's worker
+  set-up does by default: OpenCV's pool, sized to the machine, spent 2.2 to 2.8 times the CPU per
+  decode of a 500x375 or 2000x1500 photo, for no gain in wall time. The setting is per process and
+  also applies to the user's own OpenCV calls there. A decoded copy records its decoder's
+  versions, so `materialize` rebuilds a copy written under Pillow once, and `open_decoded_copy`
+  refuses it naming `decoder/opencv`. An environment that already has `opencv-python` needs no
+  extra: TFDS uses that `cv2`, and the two distributions install the same files.
+
 - A decoded copy is written on macOS. Its files are reserved there with `fcntl(F_PREALLOCATE)`
   and then sized, where Linux uses `os.posix_fallocate`; before, `materialize(directory=...)`
   and `begin_copy` refused every platform without `posix_fallocate`. A platform with neither

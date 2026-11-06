@@ -57,9 +57,9 @@ version = "0.1.17"
 # - Linux with GPU: pip install datarax[all]
 # - macOS (Apple Silicon): pip install datarax[all-macos]
 # - macOS/Linux CPU-only: pip install datarax[all-cpu]
-all = ["datarax[cuda12,data,dev,docs,test,wandb]"]
-all-cpu = ["datarax[data,dev,docs,test,wandb]"]
-all-macos = ["datarax[data,dev,docs,metal,test,wandb]"]
+all = ["datarax[cuda12,data,dev,docs,images,test,wandb]"]
+all-cpu = ["datarax[data,dev,docs,images,test,wandb]"]
+all-macos = ["datarax[data,dev,docs,images,metal,test,wandb]"]
 automation = [
   # Local cloud orchestration dependencies (benchmarks/automation/vast_orchestrator.py)
   "skypilot[vast]>=0.11,<0.12",
@@ -203,6 +203,13 @@ examples = [
   "matplotlib>=3.8", # Plotting in example notebooks/scripts
   "torchcrepe", # CREPE pretrained weights for DDSP audio synthesis example (bundles .pth files)
   "h5py>=3.0" # Alternative CREPE weight loading from Keras .h5 files
+]
+images = [
+  # TFDS decodes images with OpenCV whenever cv2 imports, else with Pillow: OpenCV's decode
+  # releases the GIL, and serves Pillow's pixels for RGB and grayscale JPEGs and PNGs. The
+  # datarax TFDS sources run it on one OpenCV thread. An environment that already has a cv2
+  # (opencv-python) needs no extra: both distributions install cv2, so do not install both.
+  "opencv-python-headless>=5.0.0.93"
 ]
 metal = [
   # Metal acceleration for Apple Silicon Macs (M1/M2/M3+)
@@ -611,7 +618,7 @@ outputs_volume = "datarax-compute-outputs"
 # imported first, which breaks JAX's NCCL collectives.
 [tool.substrax.compute.jobs.tfds-nccl]
 env = {DATARAX_TEST_JAX_PLATFORMS = "cuda,cpu", DATARAX_TFDS_FIXTURE_DIR = "/tmp/tfds_fixture", NCCL_DEBUG = "WARN"}
-extras = ["cuda12", "data", "dev", "test", "tfds"]
+extras = ["cuda12", "data", "dev", "images", "test", "tfds"]
 resources = {accelerator = {count = 2, kind = "L40S"}, cpu = 8, memory_mib = 32768}
 runtime = {platforms = ["cuda"], preallocate = false, xla_flags = ["--xla_gpu_deterministic_ops=true"]}
 task_timeout_seconds = 900

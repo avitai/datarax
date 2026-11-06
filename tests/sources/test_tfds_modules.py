@@ -3,7 +3,8 @@
 ``_tfrecord`` reads TFRecord shard files (frames, CRCs, the offset index) and ``_stream_order``
 computes a stream pass's record order; neither imports TensorFlow Datasets. ``_tfds_prepared``
 finds a split's prepared copy and the features both sources keep; ``_tfds_identity`` names what a
-split's per-batch decode is, as a decoded copy of it records. ``tfds_streaming_source`` holds
+split's per-batch decode is, as a decoded copy of it records; ``_tfds_opencv`` runs OpenCV on one
+thread when TFDS decodes images with it. ``tfds_streaming_source`` holds
 the streaming source and ``tfds_source`` the eager one and ``from_tfds``. A name lives in exactly
 one of them, so a test that patches a name patches the one the code reads. The modules import in
 any order, which a cycle among them would break.
@@ -23,6 +24,7 @@ from substrax.testing import run_python
 from datarax.sources import (
     _stream_order,
     _tfds_identity,
+    _tfds_opencv,
     _tfds_prepared,
     _tfrecord,
     tfds_source,
@@ -38,6 +40,7 @@ _MODULES = (
     "datarax.sources._stream_order",
     "datarax.sources._tfds_prepared",
     "datarax.sources._tfds_identity",
+    "datarax.sources._tfds_opencv",
     "datarax.sources.tfds_streaming_source",
     "datarax.sources.tfds_source",
 )
@@ -88,6 +91,7 @@ _HOMES: dict[ModuleType, tuple[str, ...]] = {
         "kept_features",
         "supervised_keys",
     ),
+    _tfds_opencv: ("decode_on_one_opencv_thread",),
     _tfds_identity: (
         "SplitOrigin",
         "split_identity",
