@@ -25,8 +25,6 @@ open inside a constructor in the middle of a run.
 from __future__ import annotations
 
 import contextlib
-import itertools
-import sys
 import weakref
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -51,7 +49,13 @@ from datarax.core.host_values import HostValue
 from datarax.core.prng import pass_generator
 from datarax.sources._config_base import StreamingSourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
-from datarax.sources._stream_order import buffer_shuffled, interleaved, RecordId, shard_ids
+from datarax.sources._stream_order import (
+    OFFSET_BITS,
+    OFFSET_MASK,
+    OrderCursor,
+    pass_order,
+    pass_order_bytes,
+)
 from datarax.sources._tfds_prepared import (
     kept_features,
     prepare_call,
@@ -199,17 +203,14 @@ class _StreamRead:
     kept: _KeptFeatures
 
 
-def _ordered_ids(read: _StreamRead, pass_index: int) -> Iterator[RecordId]:
-    """Pass ``pass_index``'s records in its order, as ids: file order, or TFDS's training read's.
+def _pass_cursor(read: _StreamRead, pass_index: int) -> OrderCursor:
+    """Pass ``pass_index``'s order from its head: file order, or TFDS's training read's.
 
-    The same order every worker of the run computes, from the read alone, with no file read.
+    The same order every worker of the run computes, from the read alone, with no file read, as
+    arrays of record words a chunk at a time.
     """
-    streams = [shard_ids(position, shard) for position, shard in enumerate(read.shards)]
-    if read.key is None:
-        return itertools.chain.from_iterable(streams)
-    generator = pass_generator(read.key, pass_index)
-    order = generator.permutation(len(streams))
-    return buffer_shuffled(interleaved([streams[i] for i in order]), read.buffer_size, generator)
+    generator = None if read.key is None else pass_generator(read.key, pass_index)
+    return OrderCursor(pass_order(read.shards, generator, read.buffer_size))
 
 
 def _decoded_batch(
@@ -309,11 +310,9 @@ class TFDSStreamDataset(grain.IterDataset):
         return sum(shard.nbytes for shard in index) if index and index[0].shared else 0
 
     def working_bytes(self) -> int:
-        """A worker's shuffle buffer of record ids, when the run is shuffled."""
-        if self._read.key is None:
-            return 0
-        held = RecordId(1 << 20, 1 << 20)
-        return self._read.buffer_size * (sys.getsizeof(held) + 2 * sys.getsizeof(1 << 20) + 8)
+        """What a worker holds computing the run's order: its buffer of record ids and a chunk."""
+        buffer_size = 0 if self._read.key is None else self._read.buffer_size
+        return pass_order_bytes(buffer_size, files=len(self._read.shards))
 
 
 type _Unit = tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray, np.ndarray, int]
@@ -331,8 +330,7 @@ class _TFDSStreamIterator(grain.DatasetIterator):
         self._start, self._step = sl.start or 0, sl.step or 1
         self._unit = 0
         self._pass: int | None = None
-        self._ids: Iterator[RecordId] = iter(())
-        self._at = 0  # ids of the current pass taken
+        self._order = OrderCursor(iter(()))
         self._files = contextlib.ExitStack()
         self._open: dict[int, Any] = {}
         weakref.finalize(self, self._files.close)
@@ -344,42 +342,48 @@ class _TFDSStreamIterator(grain.DatasetIterator):
                 self._files.close()
                 raise StopIteration
             unit, self._unit = self._unit, self._unit + 1
-            records = [record for batch in batches for record in self._take(*batch)]
+            runs = [self._take(*batch) for batch in batches]
             if unit % self._step == self._start:
-                frames = [self._frame(record) for record, _ in records]
+                words = np.concatenate([run for run, _ in runs])
+                frames = [self._frame(int(word)) for word in words]
                 columns, provenance, ids = _decoded_batch(self._features, frames, self._read.kept)
-                epochs = np.asarray([pass_index for _, pass_index in records], dtype=np.int32)
+                epochs = np.concatenate([passes for _, passes in runs])
                 return columns, provenance, ids, epochs, unit
 
-    def _take(self, start: int, pass_index: int, size: int) -> list[tuple[RecordId, int]]:
-        """The ids of ``size`` positions from ``start`` of pass ``pass_index`` on, across passes."""
-        taken: list[tuple[RecordId, int]] = []
-        while len(taken) < size:
+    def _take(self, start: int, pass_index: int, size: int) -> tuple[np.ndarray, np.ndarray]:
+        """Words of ``size`` positions from ``start`` of pass ``pass_index`` on, with their passes.
+
+        A run crossing the pass's end continues at the next pass's head.
+        """
+        words: list[np.ndarray] = []
+        passes: list[np.ndarray] = []
+        left = size
+        while left:
             self._seek(pass_index, start)
-            count = min(size - len(taken), self._read.length - start)
-            taken.extend((record, pass_index) for record in itertools.islice(self._ids, count))
-            self._at += count
+            taken = self._order.take(min(left, self._read.length - start))
+            words.append(taken)
+            passes.append(np.full(taken.size, pass_index, np.int32))
+            left -= taken.size
             pass_index, start = pass_index + 1, 0
-        return taken
+        return np.concatenate(words), np.concatenate(passes)
 
     def _seek(self, pass_index: int, position: int) -> None:
         """Move to ``position`` of pass ``pass_index``'s order, skipping ids, reading nothing."""
-        if pass_index != self._pass or position < self._at:
-            self._pass, self._ids, self._at = pass_index, _ordered_ids(self._read, pass_index), 0
-        for _ in itertools.islice(self._ids, position - self._at):
-            pass
-        self._at = position
+        if pass_index != self._pass or position < self._order.at:
+            self._pass, self._order = pass_index, _pass_cursor(self._read, pass_index)
+        self._order.skip(position - self._order.at)
 
-    def _frame(self, record: RecordId) -> _Frame:
-        """The record's payload, read at its offset, and its id."""
-        shard = self._read.shards[record.position]
-        file = self._open.get(record.position)
+    def _frame(self, word: int) -> _Frame:
+        """The payload of the record ``word`` names, read at its offset, and its id."""
+        position, offset = word >> OFFSET_BITS, word & OFFSET_MASK
+        shard = self._read.shards[position]
+        file = self._open.get(position)
         if file is None:
             opened = Path(shard.path).open("rb", buffering=0)  # noqa: SIM115 - the ExitStack closes it
             file = self._files.enter_context(opened)
-            self._open[record.position] = file
-        raw = payload(file, shard.path, self._read.index[record.position], record.offset)
-        return _Frame(shard.shard, record.offset, raw)
+            self._open[position] = file
+        raw = payload(file, shard.path, self._read.index[position], offset)
+        return _Frame(shard.shard, offset, raw)
 
     def get_state(self) -> dict[str, Any]:
         """The units of the run this iterator has passed."""

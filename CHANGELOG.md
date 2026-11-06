@@ -932,6 +932,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A TFDS stream's workers no longer walk the pass's order record by record. Each of `K` worker
+  processes computed the shuffled order of every record of the run, one Python generator step
+  and one scalar NumPy draw per record, to find the units of its own slice, so the stream's CPU
+  per record grew with `K` (176.0 to 210.9 us per record from 1 to 16 workers, against 5 us for
+  ArrayRecord, which has no walk). A pass's order is now computed as int64 arrays of record
+  words, a chunk of 65,536 at a time: TFDS's file interleave as runs of whole blocks, and
+  tf.data's buffer shuffle as one stable sort per chunk, its draws taken in bulk, which NumPy
+  draws as the scalar calls did. The order served is unchanged, record for record, at every
+  number of workers. A worker still computes the whole run's order, now at about 0.08 CPU-us per
+  record against 1.0 (one desktop worker, 1,281,167 records in 1,024 shards, buffer 10,000), and
+  holds its buffer and a chunk, whatever the pass's length; `TFDSStreamDataset.working_bytes`
+  charges that bound, derived from what the computation holds, where it charged the buffer
+  alone. The order follows MosaicML Streaming and FFCV, which hold an epoch's order as one
+  integer array; computing it a chunk at a time keeps each of `K` workers from holding a pass.
 - The RAM build's shared-memory test (`tests/pipeline/test_materialize.py::TestIntoMemory::`
   `test_shared_memory_holds_units_never_the_columns`) counts only its own build's segments, as
   its docstring says: it subtracts the names the training process holds when the build starts.
