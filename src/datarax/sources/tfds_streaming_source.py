@@ -56,6 +56,7 @@ from datarax.sources._stream_order import (
     pass_order,
     pass_order_bytes,
 )
+from datarax.sources._tfds_opencv import decode_on_one_opencv_thread
 from datarax.sources._tfds_prepared import (
     kept_features,
     prepare_call,
@@ -218,6 +219,8 @@ def _decoded_batch(
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], np.ndarray]:
     """``frames`` decoded with TFDS's NumPy decoder: host columns, provenance and ids.
 
+    OpenCV, when TFDS decodes with it, runs on one thread (:mod:`datarax.sources._tfds_opencv`).
+
     Args:
         features: The dataset's TFDS features.
         frames: The serialized records.
@@ -226,6 +229,7 @@ def _decoded_batch(
     Returns:
         The array part as host columns, one provenance mapping per record and the records' ids.
     """
+    decode_on_one_opencv_thread()
     records = [kept.of(features.deserialize_example_np(frame.raw)) for frame in frames]
     columns, provenance = parts_of_records(records)
     ids = np.asarray([(frame.shard << 32) | frame.offset for frame in frames], dtype=np.uint64)

@@ -48,6 +48,7 @@ from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin
 from datarax.sources._tfds_identity import split_identity, SplitOrigin
+from datarax.sources._tfds_opencv import decode_on_one_opencv_thread
 from datarax.sources._tfds_prepared import (
     kept_features,
     prepare_call,
@@ -180,7 +181,8 @@ class _ExampleDecoder:
         )
 
     def __call__(self, records: Sequence[bytes]) -> list[dict[str, Any]]:
-        """One kept mapping of decoded features per record."""
+        """One kept mapping of decoded features per record, OpenCV on one thread."""
+        decode_on_one_opencv_thread()
         return [
             kept_features(
                 self.features.deserialize_example_np(record),

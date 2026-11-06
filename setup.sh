@@ -123,7 +123,8 @@ command -v python3 >/dev/null 2>&1 || die "python3 is required but not installed
 BACKEND="$(resolve_backend)"
 # wandb: tests/benchmarks/ imports the benchmark suite's W&B exporter, whose calibrax module
 # raises ImportError without it. CI installs it in every job that collects tests/.
-SYNC_ARGS=(sync --extra dev --extra test --extra data --extra wandb)
+# images: TFDS decodes images with OpenCV once it is installed, as CI's TFDS tests do.
+SYNC_ARGS=(sync --extra dev --extra test --extra data --extra images --extra wandb)
 
 case "$BACKEND" in
     cpu) ;;

@@ -18,7 +18,9 @@ batch_size)`, where `key` is the pipeline's key as uint32 words on the host
 (`datarax.core.prng.key_words(key)`), or `None` for file order. It computes the pass's order over record ids, reads each record's payload at its
 offset in an index built once from the shard files' frame headers, checks each frame's CRCs as
 tf.data's TFRecord reader does (a damaged frame raises `datarax.sources.DamagedRecordError` naming its file and
-record), and decodes last. The shuffle buffer holds record ids, not records. It implements
+record), and decodes last, images with OpenCV on one thread when the `images` extra is installed
+([Image decoding with OpenCV](../getting_started/installation.md#image-decoding-with-opencv-images)).
+The shuffle buffer holds record ids, not records. It implements
 Grain's `set_slice`: each of k worker processes computes the same order and reads and decodes
 only its own batches (every k-th), so the order does not depend on k and the workers read the
 data once between them. A run read by worker processes sends them the offset index as one

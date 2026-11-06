@@ -43,10 +43,32 @@ pip install datarax[all-macos]
 # Install with specific optional dependencies
 pip install datarax[docs]     # Documentation dependencies
 pip install datarax[data]     # Data loading (HuggingFace, TFDS, etc.)
+pip install datarax[images]   # OpenCV, which TFDS decodes images with (see below)
 pip install datarax[tfds]     # Prepare TFDS datasets, and stream them (TensorFlow)
 pip install datarax[test]     # Testing dependencies
 pip install datarax[metal]    # Metal acceleration (Apple Silicon only)
 ```
+
+### Image decoding with OpenCV (`images`)
+
+TFDS decodes images with OpenCV whenever `cv2` imports, and with Pillow otherwise. The `images`
+extra installs `opencv-python-headless`, so both TFDS sources decode with OpenCV:
+
+- OpenCV's decode releases the GIL. A CIFAR-10 record decodes in 27 us with OpenCV against 47 us
+  with Pillow, on one desktop thread.
+- RGB and grayscale JPEGs, and PNGs, decode to the same pixels as with Pillow. A CMYK JPEG decodes
+  to 3-channel RGB, where Pillow returns its 4 CMYK channels.
+- The TFDS sources run OpenCV on one thread in each process that decodes. OpenCV's default thread
+  pool, sized to the machine, spent 2.2 to 2.8 times the CPU per decode on 500x375 and 2000x1500
+  photos, with no gain in wall time. The setting is per process, so it also applies to your own
+  OpenCV calls in that process.
+- Pillow refuses images above 178,956,970 pixels. OpenCV decodes them, up to
+  `OPENCV_IO_MAX_IMAGE_PIXELS` (2^30 by default).
+- A [decoded copy](../sources/decoded_copy.md) records its decoder, so `materialize` rebuilds a copy
+  written before the extra was installed, once.
+- If your environment already has `opencv-python`, leave the extra out. TFDS uses that `cv2`, and
+  the two distributions install the same files, so having both breaks `cv2`.
+- The wheel bundles FFmpeg (LGPL 2.1) and other libraries, listed in its `LICENSE-3RD-PARTY.txt`.
 
 ## Platform-Specific Installation
 
