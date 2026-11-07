@@ -171,11 +171,11 @@ Filtered fields:
 ### Exclude Keys Example
 
 ```python
-# Exclude metadata fields
+# Drop the labels, for unsupervised use
 exclude_config = HFEagerConfig(
     name="ylecun/mnist",
     split="train[:500]",
-    exclude_keys={"id"},  # Exclude ID field
+    exclude_keys={"label"},  # MNIST holds image and label
 )
 
 exclude_source = HFEagerSource(exclude_config)

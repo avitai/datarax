@@ -38,12 +38,12 @@ from datarax.pipeline.read_plan import (
     HostPlan,
     HostReadPath,
     HostTerms,
-    IDENTITY_BYTES,
     MAX_READ_THREADS,
     measure_terms,
     READ_BUFFER,
     READ_THREADS,
     ReadAccess,
+    ROW_BYTES,
     spec_bytes,
     THREAD_READ_BUFFER,
     WORKER_BUFFER,
@@ -427,10 +427,10 @@ class TestTheSinkTerm:
 
 
 class TestHostBytes:
-    """A unit's host bytes: its data at the stored dtypes and each record's identity."""
+    """A unit's host bytes: its data at the stored dtypes and each row's identity and weight."""
 
-    def test_a_record_s_identity_is_its_words_epoch_and_draw(self) -> None:
-        assert IDENTITY_BYTES == 2 * 4 + 4 + 4
+    def test_a_row_carries_its_index_words_epoch_draw_and_weight(self) -> None:
+        assert ROW_BYTES == 2 * 4 + 4 + 4 + 4
 
     def test_a_spec_s_bytes_sum_its_leaves(self) -> None:
         spec = {
@@ -443,7 +443,7 @@ class TestHostBytes:
         assert not jax.config.read("jax_enable_x64")
         source = MemorySource(MemorySourceConfig(), {"x": np.zeros((10, 6), np.float64)})
         assert spec_bytes(declared_spec(source)) == 6 * 4  # as the device holds it
-        assert host_batch_bytes(source, 4) == 4 * (6 * 8 + IDENTITY_BYTES)
+        assert host_batch_bytes(source, 4) == 4 * (6 * 8 + ROW_BYTES)
 
 
 class _Footprint:

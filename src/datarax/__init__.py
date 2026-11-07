@@ -17,7 +17,7 @@ from datarax.core.block_order import BlockOrder
 from datarax.core.data_source import DataSourceModule
 
 # Record and batch types
-from datarax.core.element_batch import Batch, Element
+from datarax.core.element_batch import Batch, Element, Mix
 from datarax.core.host_resources import HostResources
 from datarax.core.operator import OperatorModule
 from datarax.core.sampler import SamplerModule
@@ -50,6 +50,7 @@ __all__ = [
     # Record and batch types
     "Batch",
     "Element",
+    "Mix",
     # Core modules
     "BatcherModule",
     "DataSourceModule",

@@ -41,9 +41,9 @@ with jax.set_mesh(mesh):
         loss = train_step(model, optimizer, batch)
 ```
 
-- A full batch has its rows on the sharding and its batch-level state (MixUp's `lam`)
-  replicated. A `raw_batches(chunk=K)` chunk `(K, B, ...)` has its rows on the axes after the
-  chunk axis, `P(None, "data")`.
+- A full batch has its rows on the sharding, its mix (`partners`, `lams`) included, and its
+  batch-level state replicated. A `raw_batches(chunk=K)` chunk `(K, B, ...)` has its rows on the
+  axes after the chunk axis, `P(None, "data")`.
 - A run bounded by `num_epochs` with `drop_last=False` ends on a short batch, which the data
   axis cannot split. The pipeline places it replicated, so an evaluation covers every record
   once with no padding row. Its step compiles once more, once per process, never per

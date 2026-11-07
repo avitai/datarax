@@ -24,7 +24,6 @@ from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import to_words
 from datarax.core.operator import OperatorModule, require_key
 from datarax.core.prng import per_record_keys, record_key
-from datarax.core.state_keys import WEIGHT
 from datarax.pipeline.dag import name_records
 
 
@@ -315,7 +314,7 @@ class TestOperatorRules:
         with pytest.raises(ValueError, match="identity"):
             Rename(OperatorConfig())(_batch())
 
-    def test_a_state_value_computed_from_params_carries_their_gradient(self) -> None:
+    def test_a_weight_computed_from_params_carries_their_gradient(self) -> None:
         class Weigh(OperatorModule):
             def __init__(self) -> None:
                 super().__init__(OperatorConfig())
@@ -328,7 +327,7 @@ class TestOperatorRules:
                 stats: dict[str, Any] | None = None,
             ) -> Element:
                 weight = jax.nn.sigmoid(self.temperature[...] * jnp.sum(element.data["x"]))
-                return element.replace(state={**element.state, WEIGHT: weight})
+                return element.replace(weight=weight)
 
         # Dyadic records (k/8): every float32 row sum is exact in any reduction order, so the
         # jitted float64 gradient check and the float64 closed form compute the same numbers.
@@ -336,7 +335,7 @@ class TestOperatorRules:
 
         def loss(o: Weigh) -> jax.Array:
             out = o(batch)
-            return jnp.sum(out.states[WEIGHT] * jnp.sum(out.data["x"], axis=1))
+            return jnp.sum(out.weights * jnp.sum(out.data["x"], axis=1))
 
         gradient = check_parameter_gradients(op, loss)
         s = np.sum(np.asarray(batch.data["x"], np.float64), axis=1)

@@ -10,6 +10,7 @@ edited source or a different decoder does not.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -31,6 +32,7 @@ from datarax.sources import (
 )
 from datarax.sources._tfds_identity import SplitOrigin
 from datarax.sources.decoded_copy._manifest import identity_differences
+from datarax.sources.source_ops import KeyFilter
 from datarax.sources.tfds_source import _per_batch_split, TFDSEagerConfig, TFDSEagerSource
 from tests.test_common.decoded_copies import every_record, write_copy
 from tests.test_common.tfds_fixture import FIXTURE, RAGGED, TFDSFixture
@@ -88,7 +90,8 @@ class TestAnArrayRecordSourcesIdentity:
         else:
             files = write_png_records(tmp_path / "png", 2000, shards=2)
 
-        assert "source/files" in identity_differences(png_source(files).source_identity(), before)
+        differing = identity_differences(png_source(files).source_identity(), before)
+        assert ("source", "files") in differing
 
 
 @pytest.mark.tfds
@@ -130,8 +133,8 @@ class TestATFDSSplitsIdentity:
         sliced = self._split(tfds_fixture.array_record, split="train[2:9]").source_identity()
         kept = self._split(tfds_fixture.array_record, exclude_keys={"name"}).source_identity()
 
-        assert "source/decode/split" in identity_differences(sliced, train)
-        assert "source/decode/exclude_keys" in identity_differences(kept, train)
+        assert ("source", "decode", "split") in identity_differences(sliced, train)
+        assert ("source", "decode", "exclude_keys") in identity_differences(kept, train)
 
     def test_an_edited_features_json_differs(
         self, tfds_fixture: TFDSFixture, tmp_path: Path
@@ -141,7 +144,7 @@ class TestATFDSSplitsIdentity:
         features = next(moved.glob(f"{FIXTURE}/*/features.json"))
         features.write_text(features.read_text().replace("}", " }", 1))
 
-        assert "source/decode/features" in identity_differences(
+        assert ("source", "decode", "features") in identity_differences(
             self._split(moved).source_identity(),
             self._split(tfds_fixture.array_record).source_identity(),
         )
@@ -158,15 +161,14 @@ class TestATFDSSplitsIdentity:
         monkeypatch.setattr(_tfds_identity, "library_versions", upgraded)
 
         after = self._split(tfds_fixture.array_record).source_identity()
-        assert identity_differences(after, before) == ["decoder/pillow"]
+        assert identity_differences(after, before) == [("decoder", "pillow")]
 
     def test_a_video_feature_has_no_copy(self) -> None:
         video = object.__new__(tfds.features.Video)  # constructing one would import TensorFlow
         decoder = tfds_source._ExampleDecoder(  # noqa: SLF001 - the decode a split declares
             {"clip": video, "label": object()},
             None,
-            None,
-            None,
+            KeyFilter(),
             origin=SplitOrigin(
                 dataset="clips", version="1.0.0", config=None, split="train", features="0" * 64
             ),
@@ -228,6 +230,27 @@ class TestFromTfdsDecodedDir:
                 "train",
                 data_dir=str(tfds_fixture.array_record),
                 decoded_dir=str(tmp_path / "copy"),
+            )
+
+    def test_a_copy_of_another_format_is_refused_naming_both(
+        self, tfds_fixture: TFDSFixture, tmp_path: Path
+    ) -> None:
+        """``from_tfds`` opens the copy; ``materialize`` is what rebuilds one."""
+        directory = tmp_path / "copy"
+        self._copy(tfds_fixture, directory)
+        path = directory / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["format"] = 1
+        path.write_text(json.dumps(manifest))
+
+        refusal = r"format 1, and this datarax reads format 2: rebuild"
+        with pytest.raises(ValueError, match=refusal):
+            from_tfds(
+                FIXTURE,
+                "train",
+                data_dir=str(tfds_fixture.array_record),
+                in_memory=False,
+                decoded_dir=str(directory),
             )
 
     def test_a_ragged_split_has_no_copy(self, tfds_fixture: TFDSFixture, tmp_path: Path) -> None:

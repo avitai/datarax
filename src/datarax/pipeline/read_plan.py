@@ -81,8 +81,9 @@ eight threads filling a 1,000-unit buffer read 0.397 of an H100's floor against 
 (Mann-Whitney p = 0.008, five runs each) and held 27.7 against 10.4 GiB."""
 WORKER_BUFFER = 2
 """A worker's output buffer ``o``: units it puts in its queue ahead of the training process."""
-IDENTITY_BYTES = 2 * 4 + 4 + 4
-"""Host bytes a record's identity adds to its batch: its index words, epoch and draw."""
+ROW_BYTES = 2 * 4 + 4 + 4 + 4
+"""Host bytes every row of a batch carries beyond its data: its index words, epoch, draw and
+weight."""
 
 
 class HostReadPath(enum.Enum):
@@ -426,7 +427,7 @@ def host_batch_bytes(source: DataSourceModule, batch_size: int) -> int:
     """
     with jax.enable_x64(True):
         spec = declared_spec(source)
-    return batch_size * (spec_bytes(spec) + IDENTITY_BYTES)
+    return batch_size * (spec_bytes(spec) + ROW_BYTES)
 
 
 def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each given once
@@ -524,7 +525,7 @@ def _shm_bound(share: int | None) -> dict[str, Any]:
 
 
 __all__ = [
-    "IDENTITY_BYTES",
+    "ROW_BYTES",
     "MAX_READ_THREADS",
     "READ_BUFFER",
     "READ_THREADS",

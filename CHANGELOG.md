@@ -23,7 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   versions, so `materialize` rebuilds a copy written under Pillow once, and `open_decoded_copy`
   refuses it naming `decoder/opencv`. An environment that already has `opencv-python` needs no
   extra: TFDS uses that `cv2`, and the two distributions install the same files.
-
+- `OperatorModule.created_fields()` and `datarax.core.operator.CreatedField(name, parameter)`: an
+  operator declares the fields it creates under names datarax chose (empty by default). A
+  declared create of a field the incoming batch already has raises
+  `datarax.core.field_paths.FieldExistsError` (a `FieldCreateError`), naming the field, how the
+  record holds it, and both fixes: another output, or `overwrite=True` on that config. Inside an
+  `OperatorDag` the refusal names the stage and the field's first writer; in a `Pipeline`, the
+  source. A name the user typed, such as a `target_key`, replaces.
+- `datarax.core.field_paths.record_problems(tree)` and `RecordProblem`: the ways a record breaks
+  the naming rules, worded once for every refusal; `field_listing(paths)` lists fields in name
+  order; `fields_named` words a spelling naming several nodes.
+- `datarax.sources.source_ops.KeyFilter`: `include_keys` or `exclude_keys` resolved once against a
+  dataset's fields, which also decides what a record keeps (`KeyFilter.plan`). Each record a TFDS
+  stream or an ArrayRecord read decodes is then only cut to that decision, and a record no filter
+  names is returned as it is. A filter that names fields is built with `KeyFilter.resolved(...)`;
+  `KeyFilter(include=...)` or `KeyFilter(exclude=...)` without a plan is refused.
+- `EagerSource.provenance_names()`: the provenance keys a source's records hold.
 - A decoded copy is written on macOS. Its files are reserved there with `fcntl(F_PREALLOCATE)`
   and then sized, where Linux uses `os.posix_fallocate`; before, `materialize(directory=...)`
   and `begin_copy` refused every platform without `posix_fallocate`. A platform with neither
@@ -297,9 +312,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every transform carry it with its rows, and batches differing only in presence compile once.
   It has no arithmetic: `*`, `+`, `==` against a number, `jnp` reductions and `np.asarray` raise
   `TypeError`; `value_or(fill)` reads it, broadcasting `present` over the value's trailing axes.
-- `state_keys.MASKED` (`state[MASKED][field]`: a present value an operator hides and keeps as the
-  target) and `state_keys.IMPUTED` (`state[IMPUTED][field]`: a missing value an operator filled,
-  with the field's `present` set).
+- `Element.masked` and `Element.imputed` (`Batch.masked`, `Batch.imputed`): bool marks in the
+  data's nesting, at a field's shape or a prefix of it, for a present value an operator hides and
+  keeps as the target, and for a missing value an operator filled, with the field's `present` set.
+  A pipeline refuses a stage whose marks name no data field, or sit at a shape that is not a
+  prefix of the field's, naming the stage.
 - `RandomCropOperator` pads each record and crops it at an offset drawn from the record's own
   key, with torchvision's `RandomCrop` semantics: padding as one int, (left/right, top/bottom) or
   (left, top, right, bottom); modes constant (with `fill`), edge, reflect and symmetric; top and
@@ -320,53 +337,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generates a variant's data at its configured size and `ScenarioVariant.with_dataset_size(n)`
   sets that size; every `data_generator` takes the number of records to generate.
 
-- **`datarax.pipeline.materialize(source, *, host_resources=None, directory=None,
-  unit_records=256, rebuild=False)`** decodes an indexed source's records once and returns a
-  source serving them, record for record, without decoding again: a `MemorySource` over the
-  decoded columns (`MemorySource.of_columns`, out of NNX state) or, with `directory`, the source's
-  decoded copy there, a `StreamingDiskSource`. A read that decodes in Python is decoded by the
-  worker processes a RAM budget admits (from two; one worker is slower than the calling thread),
-  a GIL-free read and any read without a budget on the calling thread. Workers write a copy's
-  rows in place and send back only each unit's provenance and digest; for RAM they send each
-  decoded unit, copied into the columns. The budget is refused before a worker starts when it
-  cannot hold `M_main + C + E` (`C`, the decoded columns in RAM), naming the per-batch read and
-  `directory=`; `from_tfds(..., in_memory=True, host_resources=...)` checks the decoded size
-  alone. A complete copy of the same source in `directory` is returned as it is (wherever the
-  directory was moved); a changed source, an incomplete copy or `rebuild=True` writes it again
-  under the copy's lock, so N processes on a host build it once. The plan's one-thread warning
-  is shared with the host stage (`datarax.pipeline.read_plan.warn_one_thread`).
-- **Decoded copies** (`datarax.sources.decoded_copy`): a source's records decoded once into one
-  `.npy` file per numeric field and their provenance in one ArrayRecord file of UTF-8 JSON
-  (`bytes` base64-encoded), beside a `manifest.json` written last. `open_decoded_copy(directory,
-  *, identity=None, verify=False)` (exported from `datarax.sources`) opens a finished copy as a
-  `StreamingDiskSource` on any filesystem, refusing a directory without a manifest (an
-  incomplete copy), another copy format (naming both), a column file missing or of another size,
-  an `identity` that differs (naming each field) and, with `verify=True`, a content digest (the
-  SHA-256 of the units' SHA-256s) its bytes no longer give. A copy is identified by what its source
-  declares, `source_identity()` (`datarax.core.data_source.SourceIdentified`), never by paths:
+- **`datarax.pipeline.materialize(source, *, host_resources=None, directory=None, unit_records=256,
+  rebuild=False)`** decodes an indexed source's records once and returns a source serving them,
+  record for record, without decoding again: a `MemorySource` over the decoded columns
+  (`MemorySource.of_columns`, out of NNX state) or, with `directory`, the source's decoded copy
+  there, a `StreamingDiskSource`. Both serve the source's fields by key tuple, so a key holding `/`
+  (COCO's `image/id` beside `image`) comes back as one key and a nested field nested; RAM keeps a
+  field node (a `Maybe`) whole, and records that break the record rules (two fields of one spelling,
+  a list holding fields) are refused before anything is stored. A read that decodes in Python is
+  decoded by the worker processes a RAM budget admits (from two; one worker is slower than the
+  calling thread), a GIL-free read and any read without a budget on the calling thread. Workers
+  write a copy's rows in place and send back only each unit's provenance and digest; for RAM they
+  send each decoded unit, copied into the columns. The budget is refused before a worker starts when
+  it cannot hold `M_main + C + E` (`C`, the decoded columns in RAM), naming the per-batch read and
+  `directory=`; `from_tfds(..., in_memory=True, host_resources=...)` checks the decoded size alone.
+  A complete copy of the same source in `directory` is returned as it is (wherever the directory was
+  moved); a changed source, an incomplete copy or `rebuild=True` writes it again under the copy's
+  lock, so N processes on a host build it once. The plan's one-thread warning is shared with the
+  host stage (`datarax.pipeline.read_plan.warn_one_thread`).
+- **Decoded copies** (`datarax.sources.decoded_copy`, format 2): a source's records decoded once
+  into one `.npy` file per numeric field, which the manifest names by the field's key tuple
+  (`"keys": ["meta", "score"]`), and their provenance in one ArrayRecord file of UTF-8 JSON (`bytes`
+  base64-encoded), beside a `manifest.json` written last. A copy stores arrays: a field node (a
+  `Maybe`) is refused before any file is reserved. `open_decoded_copy(directory, *, identity=None,
+  verify=False)` (exported from `datarax.sources`) opens a finished copy as a `StreamingDiskSource`
+  on any filesystem, refusing a directory without a manifest (an incomplete copy), another copy
+  format (naming both), a column file missing or of another size, an `identity` that differs (naming
+  each field, compared by key tuple) and, with `verify=True`, a content digest (the SHA-256 of the
+  units' SHA-256s) its bytes no longer give. A copy is identified by what its source declares,
+  `source_identity()` (`datarax.core.data_source.SourceIdentified`), never by paths:
   `ArrayRecordSourceModule` declares its files' base names and sizes, its record count and its
-  decode; TFDS's per-batch
-  decode adds the dataset, version, config, split, kept features, `features.json`'s SHA-256 and the
-  versions of the libraries that decode it (`datarax.sources._tfds_identity`, read with substrax's
-  `library_versions`), so a decoder upgrade invalidates a copy; a
-  `StreamingDiskSource` declares its columns and the copy it is. The writer's protocol, internal
-  to the package (`open_decoded_copy` is its one public name):
-  `ColumnLayout`, the one per-unit writer `write_unit` (a field unlike its column is refused, never
+  decode; TFDS's per-batch decode adds the dataset, version, config, split, kept features,
+  `features.json`'s SHA-256 and the versions of the libraries that decode it
+  (`datarax.sources._tfds_identity`, read with substrax's `library_versions`), so a decoder upgrade
+  invalidates a copy; a `StreamingDiskSource` declares its columns (each field's key tuple) and the
+  copy it is. The writer's protocol, internal to the package (`open_decoded_copy` is its one public
+  name): `ColumnLayout` (columns by key tuple, a field node's members kept for RAM by its tree
+  definition), the one per-unit writer `write_unit` (a field unlike its column is refused, never
   cast), `unit_digest`, `CopyLock` (an exclusive `fcntl.flock` on `<copy>/.lock`), `clear_copy`
   (manifest first), `begin_copy` (every `.partial` created fresh and reserved with
   `os.posix_fallocate`, a full disk refused naming the column, the bytes needed and free),
   `finish_copy` (each file fsynced once and renamed, the manifest written last through a fsynced
   temporary file) and `refuse_unsupported_filesystem` (networked and FUSE targets, by
   `psutil.disk_partitions(all=True)`). A TFDS `Video` feature has no copy.
-- `from_tfds(..., in_memory=False, decoded_dir=...)` opens the split's decoded copy, checked
-  against the split it was written from; `decoded_dir` with an in-memory or streamed split is
-  refused.
+- `from_tfds(..., in_memory=False, decoded_dir=...)` opens the split's decoded copy, checked against
+  the split it was written from; a copy of another format (`materialize` rebuilds one), and
+  `decoded_dir` with an in-memory or streamed split, are refused.
 - `StreamingDiskSourceConfig(provenance=DiskProvenance(file, records), content_digest=...)`: a
   column-set source serves its records' provenance by index from one ArrayRecord file, and
   `StreamingDiskSource.source_identity()` declares its columns and the copy they are.
   `DiskProvenance` is exported from `datarax.sources`.
 - `MemorySource.of_columns(columns, provenance=(), *, name=None)`: a source over host columns
-  already decoded (a build's), nested by field and with one provenance mapping per record, held
+  already decoded (a build's), nested by key tuple and with one provenance mapping per record, held
   as given (not copied) as every eager source's columns are.
 - `ArrayRecordSourceModule.source_identity()`.
 
@@ -382,6 +404,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `datarax.pipeline.host_workers.resident_bytes` and `peak_resident_bytes` are
   `process_bytes` and `peak_process_bytes`: on macOS they read the physical footprint, not the
   resident size.
+- One naming of record fields, in `datarax.core.field_paths`. A field is the tuple of dict keys
+  from the record's root (its key tuple); a key is a non-empty string and may hold `/`, so TFDS's
+  `image/id` beside `image` is one field. A name is a spelling (the keys joined by `/`) or a key
+  tuple. `get_field`, `set_field` and every operator that names a field resolve a spelling
+  against the record's structure, never by splitting it, and an unknown name is refused listing
+  the record's fields. A create (`set_field`, an operator's `target_key`) writes onto the node a
+  spelling names, or descends into the existing group with the longest `/`-prefix and keeps the
+  rest as one key (`State/Province` is one top-level key); a spelling that would nest a field
+  under a field (`meta/size` beside the field `meta`) is refused, offering the key tuple
+  `("meta/size",)`. A key tuple creates exactly its path, and an empty or exotic key (`/a`, `a/`,
+  `a//b`) is refused. Breaking: the dotted form (`"data.image"` for `data["data"]["image"]`) is
+  removed; write `"data/image"` or `("data", "image")`.
+- Configuration parameters that name fields are annotated `FieldName` (one field) or
+  `FieldNames` (several) and converted once by `DataraxModuleConfig.__post_init__`: a list of
+  strings for one field is one key tuple, a list of names for several becomes a tuple, so TOML,
+  Python tuples and Python lists build equal, hashable configurations, and a bare string for
+  several fields is refused. `ModalityOperatorConfig.field_key`, `target_key` and
+  `auxiliary_fields` take them; `auxiliary_fields` now holds a tuple.
+- Storage names a field by its key tuple, never its spelling:
+  `datarax.core.field_paths.flat_fields(tree, *, owner)` flattens a record by key tuple (a field
+  node one field, a list or other non-dict step refused naming the field) and
+  `fields_nested(fields)` rebuilds the record from key tuples alone. RAM materialize, the in-memory
+  TFDS build, the decoded copy, the disk source and the mix use them, so `("a/b",)` and `("a", "b")`
+  are served apart and COCO's `image` beside `image/id` is stored and read verbatim. The disk
+  source and the mix derive a record's structure once, when built, and a read only places its
+  arrays through it; a mix refuses a source's batch whose structure is not the one that source's
+  `element_spec` declares, naming the source and both sets of fields, where it served the batch
+  unlike the mix's own spec before.
+- `SplitField(fields)` resolves each name against the batch's data, so `"meta/id"` keeps
+  `data["meta"]["id"]` inside its group and `("meta", "id")` names that path; it still skips an
+  absent field, and refuses a bare string.
+- A refusal names a field by its spelling in quotes, `'image'`, adding its key tuple where a key
+  holds `/` or is empty (`'image/id' (key tuple ('image/id',))`); a field node's member prints as
+  `'depth'.present` and a list position as `'c'[0]`. Spec mismatches, statistics mismatches, the
+  mix's field conflicts and every missing-value refusal use it in place of JAX's `['image']`.
+- `Maybe` is a `datarax.core.field_nodes.FieldNode`, the base of a field held as several arrays:
+  naming treats it as one field, and a consumer that reads a field as an array refuses any field
+  node through `datarax.core.field_paths.refuse_field_nodes`, with the node type's own fix.
+- Records meet the naming rules wherever they are built: keys are non-empty strings that neither
+  start nor end with `/` nor hold `//`, nodes are dicts, and no two nodes, groups included, share
+  a spelling (a key `"meta/id"` beside a group `meta` holding `id` is refused). `OperatorDag`
+  checks every stage's output, declared or not, in every trace and on every eager call, never on
+  a cached jitted call. A mix refuses children that give one spelling to different nodes or to
+  data and to provenance; an eager source refuses a data field spelled as a provenance field and
+  a provenance spelling given twice.
+- Breaking: every `Pipeline` source declares its record (`element_spec`). The pipeline reads it
+  when it is built, after the refusals that need no data, refuses a record that breaks the
+  naming rules, and refuses a source that leaves `element_spec` to `DataSourceModule` with its
+  `NotImplementedError`.
+- Breaking: `include_keys` and `exclude_keys` hold field names, resolved when the source is
+  built against its data and provenance fields. A name the dataset does not have is refused,
+  listing its fields, where it was dropped without a word; a nested name such as `meta/score`
+  filters that nested field. A TFDS field inside a `Sequence` of dicts (COCO's `objects/bbox`)
+  resolves, and the decode keeps the `Sequence` whole. A decoded copy records its filters as key
+  tuples (`[["image"], ["label"]]`), so a filtered copy written by an earlier release is refused
+  when opened, naming `source/decode/include_keys`, and is rebuilt with
+  `datarax.pipeline.materialize(..., rebuild=True)`.
+- Breaking: the RAM budget of an in-memory TFDS build reads each feature's tensor infos, so a
+  `Sequence` counts its length: one of fixed length counts every element, where one element was
+  counted, and one of no fixed length is refused as having no size before reading. A `Video`
+  inside a group has no decoded copy, as a top-level one has none.
+- A refusal that lists fields lists them in name order, so its text is the same in every process
+  (a loaded TFDS `FeaturesDict` has no stable order of its own).
 - The end-to-end CIFAR-10 guide (`examples/advanced/training/01_e2e_cifar10_guide.py`, its
   notebook and page) reproduces the MixUp paper's CIFAR-10 recipe, facebookresearch/mixup-cifar10
   at `eaff31ab`: PreAct ResNet-18 with PyTorch's initialization (11,171,274 parameters, as the
@@ -481,9 +566,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte offset, its leading axis the record axis, in place of `path` and `feature_key`.
   `DiskColumn.from_npy(name, path)` is a `.npy` file's array, its offset the header's length (a
   Fortran-ordered file is refused); an uncompressed contiguous HDF5 dataset reads at the offset its
-  file reports. A column's name is its field's path, `/` between levels, so records keep their
-  nesting. Columns hold numeric dtypes and one row per record; a column whose file is shorter than
-  its offset and bytes, a name given twice, or a name that is also another's level is refused. Each
+  file reports. A column's name is its field (`FieldName`, held as given): a key tuple nests
+  (`("meta", "score")`) and a string is one key, `/` and all, since a source receives no record a
+  spelling could resolve against. Columns hold numeric dtypes and one row per record, and are one
+  declaration checked once in any order: a column whose file is shorter than its offset and bytes,
+  an empty or exotic key, a name given twice, a key tuple through another column, a string extending
+  another column (refused offering its key tuple) and two fields of one spelling are refused. Each
   column pickles as its place on disk. `element_spec()` states dtypes as the device holds them, and
   the traced read returns a stored 64-bit column at 32 bits while x64 is off, as the eager sources
   do. `DiskColumn` is exported from `datarax` and `datarax.sources`.
@@ -760,18 +848,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrapper's own key serves only its own decision. A child draws the same values at top level, in a
   sequential composite and inside a per-record wrapper. Draws of every wrapper with a stochastic
   child change. The same operator instance twice in one wrapper is refused.
+- A per-record wrapper that applies its child to some records (`ProbabilisticOperator`,
+  `SelectorOperator`, BRANCHING, CONDITIONAL_SEQUENTIAL, CONDITIONAL_PARALLEL) carries the weight
+  and marks a child writes through every branch: where the child does not apply, the record keeps
+  its own weight, and a mark it lacked is False. A user `state` entry only some branches write, or
+  drop, is refused naming the wrapper, the child and the entry, as is a mark written at two
+  shapes; jax raised its own error naming none.
 - A SEQUENTIAL or DYNAMIC_SEQUENTIAL composite calls each child on the whole batch in turn, so it
   holds whole-batch children and each child fits its statistics on its own input. Every other
   composite strategy, `ProbabilisticOperator` and `SelectorOperator` decide or merge per record and
   refuse a child that works on the whole batch, or a chain whose later child fits statistics per
   batch. A composite draws nothing itself: it is deterministic and takes no `rngs`; a
   `ProbabilisticOperator` is stochastic only when `0 < probability < 1`.
-- `BatchMixOperator` mixes `data_field` only and leaves labels untouched: it writes each record's
-  partner row to `states[MIX_PARTNER]` and the mixing ratio (MixUp's `lam`, CutMix's fraction of
-  the image kept) to `batch_state[MIX_LAMBDA]` (`datarax.core.state_keys`), and the loss reads
-  them, `lam * CE(y) + (1 - lam) * CE(y[partner])`. Integer class labels are no longer averaged.
-  `label_field` is removed; a batch without `data_field`, or a CutMix field that is not
-  `(B, H, W, C)`, is refused.
+- `BatchMixOperator` mixes `data_field` only and leaves labels untouched: it writes `batch.mix`,
+  a `Mix(partners, lams)` holding each row's partner row and its coefficient (MixUp's `lam` in the
+  field's dtype, CutMix's float32 fraction of the image kept; the batch's one draw in every row),
+  and the loss reads them, `lams * CE(y) + (1 - lams) * CE(y[partners])`. Integer class labels are
+  no longer averaged. `label_field` is removed; a batch without `data_field`, or a CutMix field
+  that is not `(B, H, W, C)`, is refused, and so is a batch already mixed (`MixedTwiceError`,
+  naming both stages inside a DAG). A mix's partners are row numbers of the mixed batch, which row
+  operations move without renumbering.
 - `SamplerModule` is generic in the index it emits (`SamplerModule[int]`,
   `SlidingWindowSampler` a `SamplerModule[jax.Array]`); a data source's `__iter__`, `__next__`
   and `__getitem__` are declared as yielding the PyTrees they return. Pyright's
@@ -795,17 +891,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass through `jax.jit`, `nnx.jit` in graph and tree mode, `nnx.jit_partial`, `vmap`, `scan`,
   `checkpoint`, `cond` and `shard_map`, and batches differing only in their values share one
   compiled program. A `Batch` holds `data`, `states`, `indices` (uint32 `(B, 2)`, each record's
-  64-bit index as two words), `epochs`, `draws` and `batch_state`; `batch["image"]`,
+  64-bit index as two words), `epochs`, `draws`, `weights` (float32 `(B,)`: 1 for a record, 0
+  for a padding row), `masked`, `imputed`, `mix` and `batch_state`; `batch["image"]`,
   `batch.get(...)` and `in` read its data, and `dict`, `**`, iteration, `len` and `batch[0]` raise.
-  An `Element` holds `data`, `state`, `index`, `epoch` and `draw`; `Element(x)` names no index,
-  and records stacked without one are keyed by their rows. `Batch` is no longer an `nnx.Module`:
-  its getters (`get_data`, `get_element(s)`, `get_states`, `get_batch_state`,
+  An `Element` holds `data`, `state`, `index`, `epoch`, `draw`, `weight` (1 by default), `masked`
+  and `imputed`; `Element(x)` names no index, and records stacked without one are keyed by their
+  rows. `state` and `batch_state` hold only the user's names. A source given `Element` records
+  refuses one carrying a weight or marks, as it refuses an index or state. `Batch` is no longer
+  an `nnx.Module`: its getters (`get_data`, `get_element(s)`, `get_states`, `get_batch_state`,
   `get/set_batch_metadata`, `update_batch_state`), `Batch.from_parts`, `slice`,
   `split_for_devices` and `compute_stats` are removed.
 - Batch operations are pure functions in `datarax.core.batch_ops`: `from_arrays`, `from_stacked`,
   `stack`, `element`, `slice_rows`, `take`, `split`, `concatenate`, `mask`, `compact`,
   `record_count` and `shardings`. A padding row carries `PADDING_INDEX` (both words all ones) and
-  `state_keys.WEIGHT` 0; `mask` and `compact` keep the batch's shape.
+  weight 0 wherever an index is written; `mask` and `compact` keep the batch's shape.
 - A record's key is `per_record_keys(base_key, indices, epochs, draws)`: its epoch, its draw and
   both words of its index folded into the operator's base key, so indices past `2^32` keep
   distinct keys and a record served twice in one epoch draws twice. Every stochastic operator's
@@ -872,6 +971,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the key instead of a fixed key; the function type is the keyed or the keyless shape.
 
 ### Removed
+
+- `datarax.core.maybe.refuse_maybe`, `missing_value_error` and `maybe_paths`: a consumer refuses
+  field nodes with `datarax.core.field_paths.refuse_field_nodes(tree, consumer, where)`.
+- `datarax.sources._field_paths`: its `field_name`, `field_names` and `LEVEL` are in
+  `datarax.core.field_paths`; its `by_field` and `nested`, which named stored fields by spelling,
+  are removed: storage uses `flat_fields` and `fields_nested`, by key tuple.
+- `datarax.sources.source_ops.filter_keys`: a source filters through `KeyFilter.resolved(...)`
+  and `KeyFilter.keep(record)`.
 
 - `datarax.sharding`, with `JaxProcessSharderModule` and `JaxProcessSharderConfig`, which sliced
   arrays and lists to the current JAX process's portion: a pipeline whose `sharding` spans

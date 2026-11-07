@@ -28,7 +28,7 @@ batch = {"image": np.zeros((32, 28, 28), dtype=np.float64)}
 try:
     validate_batch(batch, element_spec, batch_size=32)
 except SpecMismatchError as error:
-    print(error.problems)  # ("['image']: dtype float64 != expected float32",)
+    print(error.problems)  # ("'image': dtype float64 != expected float32",)
 ```
 
 `validate_batch` checks tree structure, per-element shapes, dtypes and one shared

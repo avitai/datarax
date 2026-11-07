@@ -5,7 +5,7 @@ once, at construction (see :mod:`datarax.sources.eager_source`), and serves it t
 eager-source base. A dict is a mapping of columns; a list is a list of records, whose numeric
 values are stacked into columns and whose strings and other objects become provenance; an array
 is one column. :meth:`MemorySource.of_columns` holds columns already decoded (a build's), nested
-by field and with their provenance, as they are.
+by key tuple and with their provenance, as they are.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -152,14 +152,16 @@ class MemorySource(EagerSource):
     ) -> Self:
         """A source over host columns already decoded, held as given, with their provenance.
 
-        A build's columns (``datarax.pipeline.materialize``'s RAM result) are nested by field,
+        A build's columns (``datarax.pipeline.materialize``'s RAM result) are nested by their
+        fields' key tuples (a key holding ``/`` stays one key, a ``Maybe`` stays a ``Maybe``),
         which the constructor's mapping of columns refuses, and come with one provenance mapping
         per record. They are held as every eager source holds its columns (a host holder, out of
         NNX state; see :mod:`datarax.sources.eager_source`), not copied. Record ``r`` is row
         ``r``.
 
         Args:
-            columns: A pytree of host arrays (nested mappings by field), one row per record.
+            columns: A pytree of host arrays and field nodes (nested mappings by key tuple), one
+                row per record.
             provenance: One mapping of strings and objects per record, or nothing.
             name: Optional name for the module (defaults to "MemorySource").
 
@@ -385,7 +387,8 @@ def _record_data(record: Any, position: int) -> Any:
         The record's values.
 
     Raises:
-        ValueError: If an ``Element`` carries an index or state, which the source would drop.
+        ValueError: If an ``Element`` carries an index, state, a weight other than 1 or marks,
+            which the source would drop.
     """
     if not isinstance(record, Element):
         return record
@@ -398,5 +401,10 @@ def _record_data(record: Any, position: int) -> Any:
         raise ValueError(
             f"record {position} is an Element with state; the source serves records' data, so "
             "an Element given to it carries data only"
+        )
+    if float(record.weight) != 1.0 or jax.tree.leaves((record.masked, record.imputed)):
+        raise ValueError(
+            f"record {position} is an Element with a weight or marks; the source serves records' "
+            "data, so an Element given to it carries data only"
         )
     return record.data

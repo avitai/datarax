@@ -24,7 +24,7 @@ from substrax.testing.compiles import expect_compiles
 from datarax.core import Maybe
 from datarax.core.config import StructuralConfig
 from datarax.core.index_words import to_words
-from datarax.core.spec import array_to_spec_strip_leading, device_spec
+from datarax.core.spec import array_to_spec_strip_leading, device_spec, SpecMismatchError
 from datarax.pipeline import Pipeline
 from datarax.sources.eager_source import EagerSource
 from datarax.sources.memory_source import MemorySource, MemorySourceConfig
@@ -150,9 +150,12 @@ class TestConflictsAndHostDtypes:
         with pytest.raises(ValueError, match=match):
             _mix([_memory(child_columns(0, ("image", "label"))), _memory(other)])
 
+    @pytest.mark.parametrize("values_first", [True, False], ids=["values-first", "fields-first"])
     def test_a_field_that_holds_values_in_one_child_and_fields_in_another_is_refused(
-        self,
+        self, values_first: bool
     ) -> None:
+        """In both orders: flax's rebuild would drop one of the two silently in one of them."""
+
         class Specified(Sized):
             def __init__(self, spec: Any) -> None:
                 super().__init__(4)
@@ -162,8 +165,42 @@ class TestConflictsAndHostDtypes:
                 return self.spec
 
         image = jax.ShapeDtypeStruct((H, W, C), jnp.float32)
-        with pytest.raises(ValueError, match=r"\['image'\].*\['image'\]\['rgb'\]"):
-            _mix([Specified({"image": image}), Specified({"image": {"rgb": image}})])
+        children = [Specified({"image": image}), Specified({"image": {"rgb": image}})]
+        with pytest.raises(ValueError, match=r"'image'.*'image/rgb'"):
+            _mix(children if values_first else children[::-1])
+
+    @pytest.mark.parametrize(
+        ("declared", "listing"),
+        [
+            (
+                {
+                    "x": jax.ShapeDtypeStruct((), jnp.float32),
+                    "y": jax.ShapeDtypeStruct((), jnp.int32),
+                },
+                "it serves 'x'; its spec declares 'x', 'y'",
+            ),
+            (
+                {"x": {"v": jax.ShapeDtypeStruct((), jnp.float32)}},
+                "it serves 'x'; its spec declares 'x/v'",
+            ),
+        ],
+        ids=["a-field-it-never-serves", "another-nesting"],
+    )
+    def test_a_child_whose_batch_departs_from_its_spec_is_refused_naming_it(
+        self, declared: Any, listing: str
+    ) -> None:
+        """The mix reads each child through the structure its spec declares, and holds it to it."""
+
+        class Departs(Sized):
+            def element_spec(self) -> Any:
+                return declared
+
+        mix = _mix([_memory({"z": np.zeros(_N, np.float32)}), Departs(_N)])
+
+        with pytest.raises(SpecMismatchError) as refused:
+            _batch_of(mix, [0, 1])
+        assert "child 1 (Departs) served a batch unlike its element_spec" in str(refused.value)
+        assert refused.value.problems == (listing,)
 
     def test_nested_fields_keep_their_nesting_and_a_missing_one_is_maybe(self) -> None:
         both = [{"meta": {"a": np.int32(i)}, "x": np.float32(0)} for i in range(_N)]

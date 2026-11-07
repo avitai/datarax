@@ -12,12 +12,18 @@ Test Coverage:
 - Statistics aggregation
 """
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 from flax import nnx
 
 from datarax.core import batch_ops
+from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Element
+from datarax.core.operator import OperatorModule
 
 # GREEN phase - imports enabled
 from datarax.operators.composite_operator import (
@@ -506,3 +512,51 @@ class TestParallelAdvanced:
         result_data = result_batch.data
         expected = jnp.array([[23.0]])
         assert jnp.allclose(result_data["value"], expected)
+
+
+class _SetsWeight(OperatorModule):
+    """Doubles ``value`` and sets the record's weight to ``weight``; marks ``value`` if asked."""
+
+    def __init__(self, weight: float, *, marks: bool = False) -> None:
+        super().__init__(OperatorConfig(stochastic=False))
+        self.weight = weight
+        self.marks = marks
+
+    def apply(self, element: Element, key: Any = None, stats: Any = None) -> Element:
+        masked = {"value": jnp.ones((), bool)} if self.marks else element.masked
+        return element.replace(
+            data={"value": element.data["value"] * 2},
+            weight=jnp.float32(self.weight),
+            masked=masked,
+        )
+
+
+class TestTheLastChildsTypedState:
+    """The parallel merges and the ensemble keep the last child's weight and marks with its state.
+
+    PARALLEL, WEIGHTED_PARALLEL, CONDITIONAL_PARALLEL and ENSEMBLE return the last child's record
+    with the merged data.
+    """
+
+    @pytest.mark.parametrize(
+        ("strategy", "extra"),
+        [
+            ("PARALLEL", {"merge_strategy": "sum"}),
+            ("WEIGHTED_PARALLEL", {"weights": [0.5, 0.5], "mix_fields": ("value",)}),
+            (
+                "CONDITIONAL_PARALLEL",
+                {"conditions": [lambda _: True, lambda _: True], "merge_strategy": "sum"},
+            ),
+            ("ENSEMBLE_MEAN", {}),
+        ],
+    )
+    def test_the_last_child_s_weight_and_marks_are_kept(
+        self, strategy: str, extra: dict[str, Any]
+    ) -> None:
+        composite = CompositeOperatorModule(
+            CompositeOperatorConfig(strategy=CompositionStrategy[strategy], **extra),
+            operators=[_SetsWeight(0.5), _SetsWeight(0.25, marks=True)],
+        )
+        out = composite(batch_ops.from_arrays({"value": jnp.ones((4,), jnp.float32)}))
+        assert np.asarray(out.weights).tolist() == [0.25] * 4
+        assert np.asarray(out.masked["value"]).tolist() == [True] * 4

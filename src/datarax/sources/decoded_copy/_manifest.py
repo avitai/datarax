@@ -9,19 +9,21 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from flax import traverse_util
 
-from datarax.sources._field_paths import by_field
+from datarax.core.field_paths import KeyTuple
 from datarax.sources.decoded_copy._layout import COPY_FORMAT, MANIFEST, unit_count, unit_rows
 from datarax.sources.decoded_copy._units import content_digest, unit_digest
 from datarax.sources.streaming_disk_source import DiskColumn
 
 
-def flat(value: Any) -> dict[str, Any]:
-    """A JSON value's fields by name: mappings are levels, anything else (a list too) one value.
+def flat(value: Mapping[str, Any]) -> dict[KeyTuple, Any]:
+    """A JSON object's values by key tuple: objects are levels; anything else, a list too, a value.
 
-    An empty mapping has no field, so it differs from another mapping in that mapping's fields.
+    An empty object holds no value, so it differs from another object in that object's values.
+    A key holding ``/`` is one key, so it never collides with a nested one.
     """
-    return by_field(value, is_leaf=lambda node: not isinstance(node, Mapping))
+    return traverse_util.flatten_dict(value)
 
 
 def as_json(identity: Mapping[str, Any]) -> Any:
@@ -31,17 +33,18 @@ def as_json(identity: Mapping[str, Any]) -> Any:
     )
 
 
-def identity_differences(found: Mapping[str, Any], expected: Mapping[str, Any]) -> list[str]:
-    """The fields in which two identities differ, as paths (``"decoder/pillow"``).
+def identity_differences(found: Mapping[str, Any], expected: Mapping[str, Any]) -> list[KeyTuple]:
+    """The fields in which two identities differ, as key tuples (``("decoder", "pillow")``).
 
-    Both are compared as JSON stores them, so a manifest's identity compares with a source's.
+    Both are compared as JSON stores them, so a manifest's identity compares with a source's. A
+    refusal prints them by label (``field_listing``).
 
     Args:
         found: One identity (a copy's manifest, or a source's).
         expected: Another.
 
     Returns:
-        The differing paths, sorted; empty when they match.
+        The differing key tuples, sorted; empty when they match.
     """
     left = flat(as_json(found))
     right = flat(as_json(expected))
@@ -90,7 +93,7 @@ def verify_content(
         rows = unit_rows(unit, length, unit_records)
         digests.append(
             unit_digest(
-                {c.name: m[rows.start : rows.stop] for c, m in zip(columns, maps, strict=True)}
+                {c.keys: m[rows.start : rows.stop] for c, m in zip(columns, maps, strict=True)}
             )
         )
     del maps

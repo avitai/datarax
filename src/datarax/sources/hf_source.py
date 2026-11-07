@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
-from collections.abc import Collection, Iterator, Mapping, Set as AbstractSet
+from collections.abc import Collection, Iterable, Iterator, Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -39,6 +39,7 @@ from datarax.core.spec import JAX_ARRAY_KINDS
 from datarax.sources._config_base import SourceConfigBase, StreamingSourceConfigBase
 from datarax.sources._source_base import DatasetSourceMixin, StreamingSourceBase
 from datarax.sources.eager_source import EagerSource, is_array_leaf, stack_records
+from datarax.sources.source_ops import KeyFilter
 from datarax.sources.stream_iterator import StreamChunk
 
 
@@ -97,14 +98,32 @@ def _load_hf_dataset(config: HFEagerConfig | HFStreamingConfig, **extra: Any) ->
     )
 
 
-def _selected_hf_columns(
-    column_names: list[str],
-    include_keys: Collection[str] | None,
-    exclude_keys: Collection[str] | None,
-) -> list[str]:
-    """Return the dataset columns the include and exclude filters keep, in dataset order."""
-    included = [name for name in column_names if not include_keys or name in include_keys]
-    return [name for name in included if not exclude_keys or name not in exclude_keys]
+def _column_filter(
+    config: HFEagerConfig | HFStreamingConfig, column_names: Iterable[str]
+) -> KeyFilter:
+    """The configured filter resolved against a HuggingFace dataset's columns.
+
+    A column is one field, data or provenance; a struct column is held whole, as provenance, so a
+    filter names columns and never the fields inside one.
+
+    Args:
+        config: The configuration naming the filter.
+        column_names: The dataset's columns.
+
+    Returns:
+        The resolved filter.
+    """
+    return KeyFilter.resolved(
+        type(config).__name__,
+        dict.fromkeys(column_names),
+        config.include_keys,
+        config.exclude_keys,
+    )
+
+
+def _kept_columns(key_filter: KeyFilter, column_names: Iterable[str]) -> list[str]:
+    """The columns ``key_filter`` keeps, in the dataset's order."""
+    return list(key_filter.keep(dict.fromkeys(column_names)))
 
 
 def _hf_value_on_host(value: Any) -> Any:
@@ -174,8 +193,8 @@ class HFEagerConfig(SourceConfigBase):
         cache_dir: Optional folder where downloaded files are cached (``load_dataset``'s
             ``cache_dir``; the Hugging Face default when ``None``)
         download_kwargs: Optional keyword arguments for load_dataset
-        include_keys: Optional set of keys to include in output (exclusive with exclude_keys)
-        exclude_keys: Optional set of keys to exclude from output (exclusive with include_keys)
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
 
     Note:
         The order records are served in belongs to the pipeline (``Pipeline(shuffle=...)``).
@@ -199,8 +218,8 @@ class HFStreamingConfig(StreamingSourceConfigBase):
             ``cache_dir``; the Hugging Face default when ``None``)
         shuffle_buffer_size: Records HF's shuffle buffer holds when the pipeline shuffles
         download_kwargs: Optional keyword arguments for load_dataset
-        include_keys: Optional set of keys to include in output
-        exclude_keys: Optional set of keys to exclude from output
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
 
     Note:
         Whether a pass is shuffled, and by which seed, is the pipeline's
@@ -292,9 +311,10 @@ class HFEagerSource(DatasetSourceMixin, EagerSource):
             every column is an array).
 
         Raises:
-            ValueError: If the dataset yields no elements after loading and key filtering.
+            ValueError: If a filter names a column the dataset does not have, or the dataset
+                yields no elements after loading and key filtering.
         """
-        keys = _selected_hf_columns(dataset.column_names, config.include_keys, config.exclude_keys)
+        keys = _kept_columns(_column_filter(config, dataset.column_names), dataset.column_names)
         if not keys or len(dataset) == 0:
             raise ValueError(
                 "Dataset produced no elements after loading/filtering. "
@@ -371,7 +391,11 @@ class HFStreamingSource(StreamingSourceBase):
         if name is None:
             name = f"HFStreamingSource({config.name}:{config.split})"
         super().__init__(config, name=name)
-        self._dataset = HostValue(_load_hf_dataset(config, streaming=True))
+        dataset = _load_hf_dataset(config, streaming=True)
+        self._dataset = HostValue(dataset)
+        # A stream without declared features resolves its filter against its first chunk.
+        features = getattr(dataset, "features", None)
+        self._key_filter = HostValue(_column_filter(config, features) if features else None)
 
     @property
     def dataset_name(self) -> str | None:
@@ -433,9 +457,9 @@ class HFStreamingSource(StreamingSourceBase):
         with contextlib.closing(dataset.iter(batch_size=read_size)) as batches:
             for rows in batches:
                 size = len(next(iter(rows.values())))
-                kept = _selected_hf_columns(
-                    list(rows), self.config.include_keys, self.config.exclude_keys
-                )
+                if self._key_filter.value is None:
+                    self._key_filter.value = _column_filter(self.config, rows)
+                kept = _kept_columns(self._key_filter.value, rows)
                 cast = {
                     column: np.asarray(rows[column]).astype(dtypes[column], copy=False)
                     if column in dtypes
@@ -481,8 +505,8 @@ def from_hf(
         data_dir: Optional folder inside the dataset's repository whose data files are
             loaded (``datasets.load_dataset``'s ``data_dir``), not a storage location
         cache_dir: Optional folder where downloaded files are cached
-        include_keys: Optional set of keys to include
-        exclude_keys: Optional set of keys to exclude
+        include_keys: Fields to keep, by name (``SourceConfigBase``); exclusive with exclude_keys
+        exclude_keys: Fields to drop, by name (``SourceConfigBase``); exclusive with include_keys
         download_kwargs: Optional kwargs for datasets.load_dataset
 
     Returns:

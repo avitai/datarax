@@ -16,16 +16,20 @@ import numpy as np
 
 from datarax.core.data_source import DataSourceModule, known_length, Provenance, read_records
 from datarax.core.element_batch import Batch
+from datarax.core.field_paths import KeyTuple
 from datarax.core.index_words import to_words
-from datarax.sources._field_paths import by_field
 from datarax.sources.decoded_copy._layout import (
     ColumnLayout,
     LayoutColumn,
+    slot_labels,
+    slots_of,
     unit_count,
     UNIT_RECORDS,
     unit_rows,
 )
 
+
+_WRITER = "a decoded copy's writer"
 
 type UnitRead = tuple[Batch, Provenance | None]
 """A unit's records as a host ``Batch``, and their provenance when it was read."""
@@ -95,7 +99,7 @@ def source_layout(source: DataSourceModule) -> ColumnLayout:  # noqa: DOC502 - f
 def write_unit(  # noqa: PLR0913, DOC502 - one unit's write; its checks raise
     source: DataSourceModule,
     rows: range,
-    out: Mapping[str, np.ndarray],
+    out: Mapping[KeyTuple, np.ndarray],
     *,
     layout: ColumnLayout,
     with_provenance: bool,
@@ -110,7 +114,7 @@ def write_unit(  # noqa: PLR0913, DOC502 - one unit's write; its checks raise
     Args:
         source: An indexed source with the stateless host read; record ``r`` is index ``r``.
         rows: The records, a run.
-        out: One array per layout column, keyed by field path, ``len(rows)`` rows each.
+        out: One array per layout column, keyed by column slot, ``len(rows)`` rows each.
         layout: The columns the records decode to.
         with_provenance: Whether the records' provenance is read and returned.
         read: The records already read (unit 0's, by :func:`first_read`), written without
@@ -125,33 +129,41 @@ def write_unit(  # noqa: PLR0913, DOC502 - one unit's write; its checks raise
             another dtype or record shape than its column, naming the field.
     """
     batch, provenance = read or read_unit(source, rows, with_provenance=with_provenance)
-    leaves = by_field(batch.data)
-    refuse_other_fields(leaves, layout, rows)
+    leaves = slots_of(batch.data, owner=_WRITER)
+    if leaves.keys() != {column.slot for column in layout.columns}:
+        refuse_other_fields(slot_labels(batch.data, owner=_WRITER), layout, rows)
     for column in layout.columns:
-        out[column.name][...] = checked(leaves[column.name], column, rows)
+        out[column.slot][...] = checked(leaves[column.slot], column, rows)
     if provenance is None:
         return None
     return tuple(dict(record) for record in provenance)
 
 
-def refuse_other_fields(leaves: Mapping[str, Any], layout: ColumnLayout, rows: range) -> None:
+def refuse_other_fields(found: Mapping[KeyTuple, str], layout: ColumnLayout, rows: range) -> None:
     """Refuse records whose numeric fields are not the layout's columns, naming the difference.
 
     Args:
-        leaves: The records' numeric fields, by path.
+        found: The records' numeric fields' labels, by column slot.
         layout: The copy's columns.
         rows: The records, for the refusal.
 
     Raises:
-        ValueError: Naming the fields that differ.
+        ValueError: Naming the fields that differ, each list in name order.
     """
-    expected = [column.name for column in layout.columns]
-    differing = sorted(set(leaves) ^ set(expected))
+    expected = {column.slot: column.label for column in layout.columns}
+    differing = sorted(set(found) ^ set(expected))
     if differing:
+        named = {**found, **expected}
         raise ValueError(
-            f"records {rows.start}..{rows.stop} hold the fields {sorted(leaves)} where the copy's "
-            f"columns are {expected}: {differing} differ; every record holds the same fields"
+            f"records {rows.start}..{rows.stop} hold the fields {_listed(found)} where the copy's "
+            f"columns are {_listed(expected)}: {', '.join(named[s] for s in differing)} differ; "
+            "every record holds the same fields"
         )
+
+
+def _listed(labels: Mapping[KeyTuple, str]) -> str:
+    """Labels in name order (their key tuples' order), comma-separated."""
+    return ", ".join(labels[slot] for slot in sorted(labels))
 
 
 def checked(leaf: np.ndarray, column: LayoutColumn, rows: range) -> np.ndarray:
@@ -171,7 +183,7 @@ def checked(leaf: np.ndarray, column: LayoutColumn, rows: range) -> np.ndarray:
     shape = (len(rows), *column.shape)
     if leaf.dtype.str != column.dtype or tuple(leaf.shape) != shape:
         raise ValueError(
-            f"field {column.name!r} of records {rows.start}..{rows.stop} is "
+            f"field {column.label} of records {rows.start}..{rows.stop} is "
             f"{leaf.dtype.str}{tuple(leaf.shape)}, where its column holds "
             f"{column.dtype}{shape}: a column is never cast or reshaped, and a batch's shapes "
             "are static, so every record holds the field at one dtype and shape"
@@ -179,11 +191,11 @@ def checked(leaf: np.ndarray, column: LayoutColumn, rows: range) -> np.ndarray:
     return leaf
 
 
-def unit_digest(out: Mapping[str, np.ndarray]) -> bytes:
+def unit_digest(out: Mapping[KeyTuple, np.ndarray]) -> bytes:
     """The SHA-256 of a unit's columns, in layout order, each column's rows as raw bytes.
 
     Args:
-        out: The unit's rows of every column, keyed by field path in layout order.
+        out: The unit's rows of every column, keyed by column slot in layout order.
 
     Returns:
         The digest.
@@ -212,8 +224,8 @@ def build_in_memory(
         unit_records: Records decoded at a time.
 
     Returns:
-        The columns, nested by field path, and one provenance mapping per record, or none when
-        no record carries anything but numbers.
+        The columns, nested by their key tuples (a field node rebuilt), and one provenance
+        mapping per record, or none when no record carries anything but numbers.
     """
     layout, first = first_read(source, unit_records=unit_records)
     columns = layout.empty()

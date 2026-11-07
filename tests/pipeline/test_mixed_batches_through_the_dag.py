@@ -24,7 +24,6 @@ from substrax.testing.gradients import check_parameter_gradients
 
 from datarax.core import batch_ops
 from datarax.core.element_batch import Batch
-from datarax.core.state_keys import IMPUTED
 from tests.core.test_maybe import _imputed_loss, CrossModalFill
 from tests.test_common.compiles import expect_first_call_compiles
 from tests.test_common.mixing import four_presence_cases
@@ -123,8 +122,8 @@ class TestReadingMissingValues:
     def test_a_fill_marks_what_it_imputed(self) -> None:
         batch = _patterns()[2]  # rows of the four children in turn
         out = CrossModalFill(rngs=nnx.Rngs(0))(batch)
-        np.testing.assert_array_equal(out.states[IMPUTED]["text"], [0, 1, 0, 0] * 2)
-        np.testing.assert_array_equal(out.states[IMPUTED]["image"], [0, 0, 1, 0] * 2)
+        np.testing.assert_array_equal(out.imputed["text"], [0, 1, 0, 0] * 2)
+        np.testing.assert_array_equal(out.imputed["image"], [0, 0, 1, 0] * 2)
         np.testing.assert_array_equal(out["image"].present, [1, 1, 1, 0] * 2)
 
 

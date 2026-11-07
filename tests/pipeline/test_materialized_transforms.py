@@ -31,9 +31,13 @@ from substrax.testing.compiles import compiled_programs
 from datarax.core.config import OperatorConfig
 from datarax.core.element_batch import Batch, Element
 from datarax.core.index_words import from_words, to_words
+from datarax.core.maybe import Maybe
 from datarax.core.operator import OperatorModule
 from datarax.pipeline import materialize, Pipeline
+from datarax.sources import open_decoded_copy
+from datarax.sources.memory_source import MemorySource
 from tests.test_common.compiles import expect_first_call_compiles
+from tests.test_common.decoded_copies import IDENTITY, write_copy
 from tests.test_common.placement import PlacementSpy
 from tests.test_common.worker_reads import png_source, stream_of, write_png_records
 
@@ -330,3 +334,116 @@ def test_a_tier_a_epoch_equals_the_encoded_source_s(sources: dict[str, Any], kin
         return served
 
     assert epoch(sources[kind]()) == epoch(sources["encoded"]())
+
+
+def _key_tuple_columns(*, maybe: bool) -> dict[str, Any]:
+    """A nested field, a field whose key holds ``/``, and (when asked) a ``Maybe``."""
+    rows = np.arange(_RECORDS, dtype=np.float32)
+    columns: dict[str, Any] = {
+        "meta": {"score": np.stack([rows, -rows], axis=1) / _RECORDS},
+        "a/b": np.stack([rows, rows + 1, rows + 2], axis=1) / _RECORDS,
+    }
+    if maybe:
+        columns["depth"] = Maybe(rows / _RECORDS, np.arange(_RECORDS) % 3 != 0)
+    return columns
+
+
+class _ScaleFields(nnx.Module):
+    """A learnable scale on every float field: the nested one, the literal key and the Maybe."""
+
+    def __init__(self) -> None:
+        self.scale = nnx.Param(jnp.asarray(0.5, jnp.float32))
+
+    def __call__(self, batch: Batch) -> Batch:
+        scale = self.scale[...]
+        data = {
+            **batch.data,
+            "meta": {"score": batch.data["meta"]["score"] * scale},
+            "a/b": batch.data["a/b"] * scale,
+        }
+        if "depth" in batch.data:
+            depth = batch.data["depth"]
+            data["depth"] = Maybe(depth.value * scale, depth.present)
+        return batch.replace(data=data)
+
+
+def _key_tuple_loss(batch: Batch) -> jax.Array:
+    loss = jnp.mean(batch.data["meta"]["score"] ** 2) + jnp.mean(batch.data["a/b"])
+    if "depth" in batch.data:
+        depth = batch.data["depth"]
+        loss = loss + jnp.mean(jnp.where(depth.present, depth.value, 0.0))
+    return loss
+
+
+@pytest.fixture(scope="module")
+def key_tuple_sources(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """The in-memory source of each record, its RAM result, and the copy of the arrays-only one."""
+    root = tmp_path_factory.mktemp("key_tuples")
+    with_maybe = MemorySource.of_columns(_key_tuple_columns(maybe=True))
+    arrays = MemorySource.of_columns(_key_tuple_columns(maybe=False))
+    write_copy(arrays, root / "copy", identity=IDENTITY, unit_records=8)
+    return {
+        "maybe/memory": with_maybe,
+        "maybe/ram": materialize(with_maybe, unit_records=8),
+        "arrays/memory": arrays,
+        "arrays/ram": materialize(arrays, unit_records=8),
+        "arrays/copy": open_decoded_copy(root / "copy"),
+    }
+
+
+def _key_tuple_steps(kind: str, source: Any, graph: bool, graph_updates: bool) -> list[bytes]:
+    """Eleven train steps over ``source``: the first compiles, the next ten compile nothing."""
+    pipe = Pipeline(
+        source=source, stages=[_ScaleFields()], batch_size=_BATCH, rngs=nnx.Rngs(4), shuffle=True
+    )
+
+    @nnx.jit(graph=graph, graph_updates=graph_updates)
+    def step(dag: nnx.Module, batch: Batch) -> tuple[jax.Array, Any]:
+        return nnx.value_and_grad(lambda dag: _key_tuple_loss(dag(batch)))(dag)
+
+    try:
+        batches: Iterator[Batch] = iter(pipe.raw_batches())
+        first = next(batches)
+        served = sorted(jax.tree_util.keystr(p) for p, _ in jax.tree.leaves_with_path(first.data))
+        assert "['a/b']" in served and "['meta']['score']" in served, (kind, served)
+        if "depth" in first.data:
+            assert isinstance(first.data["depth"], Maybe), (kind, served)
+        with expect_first_call_compiles("jit(step)"):
+            results = [jax.block_until_ready(step(pipe.dag, first))]
+        window = [next(batches) for _ in range(10)]
+        with (
+            compiled_programs() as built,
+            jax.transfer_guard_host_to_device("disallow"),
+            jax.transfer_guard_device_to_host("disallow"),
+        ):
+            results.extend(jax.block_until_ready(step(pipe.dag, batch)) for batch in window)
+        assert "jit(step)" not in built, (kind, built)
+    finally:
+        pipe.close()
+    return [
+        np.asarray(jax.device_get(leaf)).tobytes() for r in results for leaf in jax.tree.leaves(r)
+    ]
+
+
+class TestKeyTuplesThroughTheTrainStep:
+    """RAM materialize and a copy serve a nested field, a literal key and a ``Maybe`` as given."""
+
+    @pytest.mark.parametrize(("graph", "graph_updates"), _MODES)
+    @pytest.mark.parametrize("record", ["maybe", "arrays"])
+    def test_compiles_once_transfers_nothing_and_agrees_with_the_source(
+        self, key_tuple_sources: dict[str, Any], record: str, graph: bool, graph_updates: bool
+    ) -> None:
+        kinds = [k for k in key_tuple_sources if k.startswith(f"{record}/")]
+        found = {k: _key_tuple_steps(k, key_tuple_sources[k], graph, graph_updates) for k in kinds}
+
+        for kind in kinds:
+            assert found[kind] == found[f"{record}/memory"], kind
+
+    def test_the_ram_result_keeps_the_maybe_and_holds_its_columns_out_of_state(
+        self, key_tuple_sources: dict[str, Any]
+    ) -> None:
+        ram = key_tuple_sources["maybe/ram"]
+
+        assert isinstance(ram.element_spec()["depth"], Maybe)
+        for leaf in jax.tree.leaves(nnx.state(ram)):
+            assert np.ndim(leaf) == 0 or np.shape(leaf)[0] != _RECORDS, np.shape(leaf)

@@ -590,6 +590,9 @@ class _Wide(DataSourceModule):
     def __len__(self) -> int:
         return self.rows
 
+    def element_spec(self) -> dict[str, jax.ShapeDtypeStruct]:
+        return {"lo": jax.ShapeDtypeStruct((), np.uint32)}
+
     def get_batch(self, indices: Any, *, epochs: Any = 0, contiguous: bool = False) -> Batch:
         del contiguous
         words = np.asarray(indices, np.uint32)

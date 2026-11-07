@@ -24,15 +24,12 @@ from jaxtyping import PyTree
 
 from datarax.core.config import MapOperatorConfig
 from datarax.core.element_batch import Element
-from datarax.core.maybe import Maybe, missing_value_error
+from datarax.core.field_nodes import FieldNode, is_field_node
+from datarax.core.field_paths import refuse_field_nodes
 from datarax.core.operator import call_with_mode_key, OperatorModule
 
 
 logger = logging.getLogger(__name__)
-
-
-def _is_maybe(node: object) -> bool:
-    return isinstance(node, Maybe)
 
 
 class MapOperator(OperatorModule):
@@ -56,9 +53,9 @@ class MapOperator(OperatorModule):
        - Path-based filtering via keypath matching
        - Other leaves pass through unchanged
 
-    A ``Maybe`` field (a value that can be missing) is one entry, never two leaves: outside the
-    subtree it passes through unchanged; selected, it is refused with a ``TypeError`` naming it,
-    since ``fn`` would transform its fill value and its presence as data.
+    A field node (a ``Maybe``, a value that can be missing) is one entry, never two leaves:
+    outside the subtree it passes through unchanged; selected, it is refused with a ``TypeError``
+    naming it, since ``fn`` would transform its fill value and its presence as data.
 
     Examples:
         # Deterministic full-tree (ignore key)
@@ -186,32 +183,31 @@ class MapOperator(OperatorModule):
         del stats
         # One key per data leaf, folded out of this record's key, so each leaf draws
         # independently while still depending only on the record. A deterministic operator
-        # hands the function no key. A Maybe is one entry: fn never sees its presence as data.
-        leaves, tree_def = jax.tree.flatten(data, is_leaf=_is_maybe)
+        # hands the function no key. A field node is one entry: fn never sees its members as data.
+        leaves, tree_def = jax.tree.flatten(data, is_leaf=is_field_node)
         leaf_keys = [
             None if key is None else jax.random.fold_in(key, index) for index in range(len(leaves))
         ]
 
         def transform_leaf(
             keypath: tuple[jax.tree_util.KeyEntry, ...],
-            leaf: jax.Array | Maybe,
+            leaf: jax.Array | FieldNode,
             key: jax.Array | None,
-        ) -> jax.Array | Maybe:
+        ) -> jax.Array | FieldNode:
             """Transform leaf if it should be transformed."""
             # Check subtree filter (full-tree mode: always transform)
             if self._is_subtree_mode:
                 if not self._is_path_in_subtree_mask(keypath, self.config.subtree):
                     return leaf  # Pass through unchanged
-            if isinstance(leaf, Maybe):
-                raise missing_value_error(
-                    "MapOperator maps fn over the array leaves it selects",
-                    [f"data{jax.tree_util.keystr(keypath)}"],
+            if isinstance(leaf, FieldNode):
+                refuse_field_nodes(
+                    leaf, "MapOperator maps fn over the array leaves it selects", where=keypath
                 )
 
             # Apply user function (always with key parameter)
             return call_with_mode_key(self.fn, leaf, key)
 
-        paths = [path for path, _ in jax.tree.flatten_with_path(data, is_leaf=_is_maybe)[0]]
+        paths = [path for path, _ in jax.tree.flatten_with_path(data, is_leaf=is_field_node)[0]]
         transformed_data = jax.tree.unflatten(
             tree_def,
             [
