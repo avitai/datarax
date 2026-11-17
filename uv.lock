@@ -1211,14 +1211,11 @@ all = [
     { name = "interrogate" },
     { name = "ipykernel" },
     { name = "jax", extra = ["cuda12"], marker = "sys_platform == 'linux'" },
-    { name = "jupytext" },
     { name = "librosa" },
     { name = "matplotlib" },
     { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-include-exclude-files" },
-    { name = "mkdocs-ipynb" },
-    { name = "mkdocs-jupyter" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings" },
@@ -1280,14 +1277,11 @@ all-cpu = [
     { name = "importlib-resources" },
     { name = "interrogate" },
     { name = "ipykernel" },
-    { name = "jupytext" },
     { name = "librosa" },
     { name = "matplotlib" },
     { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-include-exclude-files" },
-    { name = "mkdocs-ipynb" },
-    { name = "mkdocs-jupyter" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings" },
@@ -1350,14 +1344,11 @@ all-macos = [
     { name = "interrogate" },
     { name = "ipykernel" },
     { name = "jax-metal", marker = "sys_platform == 'darwin'" },
-    { name = "jupytext" },
     { name = "librosa" },
     { name = "matplotlib" },
     { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-include-exclude-files" },
-    { name = "mkdocs-ipynb" },
-    { name = "mkdocs-jupyter" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings" },
@@ -1512,12 +1503,9 @@ dev = [
 docs = [
     { name = "griffe" },
     { name = "hippogriffe" },
-    { name = "jupytext" },
     { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-include-exclude-files" },
-    { name = "mkdocs-ipynb" },
-    { name = "mkdocs-jupyter" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings" },
@@ -1605,7 +1593,6 @@ requires-dist = [
     { name = "jax-dataloader", marker = "extra == 'benchmark'", specifier = ">=0.1" },
     { name = "jax-metal", marker = "sys_platform == 'darwin' and extra == 'metal'", specifier = ">=0.1.0" },
     { name = "jaxtyping", specifier = ">=0.2.20" },
-    { name = "jupytext", marker = "extra == 'docs'", specifier = ">=1.16.0" },
     { name = "keras", marker = "extra == 'examples'", specifier = ">=3.0" },
     { name = "lazy-loader", specifier = ">=0.5" },
     { name = "librosa", marker = "extra == 'data'", specifier = ">=0.10.0" },
@@ -1617,8 +1604,6 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1" },
     { name = "mkdocs-gen-files", marker = "extra == 'docs'", specifier = ">=0.5.0" },
     { name = "mkdocs-include-exclude-files", marker = "extra == 'docs'", specifier = ">=0.1" },
-    { name = "mkdocs-ipynb", marker = "extra == 'docs'", specifier = ">=0.1" },
-    { name = "mkdocs-jupyter", marker = "extra == 'docs'", specifier = ">=0.24" },
     { name = "mkdocs-literate-nav", marker = "extra == 'docs'", specifier = ">=0.6.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6.7" },
     { name = "mkdocstrings", marker = "extra == 'docs'", specifier = ">=0.28.3" },
@@ -3838,35 +3823,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d3/24/5fce6ec44bf80421f5106494da0e8f9de9ec7cd68eed8058989cab341774/mkdocs_include_exclude_files-0.1.0.tar.gz", hash = "sha256:12070405b70ac4c142b25054423be191b6dc183c0a4699889d147ba18b655864", size = 6729, upload-time = "2025-03-09T11:51:00.716Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/97/c40c82bc7843715f55d4a0c2e9b02fbe8197a1c64703b7633c759fe8395d/mkdocs_include_exclude_files-0.1.0-py3-none-any.whl", hash = "sha256:b1d49d8127a8eb1a061b4482174380566b6075d98e028404ef00a912dcabf00b", size = 6949, upload-time = "2025-03-09T11:50:59.292Z" },
-]
-
-[[package]]
-name = "mkdocs-ipynb"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mkdocs" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/68/b6/091efeb0a58031e31e72fbedfedf7832e466e1275e191e875f05abfad68a/mkdocs_ipynb-0.1.1.tar.gz", hash = "sha256:0bc8791e98e0aec305d7e640b51f17794ddf20ead72f93f894e1951ec5524a16", size = 8152, upload-time = "2025-04-13T12:24:59.163Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/01/76473cd0e3d06a30865a1aece673d9854381cc26e139cd38100ccca3e18f/mkdocs_ipynb-0.1.1-py3-none-any.whl", hash = "sha256:dae68bd4e9b6581a1d1a102c447c921cd0c43b23712137ca80a31e0f9f70e4c1", size = 11958, upload-time = "2025-04-13T12:24:58.058Z" },
-]
-
-[[package]]
-name = "mkdocs-jupyter"
-version = "0.26.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "ipykernel" },
-    { name = "jupytext" },
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
-    { name = "nbconvert" },
-    { name = "pygments" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/00/aa/f8d15409a9a3112486994a80d5a975694c7d145c4f8b5b484aeb383420ef/mkdocs_jupyter-0.26.3.tar.gz", hash = "sha256:e1e8bd48a1b96542e84e3028e3066112bac7b94d95ab69f8b91305c84003ca26", size = 1628353, upload-time = "2026-04-17T18:56:31.517Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/95/cf3f7fe4910cf0365fa8ea0c731f4b8a624d97cd76ea777913ac8d0868e2/mkdocs_jupyter-0.26.3-py3-none-any.whl", hash = "sha256:cd6644fb578131157194d750fd4d10fc2fd8f1e84e00036ee62df3b5b4b84c82", size = 1459740, upload-time = "2026-04-17T18:56:30.031Z" },
 ]
 
 [[package]]

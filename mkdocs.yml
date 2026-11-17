@@ -64,7 +64,6 @@ extra:
 
 plugins:
   - search
-  - ipynb
   - mkdocstrings:
       handlers:
         python:

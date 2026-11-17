@@ -890,6 +890,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The docs' `ipynb` plugin and the `mkdocs-ipynb` and `mkdocs-jupyter` packages, with the `docs`
+  extra's `jupytext`. No page is built from a notebook: the docs link to the examples' notebooks on
+  GitHub. A strict build with only the `docs` extra installed, as Read the Docs installs it, writes
+  the same 158 pages, and `register_component`'s signature on the registry page renders as
+  `Callable[[_T], _T]` where the plugin had broken it into a stray `autoref` tag.
 - `datarax.sharding`, with `JaxProcessSharderModule` and `JaxProcessSharderConfig`, which sliced
   arrays and lists to the current JAX process's portion: a pipeline whose `sharding` spans
   processes reads and places each process's rows of every global batch itself
