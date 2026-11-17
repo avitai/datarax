@@ -691,7 +691,7 @@ wheels = [
 
 [[package]]
 name = "calibrax"
-version = "0.1.14"
+version = "0.1.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-7-datarax-automation'" },
@@ -707,9 +707,9 @@ dependencies = [
     { name = "scipy" },
     { name = "substrax" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/b9/c98bf82a68e7eed52b4c9a33cc4a17e6a3d5c136cafd4167b7ef458b16eb/calibrax-0.1.14.tar.gz", hash = "sha256:5445a00569cbe86083c582f2219ddac37ac5f55f711e2b9c4ed4ce4518d84757", size = 185115, upload-time = "2026-09-25T03:32:01.586Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/26/9fa3b0d1a6e601f656a36df8ca7a64b465cc14ba8be39af3b5892e7c84b7/calibrax-0.1.20.tar.gz", hash = "sha256:b7a1254ff473c585ae6478e2b923fde92efbedc5a27d8783740e610e449c2739", size = 241829, upload-time = "2026-11-17T01:49:58.108Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/67/fcd980252ccd474ba2f95925ee91c3aab7e44ec6f66e2041cc7dc3b3ca60/calibrax-0.1.14-py3-none-any.whl", hash = "sha256:7d5d4027f1302ff28ef24924f6cd21cbc5a38dd4cb7ba14a70c1a6d6149fe35a", size = 231430, upload-time = "2026-09-25T03:31:59.34Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/b9/05bbf1f6b43302741decc52c00b3195f25545a5d1329ac0adbc461df7cc3/calibrax-0.1.20-py3-none-any.whl", hash = "sha256:80a34b0d061886ac492557a1844c3b466b688a6c1170753d8891560b4ed23cc8", size = 305455, upload-time = "2026-11-17T01:49:55.949Z" },
 ]
 
 [package.optional-dependencies]
@@ -1570,8 +1570,8 @@ requires-dist = [
     { name = "bandit", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "beartype", marker = "extra == 'test'", specifier = ">=0.14.1" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0.3" },
-    { name = "calibrax", specifier = ">=0.1.14" },
-    { name = "calibrax", extras = ["wandb"], marker = "extra == 'wandb'", specifier = ">=0.1.14" },
+    { name = "calibrax", specifier = ">=0.1.20" },
+    { name = "calibrax", extras = ["wandb"], marker = "extra == 'wandb'", specifier = ">=0.1.20" },
     { name = "click", marker = "extra == 'automation'", specifier = "<8.3" },
     { name = "click", marker = "extra == 'benchmark'", specifier = ">=8.1" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7" },
@@ -1670,8 +1670,8 @@ requires-dist = [
     { name = "soundfile", marker = "extra == 'data'", specifier = ">=0.12.1" },
     { name = "spdl", marker = "sys_platform == 'linux' and extra == 'test'", specifier = ">=0.1" },
     { name = "spdl", marker = "extra == 'benchmark'", specifier = ">=0.1" },
-    { name = "substrax", specifier = ">=0.1.25" },
-    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.25" },
+    { name = "substrax", specifier = ">=0.1.28" },
+    { name = "substrax", extras = ["testing"], marker = "extra == 'test'", specifier = ">=0.1.28" },
     { name = "tabulate", marker = "extra == 'benchmark'", specifier = ">=0.9" },
     { name = "tensorflow", marker = "extra == 'tfds'", specifier = ">=2.20.0" },
     { name = "tensorflow-datasets", marker = "extra == 'benchmark'", specifier = ">=4.9.10" },
@@ -6890,7 +6890,7 @@ wheels = [
 
 [[package]]
 name = "substrax"
-version = "0.1.25"
+version = "0.1.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "etils", extra = ["epath"] },
@@ -6902,9 +6902,9 @@ dependencies = [
     { name = "orbax-checkpoint" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/31/5a702ff1919ab983790c6f655ae251f08a5c84d7df5ff97f6bd792f2ca91/substrax-0.1.25.tar.gz", hash = "sha256:e1a5ce1fd1f13bad9b9976f82c22021858f1f6192e8af80cad1317724a50e4cc", size = 138694, upload-time = "2026-10-30T19:11:07.682Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a0/4e84e669c3ba2b4514bc5ca514b41157770be74047a0dcccf93df01f9535/substrax-0.1.28.tar.gz", hash = "sha256:3162f88721fbb17eecc657ab9e9bdaf0e7397dd3b9649dd31529a989c262fdaf", size = 206402, upload-time = "2026-11-17T16:29:15.692Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/b1/87c0e074de3666373fe91faf296056e1d410f39ffaa5e788afe0a1c737b7/substrax-0.1.25-py3-none-any.whl", hash = "sha256:8e315d33c523776994b76099b3524886b9e9cfef7b16049d6445e8ee8afbeaac", size = 170613, upload-time = "2026-10-30T19:11:05.568Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/6b/4ce8622d7ca1c6a3c0b6e1b66e82acc55f7b2cc13af45aeaecad0509b413/substrax-0.1.28-py3-none-any.whl", hash = "sha256:d6e9814c16a943920f03d96bc0bd3bbdc36e908845465d8e2aada4da5184d726", size = 249196, upload-time = "2026-11-17T16:29:13.589Z" },
 ]
 
 [package.optional-dependencies]

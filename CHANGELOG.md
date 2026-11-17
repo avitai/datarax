@@ -375,7 +375,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The nightly macOS lane in `macos.yml`, its unit tests and the package build it runs before a
   release, runs on `macos-15`. GitHub retires the `macos-14` image on 2026-11-02
   (actions/runner-images#13518), and its scheduled brownouts already cancel jobs that ask for it.
-- Requires substrax 0.1.25. A child process a test starts reports its result with
+- Requires substrax 0.1.28 and calibrax 0.1.20, the latest releases. substrax 0.1.27 removed
+  `substrax.testing.run_example` and `unavailable_reason` and the `include` filter of
+  `substrax.examples.discover_examples`: `tests/examples` keeps datarax's numbered-example rule
+  over `discover_examples`, and runs each example as a script through `substrax.testing.run_python`
+  from the repository root, its outputs under the test's directory and a run that fails on an
+  unreachable dataset or service skipped, as before, until the examples follow substrax's example
+  guide. `scripts/validate_examples.py` and `scripts/check_sync.py`, which checked the examples'
+  structure and notebook pairing against the old documentation design, are removed with their CI
+  steps and tests. The `tfds-nccl` compute job's `task_timeout_seconds` is
+  `command_timeout_seconds`, the name substrax 0.1.27 reads; the old key is refused.
+- A child process a test starts reports its result with
   `substrax.testing.report` and the test reads it with `ChildResult.report_as`, instead of parsing
   the child's last line of standard output: `tests/test_common/processes.run_processes`, its three
   child programs, and every test that read a `run_python` child's last line.
