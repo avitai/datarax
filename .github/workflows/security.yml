@@ -42,7 +42,7 @@ jobs:
       # [tool.substrax.audit-lock.ignore] in pyproject.toml; the action also fails on an ignore
       # that no longer matches anything.
       - name: Audit the locked dependencies
-        uses: avitai/substrax/.github/actions/audit-lock@e889be4e9fb55fe9c272e219277524630bf9d39e
+        uses: avitai/substrax/.github/actions/audit-lock@f05e0e5271e1218fbeee398b5f0a6d72465497db
 
       - name: Bandit
         run: uv run bandit -r src/datarax/ -c pyproject.toml -f json -o bandit-report.json

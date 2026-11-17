@@ -372,6 +372,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CI runs substrax's `already-tested` and `audit-lock` actions at v0.1.28. `audit-lock` names a
+  requirement pip-audit cannot audit, such as a git-sourced package, and the service that wrote no
+  report; `already-tested` is unchanged. `tests/test_tooling_contracts.py` records both pins.
 - The nightly macOS lane in `macos.yml`, its unit tests and the package build it runs before a
   release, runs on `macos-15`. GitHub retires the `macos-14` image on 2026-11-02
   (actions/runner-images#13518), and its scheduled brownouts already cancel jobs that ask for it.
