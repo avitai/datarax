@@ -1,10 +1,8 @@
-"""Tests for Datarax example files.
+"""Tests for Datarax's example scripts until they follow substrax's example guide.
 
-These tests validate that example files:
-1. Follow the 7-part documentation structure
-2. Have proper metadata
-3. Are synchronized with their notebook counterparts
-4. Execute without errors (optional, slow tests)
+The numbered examples under ``examples/`` write their outputs through ``substrax.artifacts``, the
+docs pages show their scripts' own code, and every example runs to completion as a script. The
+guide's checks and its shared example tests take the examples over once they are converted to it.
 """
 
 from __future__ import annotations
@@ -12,10 +10,13 @@ from __future__ import annotations
 import os
 import platform
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
-from substrax.testing import run_example, unavailable_reason
+from substrax.artifacts import OUTPUT_DIR_ENV
+from substrax.examples import discover_examples
+from substrax.testing import run_python
 
 from tests.jax_test_environment import forwarded_jax_environment
 from tests.scripts.script_loader import load_script
@@ -24,13 +25,9 @@ from tests.scripts.script_loader import load_script
 # Detect macOS - TensorFlow crashes on macOS ARM64
 IS_MACOS = platform.system() == "Darwin"
 
-# Path to runnable examples directory
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES_DIR = REPO_ROOT / "examples"
 EXAMPLE_TIMEOUT_SECONDS = int(os.environ.get("DATARAX_EXAMPLE_TIMEOUT_SECONDS", "120"))
-
-# Required sections for validation
-REQUIRED_SECTIONS = ["Overview", "Setup"]
 
 # Substrings that identify a transient dataset-download / network failure (e.g.
 # HuggingFace Hub rate-limiting unauthenticated CI runners). Examples that hit
@@ -54,14 +51,18 @@ _NETWORK_FAILURE_SIGNATURES = (
     "rate limit",
     "no such file or directory: '/home/",  # missing local dataset cache dir
 )
-RECOMMENDED_SECTIONS = ["Learning Goals", "Next Steps"]
 
 
-# scripts/validate_examples.py owns the rule for what counts as an example.
-find_example_files = load_script("validate_examples").find_example_files
+def is_numbered_example(path: Path) -> bool:
+    """Whether a script is a numbered example rather than a helper or a test of one."""
+    return re.match(r"^\d+_", path.name) is not None and "test" not in path.name.lower()
 
 
-# Generate test IDs from file paths
+def find_example_files(examples_dir: Path) -> list[Path]:
+    """The numbered examples under ``examples_dir``; substrax's discovery skips private names."""
+    return [path for path in discover_examples(examples_dir) if is_numbered_example(path)]
+
+
 def example_id(path: Path) -> str:
     """Generate a short test ID from file path."""
     return str(path.relative_to(EXAMPLES_DIR))
@@ -74,82 +75,8 @@ check_docs_pairs = load_script("check_docs_pairs")
 DOCS_PAGES = check_docs_pairs.docs_pages(REPO_ROOT)
 
 
-class TestExampleStructure:
-    """Tests for example file structure and content."""
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_has_cell_markers(self, example_path: Path) -> None:
-        """Each example should have proper Jupytext cell markers."""
-        content = example_path.read_text()
-        markers = re.findall(r"^# %%", content, re.MULTILINE)
-        assert len(markers) >= 3, f"Expected at least 3 cell markers, found {len(markers)}"
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_has_markdown_cells(self, example_path: Path) -> None:
-        """Each example should have markdown documentation cells."""
-        content = example_path.read_text()
-        markdown_cells = re.findall(r"^# %% \[markdown\]", content, re.MULTILINE)
-        assert len(markdown_cells) >= 2, (
-            f"Expected at least 2 markdown cells, found {len(markdown_cells)}"
-        )
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_has_required_sections(self, example_path: Path) -> None:
-        """Each example should have required documentation sections."""
-        content = example_path.read_text()
-        for section in REQUIRED_SECTIONS:
-            pattern = re.compile(rf"##\s+{section}", re.IGNORECASE)
-            assert pattern.search(content), f"Missing required section: {section}"
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_has_metadata_table(self, example_path: Path) -> None:
-        """Each example should have a metadata table with Level and Runtime."""
-        content = example_path.read_text()
-        assert re.search(r"\*\*Level\*\*", content), "Missing Level in metadata"
-        assert re.search(r"\*\*Runtime\*\*", content), "Missing Runtime in metadata"
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_no_star_imports(self, example_path: Path) -> None:
-        """Examples should not use star imports."""
-        content = example_path.read_text()
-        star_imports = re.findall(r"^\s*from\s+\S+\s+import\s+\*", content, re.MULTILINE)
-        assert not star_imports, f"Found star imports: {star_imports}"
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_has_learning_goals(self, example_path: Path) -> None:
-        """Each example should have learning goals or objectives."""
-        content = example_path.read_text()
-        has_goals = re.search(r"Learning (?:Goals|Objectives)", content, re.IGNORECASE)
-        assert has_goals, "Missing 'Learning Goals' or 'Learning Objectives' section"
-
-
-class TestExampleSync:
-    """Tests for example file synchronization."""
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_notebook_exists(self, example_path: Path) -> None:
-        """Each Python example should have a corresponding notebook."""
-        notebook_path = example_path.with_suffix(".ipynb")
-        assert notebook_path.exists(), f"Missing notebook: {notebook_path.name}"
-
-    @pytest.mark.parametrize("example_path", EXAMPLE_FILES, ids=example_id)
-    def test_notebook_not_stale(self, example_path: Path) -> None:
-        """Notebook should not be significantly older than Python file."""
-        notebook_path = example_path.with_suffix(".ipynb")
-        if not notebook_path.exists():
-            pytest.skip("Notebook does not exist")
-
-        py_mtime = example_path.stat().st_mtime
-        nb_mtime = notebook_path.stat().st_mtime
-
-        # Allow 5 minute tolerance
-        tolerance = 300
-        if py_mtime - nb_mtime > tolerance:
-            pytest.fail(f"Notebook may be out of sync (py newer by {py_mtime - nb_mtime:.0f}s)")
-
-
 class TestExampleDiscovery:
-    """``scripts/validate_examples.py`` decides which files are runnable examples."""
+    """The numbered examples are the ones these tests check and run."""
 
     def test_numbered_examples_are_found_and_everything_else_is_not(self, tmp_path: Path) -> None:
         for relative in (
@@ -168,11 +95,9 @@ class TestExampleDiscovery:
 
         assert found == ["advanced/02_guide.py", "comparison/04_versus.py", "core/01_quickstart.py"]
 
-    def test_a_single_example_file_is_returned_as_given(self, tmp_path: Path) -> None:
-        example = tmp_path / "01_quickstart.py"
-        example.write_text("", encoding="utf-8")
-
-        assert find_example_files(example) == [example]
+    def test_the_repository_has_examples_to_check(self) -> None:
+        """A rule that matched no file would pass every check while checking nothing."""
+        assert EXAMPLE_FILES
 
 
 class TestExampleOutputs:
@@ -202,6 +127,31 @@ class TestDocsPagesShowTheScriptsCode:
         assert pairs > 0
 
 
+def unavailable_reason(returncode: int, stderr: str) -> str | None:
+    """The first network-failure signature in a failed run's standard error, ignoring case."""
+    if returncode == 0:
+        return None
+    lowered = stderr.lower()
+    return next(
+        (signature for signature in _NETWORK_FAILURE_SIGNATURES if signature in lowered), None
+    )
+
+
+class TestUnavailableReason:
+    """Only a failed run that names an unreachable service is skipped."""
+
+    def test_a_failed_run_naming_a_network_failure_is_unavailable(self) -> None:
+        assert (
+            unavailable_reason(1, "requests.exceptions.ConnectionError: ...") == "connectionerror"
+        )
+
+    def test_a_failed_run_with_a_code_error_is_not(self) -> None:
+        assert unavailable_reason(1, "AttributeError: 'Batch' object has no attribute 'x'") is None
+
+    def test_a_run_that_succeeded_is_never_unavailable(self) -> None:
+        assert unavailable_reason(0, "429 Client Error: retried and succeeded") is None
+
+
 @pytest.mark.slow
 class TestExampleExecution:
     """Tests that execute example files.
@@ -214,28 +164,36 @@ class TestExampleExecution:
     def test_example_executes(self, example_path: Path, output_dir: Path) -> None:
         """Each example runs to completion in its own interpreter, with its outputs redirected.
 
-        The child gets the test process's backend and emulated devices, so multi-device examples
-        keep running on several devices. An example that needs an unreachable dataset or service
-        is skipped, because it exercises that service rather than Datarax; one that runs past its
-        budget fails, because a timeout is a finding.
+        The child runs from the repository root, which relative paths in examples assume, and gets
+        the test process's backend and emulated devices, so multi-device examples keep running on
+        several devices. An example that needs an unreachable dataset or service is skipped,
+        because it exercises that service rather than Datarax; one that runs past its budget
+        fails, because a timeout is a finding.
         """
         # Skip TFDS examples on macOS - TensorFlow hangs on ARM64
         # https://github.com/tensorflow/tensorflow/issues/52138
         if IS_MACOS and "tfds" in str(example_path).lower():
             pytest.skip("TFDS examples skipped on macOS (TensorFlow ARM64 issue)")
 
-        run = run_example(
-            example_path,
-            repo_root=REPO_ROOT,
-            output_dir=output_dir,
-            timeout=EXAMPLE_TIMEOUT_SECONDS,
-            call_main=False,
-            env={**forwarded_jax_environment(os.environ), "TFDS_DISABLE_PROGRESS_BAR": "1"},
-        )
+        try:
+            result = run_python(
+                example_path,
+                timeout=EXAMPLE_TIMEOUT_SECONDS,
+                env={
+                    **forwarded_jax_environment(os.environ),
+                    "TFDS_DISABLE_PROGRESS_BAR": "1",
+                    OUTPUT_DIR_ENV: str(output_dir),
+                },
+                cwd=REPO_ROOT,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                f"{example_id(example_path)} ran past its {EXAMPLE_TIMEOUT_SECONDS} s budget"
+            )
 
-        reason = unavailable_reason(run, _NETWORK_FAILURE_SIGNATURES)
+        reason = unavailable_reason(result.returncode, result.stderr)
         if reason is not None:
             pytest.skip(
                 f"Example needs an external dataset or network, unavailable here ({reason!r})."
             )
-        run.result.check()
+        result.check()

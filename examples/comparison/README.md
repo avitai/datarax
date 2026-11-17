@@ -12,8 +12,7 @@ Grain is installed as a Datarax dependency.
 | [`04_resumed_training_guide.py`](04_resumed_training_guide.py) | Model, optimizer and loader state saved together through one `substrax.checkpoint.OrbaxCheckpointStore` at a mid-epoch step, restored into fresh objects, and both resumed runs reproducing the uninterrupted runs loss for loss, with `calibrax.metrics.functional.mse` as the loss |
 
 Every tutorial is a Jupytext script with a paired notebook, follows the same structure as
-the other numbered examples, and is checked by `scripts/validate_examples.py`,
-`scripts/check_sync.py` and `tests/examples`.
+the other numbered examples, and is checked and run by `tests/examples`.
 
 ## Running
 

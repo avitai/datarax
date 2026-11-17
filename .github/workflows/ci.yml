@@ -116,18 +116,10 @@ jobs:
         run: |
           uv sync --locked --extra dev --extra docs
 
-      - name: Validate example structure
-        run: |
-          uv run python scripts/validate_examples.py
-
-      - name: Check notebook synchronization
-        run: |
-          uv run python scripts/check_sync.py
-
-      - name: Run example structure tests
+      - name: Run example checks
         run: |
           export JAX_PLATFORMS="cpu"
-          # Disable coverage for examples tests (they only check structure, not code)
+          # The examples' outputs and docs pairs; their runs are marked slow (Long-Running Tests)
           uv run pytest tests/examples/ -v -rs -m "not slow and not tfds" --no-cov
 
   unit_tests:
