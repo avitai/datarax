@@ -158,7 +158,6 @@ dev = [
   "import-linter>=2.0",
   "interrogate>=1.5",
   "ipykernel>=6.29.5",
-  "jupytext>=1.16.0",
   "pydeps>=1.12.17",
   "pylint>=3.0",
   "pyright>=1.1.336",
@@ -234,7 +233,7 @@ test = [
   "pytest-split>=0.11",
   "pytest-timeout>=2.1",
   "pytest-xdist>=3.6",
-  "substrax[testing]>=0.1.28",
+  "substrax[notebooks,testing]>=0.1.28",
   # Optional comparison/benchmark dependencies that are CPU-compatible.
   # spdl: Linux-only; comparison adapter for memory-efficiency benchmarks.
   "spdl>=0.1; sys_platform == 'linux'"
@@ -478,7 +477,10 @@ XLA_CLIENT_MEM_FRACTION = {skip_if_set = true, value = "0.75"}
 XLA_PYTHON_CLIENT_PREALLOCATE = {skip_if_set = true, value = "false"}
 
 [tool.ruff]
-extend-include = ["*.ipynb"]
+# An example's notebook is written from its script by `substrax-notebooks convert` alone; the
+# script is linted. force-exclude keeps the exclusion when a hook names a notebook.
+extend-exclude = ["examples/**/*.ipynb"]
+force-exclude = true
 line-length = 100
 # Only src/ is searched for first-party packages. The default also searches the repository
 # root, where a generated directory (wandb/, site/, temp/) would be read as a package and its

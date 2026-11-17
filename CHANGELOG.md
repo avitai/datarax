@@ -385,6 +385,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   structure and notebook pairing against the old documentation design, are removed with their CI
   steps and tests. The `tfds-nccl` compute job's `task_timeout_seconds` is
   `command_timeout_seconds`, the name substrax 0.1.27 reads; the old key is refused.
+- An example's notebook is written from its script by `substrax-notebooks convert`, which writes
+  the same cells as the committed notebooks for the 38 examples with `# %%` cells; the three scripts
+  without cell markers (`custom_benchmark.py`, `hf_model_training_example.py`,
+  `utils/sample_data.py`) become one cell. The `test` extra takes `substrax[notebooks,testing]`,
+  which brings jupytext 1.19.6, in place of the `dev` extra's own `jupytext`; `.jupytext.toml` and
+  `scripts/jupytext_converter.py` are removed. ruff checks the scripts and leaves the notebooks
+  under `examples/` out, also when a hook names one.
 - A child process a test starts reports its result with
   `substrax.testing.report` and the test reads it with `ChildResult.report_as`, instead of parsing
   the child's last line of standard output: `tests/test_common/processes.run_processes`, its three
