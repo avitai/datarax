@@ -338,7 +338,6 @@ nav:
       - Dashboard & calibrax: benchmarks/dashboard.md
   - Contributing:
       - Guide: contributing/contributing_guide.md
-      - Example Documentation Design: contributing/example_documentation_design.md
       - Performance: contributing/performance_optimization_guide.md
       - Developer Guide: contributing/dev_guide.md
       - Testing Guide: contributing/testing_guide.md

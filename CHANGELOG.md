@@ -890,6 +890,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The Example Documentation Design Framework (`docs/contributing/example_documentation_design.md`).
+  New examples follow substrax's
+  [Writing examples](https://substrax.readthedocs.io/en/latest/guides/writing-examples/) guide and
+  its template; the examples overview and the developer guide point there and write notebooks with
+  `substrax-notebooks convert`.
 - The docs' `ipynb` plugin and the `mkdocs-ipynb` and `mkdocs-jupyter` packages, with the `docs`
   extra's `jupytext`. No page is built from a notebook: the docs link to the examples' notebooks on
   GitHub. A strict build with only the `docs` extra installed, as Read the Docs installs it, writes
