@@ -177,11 +177,11 @@ uv run jupyter lab
 ### Generating Notebooks from Scripts
 
 ```bash
-# Convert a single file
-python scripts/jupytext_converter.py py-to-nb examples/core/01_simple_pipeline.py
+# One example
+uv run substrax-notebooks convert examples/core/01_simple_pipeline.py
 
-# Batch convert directory
-python scripts/jupytext_converter.py batch-py-to-nb examples/core/
+# Every example in a directory
+uv run substrax-notebooks convert examples/core/*.py
 ```
 
 ## Prerequisites
@@ -204,13 +204,13 @@ Want to add your own examples? We welcome contributions!
 
 <div class="grid cards" markdown>
 
--   :material-book-open-variant:{ .lg .middle } **Documentation Design Guide**
+-   :material-book-open-variant:{ .lg .middle } **Writing Examples**
 
     ---
 
-    Complete standards for creating educational examples and tutorials
+    substrax's guide, which every avitai repository's examples follow
 
-    [:octicons-arrow-right-24: Read the Guide](../contributing/example_documentation_design.md)
+    [:octicons-arrow-right-24: Read the Guide](https://substrax.readthedocs.io/en/latest/guides/writing-examples/)
 
 -   :material-file-document-outline:{ .lg .middle } **Example Template**
 
@@ -218,16 +218,17 @@ Want to add your own examples? We welcome contributions!
 
     Start from our template with proper structure and formatting
 
-    [:octicons-arrow-right-24: View Template](https://github.com/avitai/datarax/blob/main/examples/_templates/example_template.py)
+    [:octicons-arrow-right-24: View Template](https://github.com/avitai/substrax/blob/main/docs/guides/example_template.py)
 
 </div>
 
 ### Quick Start for Contributors
 
-1. Read the [Example Documentation Design Guide](../contributing/example_documentation_design.md)
-2. Copy the template from `examples/_templates/example_template.py`
-3. Follow the 7-part structure and quality checklist
-4. Submit a PR with `.py`, generated `.ipynb`, and `.md` documentation files
+1. Read substrax's [Writing Examples](https://substrax.readthedocs.io/en/latest/guides/writing-examples/) guide
+2. Start from its [template](https://github.com/avitai/substrax/blob/main/docs/guides/example_template.py)
+3. Write the notebook with `uv run substrax-notebooks convert` and check it with
+   `uv run substrax-notebooks check`
+4. Submit a PR with the `.py` and its generated `.ipynb`
 
 ## Next Steps
 

@@ -442,9 +442,6 @@ Located in `scripts/`:
 | `run_all_examples_on_gpu.sh` | Run all examples on GPU |
 | `run_typecheck.sh` | Run pyright type checking |
 | `check_gpu.py` | Check GPU availability |
-| `check_sync.py` | Check py/ipynb notebook sync |
-| `validate_examples.py` | Validate example file structure |
-| `jupytext_converter.py` | Convert between .py and .ipynb formats |
 | `generate_docs.py` | Generate documentation from source |
 | `generate_baselines.py` | Generate benchmark baseline data |
 | `verify_docs.py` | Verify code blocks in markdown docs |
@@ -463,11 +460,8 @@ Located in `scripts/`:
 # Check GPU
 uv run python scripts/check_gpu.py
 
-# Validate examples
-uv run python scripts/validate_examples.py --verbose
-
-# Check notebook sync
-uv run python scripts/check_sync.py --verbose
+# Write an example's notebook from its script
+uv run substrax-notebooks convert examples/core/01_simple_pipeline.py
 ```
 
 ## Environment Variables
@@ -515,7 +509,6 @@ docs/
     ├── test_structure.md
     ├── gpu_testing.md
     ├── type_issues_guide.md
-    ├── example_documentation_design.md
     └── performance_optimization_guide.md
 ```
 
