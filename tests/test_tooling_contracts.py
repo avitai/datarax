@@ -780,7 +780,7 @@ def test_pull_requests_gate_coverage_on_changed_lines() -> None:
 # finds the merged pull request (squash or rebase) through GitHub's commit-to-pull-request
 # association and treats a pending or cancelled check as unproven.
 GATE_ACTION = (
-    "avitai/substrax/.github/actions/already-tested@a61235ad7f851081efca508285b660a9d7f921ea"
+    "avitai/substrax/.github/actions/already-tested@f05e0e5271e1218fbeee398b5f0a6d72465497db"
 )
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 MACOS_WORKFLOW = WORKFLOWS / "macos.yml"
@@ -914,7 +914,7 @@ def test_the_release_checklist_runs_macos_before_the_tag() -> None:
 # The lockfile audit also lives in substrax, pinned by commit: it exports every extra the lock
 # resolves and runs a pinned pip-audit through uvx, isolated from the project, on each export,
 # against both its PyPI and OSV services.
-AUDIT_ACTION = "avitai/substrax/.github/actions/audit-lock@e889be4e9fb55fe9c272e219277524630bf9d39e"
+AUDIT_ACTION = "avitai/substrax/.github/actions/audit-lock@f05e0e5271e1218fbeee398b5f0a6d72465497db"
 
 
 def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
