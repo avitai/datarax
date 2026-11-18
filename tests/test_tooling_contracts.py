@@ -52,7 +52,7 @@ def test_grain_dependency_declares_single_package_with_current_api() -> None:
 
     dependency_names = _dependency_names(all_dependencies)
 
-    assert "grain>=0.2.18" in base_dependencies
+    assert "grain>=0.2.19" in base_dependencies
     assert "grain-nightly" not in dependency_names
     assert _dependency_names(base_dependencies).count("grain") == 1
 

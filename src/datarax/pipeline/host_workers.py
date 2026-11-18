@@ -37,7 +37,6 @@ import cloudpickle
 import grain
 import jax
 import jax.numpy as jnp
-from absl import flags
 
 # The check that JAX started its backends: JAX exposes it nowhere public, and
 # jax.distributed.initialize refuses a late start with the same call.
@@ -48,25 +47,9 @@ from datarax.core.data_source import Provenance
 from datarax.core.prng import host_device
 
 
-GRAIN_WORKER_FLAG = "grain_enable_multiprocess_worker_profiling"
-"""The absl flag Grain reads as it starts a worker, which absl refuses to read before parsing."""
-
 _SHM = Path("/dev/shm")  # nosec B108 - only measured (statvfs), never written
 _GUARD = 'if __name__ == "__main__":'
 _PARENT_WATCH = "datarax-parent-watch"
-
-
-def mark_grain_worker_flag() -> None:
-    """Mark Grain's worker-profiling flag present when absl flags are unparsed.
-
-    Grain 0.2.17 and later read ``--grain_enable_multiprocess_worker_profiling`` as they start a
-    worker; outside ``absl.app.run`` absl refuses the read (``UnparsedFlagAccessError``) once
-    jaxlib's profiler is loaded. Marking that one flag present makes the read return its
-    default, as Grain's own workers mark their flags; a later ``FLAGS(argv)`` still sets it.
-    Grain's fix (a3b351858a) is in no release yet; a tripwire test fails once it is.
-    """
-    if not flags.FLAGS.is_parsed():
-        flags.FLAGS[GRAIN_WORKER_FLAG].present = 1
 
 
 def _backends_started() -> bool:
@@ -236,7 +219,6 @@ def in_workers(
     Returns:
         The dataset read in the workers.
     """
-    mark_grain_worker_flag()
     return dataset.mp_prefetch(
         grain.MultiprocessingOptions(num_workers=workers, per_worker_buffer_size=worker_buffer),
         worker_init_fn=WorkerSetUp(settings=settings),
@@ -457,14 +439,12 @@ def probe_worker_bytes(read: Callable[[], Any], *, settings: JaxSettings) -> int
 
 
 __all__ = [
-    "GRAIN_WORKER_FLAG",
     "JaxSettings",
     "WorkerSetUp",
     "check_all_arrived",
     "check_arrival",
     "crossing_provenance",
     "in_workers",
-    "mark_grain_worker_flag",
     "peak_process_bytes",
     "pickled_bytes",
     "probe_worker_bytes",
