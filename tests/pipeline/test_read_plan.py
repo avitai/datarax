@@ -4,15 +4,19 @@ The plan is Grain's arithmetic (``pick_performance_config``: workers and buffers
 budget) with the terms a worker really costs: its own memory ``F``, its copy of the read ``P``,
 the source's working set ``S``, the units in flight in its queues (``2o + 2`` of ``E`` bytes, plus
 its read buffer ``r``), beside the training process's ``M_main``, the order's ``O``, the decoded
-columns a build holds ``C`` and the ``d + 1`` units at the device boundary. Every bound is a
-refusal naming its terms, never a rounded-up worker; ``/dev/shm`` is a second bound. GIL-free
-reads run on threads, GIL-bound reads in processes, a stream with no run dataset on its one
-producer thread. The terms are measured by :func:`measure_terms` from a bare source's values.
+columns a build holds ``C``, the ``d + 1`` units at the device boundary and the segments of
+dropped units Grain's deletion thread has yet to close and unlink (``ceil(M / L)`` units).
+Every bound is a refusal naming its terms, never a rounded-up worker; ``/dev/shm`` is a second
+bound. GIL-free reads run on threads, GIL-bound reads in processes, a stream with no run dataset
+on its one producer thread. The terms are measured by :func:`measure_terms` from a bare
+source's values.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import inspect
+import math
 import multiprocessing
 from collections.abc import Callable
 from typing import Any
@@ -22,6 +26,7 @@ import jax
 import numpy as np
 import pytest
 from flax import nnx
+from grain.multiprocessing import SharedMemoryArray
 
 from datarax.core import host_resources as core_resources
 from datarax.core.data_source import HostRead
@@ -33,12 +38,16 @@ from datarax.pipeline.host_workers import JaxSettings
 from datarax.pipeline.read_plan import (
     budget_plan,
     default_plan,
+    deletion_backlog_bytes,
+    DELETION_BACKLOG_SEGMENTS,
     host_batch_bytes,
     host_read_path,
+    host_unit_segments,
     HostPlan,
     HostReadPath,
     HostTerms,
     IDENTITY_BYTES,
+    IDENTITY_LEAVES,
     MAX_READ_THREADS,
     measure_terms,
     READ_BUFFER,
@@ -53,12 +62,16 @@ from tests.test_common.worker_reads import png_source, resources, write_png_reco
 
 
 _MiB = 1 << 20
+_SEGMENTS = 5  # a unit of two data leaves and its records' three identity arrays
+_BACKLOG_UNITS = math.ceil(DELETION_BACKLOG_SEGMENTS / _SEGMENTS)  # 10 units of 5 segments
 
 
 def _terms(**changes: int | bool | None) -> HostTerms:
-    """Terms of a worker read: E = 1 MiB, F = 300 MiB, P = 1 MiB, d = 1, 16 CPUs, ample shm."""
+    """Terms of a worker read: E = 1 MiB in 5 segments, F = 300 MiB, P = 1 MiB, d = 1, 16 CPUs,
+    ample shm."""
     base = HostTerms(
         unit_bytes=_MiB,
+        unit_segments=_SEGMENTS,
         device_buffer=1,
         main_bytes=10 * _MiB,
         order_bytes=0,
@@ -85,16 +98,18 @@ def _workers_by_hand(budget: int, terms: HostTerms, cap: int) -> int:
     best = 0
     o, r = terms.worker_buffer, terms.worker_read_buffer
     e, d = terms.unit_bytes, terms.device_buffer
+    backlog = math.ceil(DELETION_BACKLOG_SEGMENTS / terms.unit_segments) * e
     for k in range(1, cap + 1):
         ram = (
             terms.main_bytes
             + terms.order_bytes
             + terms.sink_bytes
             + (d + 1) * e
+            + backlog
             + k * (terms.worker_bytes + terms.read_bytes + r * e + terms.working_bytes)
             + k * (2 * o + 2) * e
         )
-        shm = k * (2 * o + 2) * e + (d + 1) * e
+        shm = k * (2 * o + 2) * e + (d + 1) * e + backlog
         if ram <= budget and (terms.shm_free_bytes is None or shm <= terms.shm_free_bytes):
             best = k
     return best
@@ -180,8 +195,9 @@ class TestWorkerPlan:
         )
         k, e, o = plan.workers, terms.unit_bytes, terms.worker_buffer
         per_worker = terms.worker_bytes + terms.read_bytes + terms.working_bytes + (2 * o + 2) * e
-        assert plan.accounted_bytes == terms.main_bytes + (1 + 1) * e + k * per_worker
-        assert plan.shm_bytes == k * (2 * o + 2) * e + 2 * e
+        backlog = _BACKLOG_UNITS * e
+        assert plan.accounted_bytes == terms.main_bytes + (1 + 1) * e + backlog + k * per_worker
+        assert plan.shm_bytes == k * (2 * o + 2) * e + 2 * e + backlog
         assert (plan.path, plan.threads, plan.read_buffer) == (HostReadPath.PROCESSES, 0, 0)
         assert (plan.worker_buffer, plan.worker_read_buffer) == (2, 0)
         assert plan.device_buffer == terms.device_buffer
@@ -211,18 +227,20 @@ class TestWorkerPlan:
         assert "no worker" in message
 
     def test_a_dev_shm_below_one_worker_s_units_is_refused_naming_both(self) -> None:
-        terms = _terms(shm_free_bytes=4 * _MiB)  # one worker needs 6 + 2 units of 1 MiB
+        # One worker needs 6 + 2 units of 1 MiB, beside the 10 units awaiting deletion.
+        terms = _terms(shm_free_bytes=4 * _MiB)
         resources = HostResources(ram_budget_bytes=16 << 30, max_workers=1)
         with pytest.raises(ValueError, match=r"/dev/shm") as refused:
             budget_plan(resources, HostReadPath.PROCESSES, terms)
         assert str(4 * _MiB) in str(refused.value)
-        assert str(8 * _MiB) in str(refused.value)
+        assert str((8 + _BACKLOG_UNITS) * _MiB) in str(refused.value)
 
     def test_a_small_dev_shm_lowers_k(self) -> None:
         cap = min(8, available_cpus())
         if cap < 2:  # pragma: no cover - a one-CPU machine
             pytest.skip("needs two CPUs")
-        terms = _terms(shm_free_bytes=(8 + 6) * _MiB)  # room for two workers' units
+        # Room for two workers' units, the device's and those awaiting deletion.
+        terms = _terms(shm_free_bytes=(8 + 6 + _BACKLOG_UNITS) * _MiB)
         plan = budget_plan(
             HostResources(ram_budget_bytes=16 << 30, max_workers=cap),
             HostReadPath.PROCESSES,
@@ -235,7 +253,7 @@ class TestWorkerPlan:
         resources = HostResources(ram_budget_bytes=16 << 30, max_workers=1)
         with pytest.raises(ValueError, match=f"shm_budget_bytes={4 * _MiB}") as refused:
             budget_plan(resources, HostReadPath.PROCESSES, terms)
-        assert str(8 * _MiB) in str(refused.value)
+        assert str((8 + _BACKLOG_UNITS) * _MiB) in str(refused.value)
 
     def test_no_dev_shm_to_measure_is_no_bound(self) -> None:
         cap = min(2, available_cpus())
@@ -246,6 +264,90 @@ class TestWorkerPlan:
         )
         assert plan.workers == cap
         assert plan.shm_bytes is not None
+
+
+class TestGrainsDeletionBacklog:
+    """Units the training process dropped whose segments Grain has yet to close and unlink.
+
+    Grain hands each dropped segment's close and unlink to one thread and lets at most
+    ``max_outstanding_requests`` wait (``SharedMemoryArray.enable_async_del``), so up to
+    ``M`` segments, ``ceil(M / L)`` units of ``L`` segments, stay in ``/dev/shm`` and in RAM
+    once per training process, whatever the worker count.
+    """
+
+    def test_the_backlog_is_grain_s_own_bound(self) -> None:
+        """The bound in effect: Grain enables its deletion thread with the default."""
+        signature = inspect.signature(SharedMemoryArray.enable_async_del)
+        assert DELETION_BACKLOG_SEGMENTS == (
+            signature.parameters["max_outstanding_requests"].default
+        )
+
+    @pytest.mark.parametrize("segments", [1, 3, 5, 49, 50, 64])
+    def test_ceil_m_over_l_units_are_charged_once_to_both_bounds(self, segments: int) -> None:
+        if available_cpus() < 2:  # pragma: no cover - a one-CPU machine
+            pytest.skip("needs two CPUs")
+        resources = HostResources(ram_budget_bytes=1 << 40, max_workers=min(3, available_cpus()))
+        terms = _terms(unit_segments=segments)
+        backlog = math.ceil(DELETION_BACKLOG_SEGMENTS / segments) * terms.unit_bytes
+        none_held = budget_plan(resources, HostReadPath.PROCESSES, _terms(unit_segments=0))
+        held = budget_plan(resources, HostReadPath.PROCESSES, terms)
+        assert deletion_backlog_bytes(terms.unit_bytes, segments) == backlog
+        assert held.workers == none_held.workers > 1  # once per process, not per worker
+        assert held.accounted_bytes is not None and none_held.accounted_bytes is not None
+        assert held.accounted_bytes - none_held.accounted_bytes == backlog
+        assert held.shm_bytes is not None and none_held.shm_bytes is not None
+        assert held.shm_bytes - none_held.shm_bytes == backlog
+
+    def test_a_unit_crossing_no_shared_memory_leaves_no_backlog(self) -> None:
+        """A unit with no array Grain copies, as a decoded copy's build sends, holds none."""
+        assert deletion_backlog_bytes(_MiB, 0) == 0
+
+    def test_the_backlog_lowers_k(self) -> None:
+        cap = min(8, available_cpus())
+        if cap < 2:  # pragma: no cover - a one-CPU machine
+            pytest.skip("needs two CPUs")
+        # Two workers' units and the device's fit; with the backlog, one worker's do.
+        room = (8 + 6) * _MiB
+        without = budget_plan(
+            HostResources(ram_budget_bytes=16 << 30, max_workers=cap),
+            HostReadPath.PROCESSES,
+            _terms(unit_segments=0, shm_free_bytes=room + 3 * _MiB),
+        )
+        with_backlog = budget_plan(
+            HostResources(ram_budget_bytes=16 << 30, max_workers=cap),
+            HostReadPath.PROCESSES,
+            _terms(unit_segments=10, shm_free_bytes=room + 3 * _MiB),  # 5 units awaiting
+        )
+        assert (without.workers, with_backlog.workers) == (2, 1)
+
+    def test_the_refusals_name_the_backlog(self) -> None:
+        shm = _terms(shm_free_bytes=4 * _MiB)
+        with pytest.raises(ValueError, match=r"/dev/shm") as refused_shm:
+            budget_plan(
+                HostResources(ram_budget_bytes=16 << 30, max_workers=1),
+                HostReadPath.PROCESSES,
+                shm,
+            )
+        with pytest.raises(ValueError, match="admits no worker") as refused_ram:
+            budget_plan(
+                HostResources(ram_budget_bytes=200 * _MiB, max_workers=1),
+                HostReadPath.PROCESSES,
+                _terms(),
+            )
+        for refused in (refused_shm, refused_ram):
+            message = str(refused.value)
+            assert f"M={DELETION_BACKLOG_SEGMENTS}" in message, message
+            assert f"L={_SEGMENTS}" in message, message
+            assert f"{_BACKLOG_UNITS} units" in message, message
+
+    @pytest.mark.parametrize("path", [HostReadPath.THREADS, HostReadPath.ONE_THREAD])
+    def test_threads_hold_no_backlog(self, path: HostReadPath) -> None:
+        """A thread read puts nothing in shared memory."""
+        resources = HostResources(ram_budget_bytes=1 << 40, max_workers=1)
+        plain = budget_plan(resources, path, _terms(unit_segments=0))
+        held = budget_plan(resources, path, _terms())
+        assert held.accounted_bytes == plain.accounted_bytes
+        assert held.shm_bytes is plain.shm_bytes is None
 
 
 class TestThreadPlan:
@@ -384,7 +486,12 @@ class TestTheSinkTerm:
         per_worker = (
             plain.worker_bytes + plain.read_bytes + r * e + plain.working_bytes + (2 * o + 2) * e
         )
-        fixed = plain.main_bytes + plain.order_bytes + (plain.device_buffer + 1) * e
+        fixed = (
+            plain.main_bytes
+            + plain.order_bytes
+            + (plain.device_buffer + 1) * e
+            + deletion_backlog_bytes(e, plain.unit_segments)
+        )
         budget = fixed + cap * per_worker
         resources = HostResources(ram_budget_bytes=budget, max_workers=cap)
         sunk = _terms(sink_bytes=per_worker)
@@ -431,6 +538,18 @@ class TestHostBytes:
 
     def test_a_record_s_identity_is_its_words_epoch_and_draw(self) -> None:
         assert IDENTITY_BYTES == 2 * 4 + 4 + 4
+        assert IDENTITY_LEAVES == 3
+
+    def test_a_unit_s_segments_are_its_non_empty_leaves_and_its_identity_arrays(self) -> None:
+        source = MemorySource(
+            MemorySourceConfig(),
+            {
+                "image": np.zeros((10, 8, 8, 3), np.uint8),
+                "label": np.zeros((10,), np.int32),
+                "none": np.zeros((10, 0), np.float32),  # Grain sends an empty array by pickle
+            },
+        )
+        assert host_unit_segments(source) == 2 + IDENTITY_LEAVES
 
     def test_a_spec_s_bytes_sum_its_leaves(self) -> None:
         spec = {
@@ -470,6 +589,7 @@ class TestMeasureTerms:
     ) -> HostTerms:
         return measure_terms(
             unit_bytes=3 * _MiB,
+            unit_segments=_SEGMENTS,
             order_bytes=0,
             depth=1,
             path=path,
@@ -503,6 +623,7 @@ class TestMeasureTerms:
             available_cpus(),
         )
         assert (terms.read_bytes, terms.worker_bytes, terms.working_bytes) == (0, 0, 0)
+        assert terms.unit_segments == _SEGMENTS
         assert terms.main_bytes > 0
 
     def test_processes_read_the_first_unit_once_through_the_probe(
@@ -537,6 +658,7 @@ class TestMeasureTerms:
         assert terms.working_bytes == 7 * _MiB
         assert terms.read_bytes == host_workers.pickled_bytes(read_value) > 0
         assert terms.worker_buffer == WORKER_BUFFER
+        assert terms.unit_segments == _SEGMENTS
         assert terms.shm_free_bytes == host_workers.shm_free_bytes()
 
     def test_a_caller_s_worker_bytes_reads_no_first_unit(
@@ -653,6 +775,7 @@ class TestHostStageMeasuresFromABareSource:
 
         measured = measure_terms(
             unit_bytes=host_batch_bytes(source, 4),
+            unit_segments=host_unit_segments(source),
             order_bytes=0,  # the global order
             depth=planned.device_buffer,
             path=HostReadPath.PROCESSES,

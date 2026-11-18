@@ -82,6 +82,7 @@ from datarax.pipeline.read_plan import (
     default_plan,
     host_batch_bytes,
     host_read_path,
+    host_unit_segments,
     HostPlan,
     HostReadPath,
     HostTerms,
@@ -585,6 +586,7 @@ class HostStage:
         rows = process_rows(sharding, batch_size)
         return measure_terms(
             unit_bytes=size * host_batch_bytes(source, batch_size),
+            unit_segments=host_unit_segments(source),
             order_bytes=order_working_bytes(source, epoch_plan.block_order),
             depth=depth,
             path=path,

@@ -21,7 +21,7 @@ from flax import nnx
 from substrax.testing import run_python
 
 from datarax.pipeline import Pipeline
-from datarax.pipeline.read_plan import HostReadPath
+from datarax.pipeline.read_plan import DELETION_BACKLOG_SEGMENTS, HostReadPath
 from tests.test_common.worker_reads import (
     png_source,
     resources,
@@ -154,11 +154,12 @@ class TestNothingOutlivesTheRun:
     def test_steady_state_segments_are_the_units_the_queues_hold(
         self, png_paths: list[str]
     ) -> None:
-        """At most ``2o + 2`` units per worker in shared memory, plus ``d + 1`` at the device.
+        """At most ``2o + 2`` units per worker in shared memory, ``d + 1`` at the device, and
+        the segments of dropped units Grain's deletion thread has yet to close and unlink.
 
-        Counted as Python's shared-memory segments (``psm_``): the run's multiprocessing queues,
-        events and locks keep POSIX semaphores in ``/dev/shm`` too (``sem.mp-*``, about 25 a
-        worker, measured), which hold no unit.
+        Counted as Python's shared-memory segments (``psm_``), one per leaf of a unit: the run's
+        multiprocessing queues, events and locks keep POSIX semaphores in ``/dev/shm`` too
+        (``sem.mp-*``, about 25 a worker, measured), which hold no unit.
         """
         before = _segments(_SEGMENT)
         pipe = _pipeline(png_paths, num_epochs=None)
@@ -167,7 +168,9 @@ class TestNothingOutlivesTheRun:
         leaves = len(jax.tree.leaves(first))
         del first  # the consumer holds one unit: the one it takes next
         plan = pipe.host_plan
-        bound = (plan.workers * (2 * plan.worker_buffer + 2) + plan.device_buffer + 1) * leaves
+        assert plan.terms is not None and plan.terms.unit_segments == leaves  # the plan's L
+        held = plan.workers * (2 * plan.worker_buffer + 2) + plan.device_buffer + 1
+        bound = held * leaves + DELETION_BACKLOG_SEGMENTS
         highest = 0
         for _ in range(30):
             next(batches)
