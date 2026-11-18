@@ -999,6 +999,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The streaming census (`tests/benchmarks/test_streaming_iteration_speed.py`) counts its passes in
+  a fresh interpreter. A counted block ends with a counted collection, which also freed garbage
+  earlier tests had left: a finished Grain worker read keeps its last shared-memory arrays in a
+  reference cycle (google/grain#1420), and Grain's deletion thread keeps their `SharedMemory`
+  objects alive until it has closed them. When one was freed inside a pass,
+  `SharedMemory.__del__` and `SharedMemory.close` landed in that pass only, and the census failed
+  with `UnevenCountError {'other': 3198}` (main `3901626`) or `{'other': 3396}` (the 2026-11-10
+  scheduled run), each right after worker-process tests. After the worker tests that preceded
+  the 2026-11-10 failure, with Grain's deletion slowed by 0.2 s a segment, the census failed 2
+  runs of 4 in the suite's process, naming those two functions; counted in its own interpreter,
+  it passed 8 of 8.
 - An example started from the test suite draws with matplotlib's Agg backend on any machine. The
   test run set no `MPLBACKEND`, so on a machine with a display matplotlib picked TkAgg, and
   `06_mnist_tutorial` and the MixUp/CutMix tutorial aborted on `Tcl_AsyncDelete: async handler
