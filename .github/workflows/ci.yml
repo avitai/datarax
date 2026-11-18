@@ -130,11 +130,13 @@ jobs:
     runs-on: ubuntu-latest
     # pytest-split divides one collection into this many groups, one per matrix leg; the
     # group list below is 1..UNIT_TEST_SHARDS. With no durations file it balances by test
-    # count (least_duration gives every test the same weight). Unsharded, the suite took
-    # about 32 minutes; four shards bring each leg well under the long-running job, which
-    # the coverage job waits on as well, so more shards would not shorten the run.
+    # count (least_duration gives every test the same weight), as in opifex, artifex,
+    # receptifex and substrax's python-gates. Each Python's suite is about 75 minutes of
+    # tests and a leg's setup about 1 minute, so the work divides almost linearly: four
+    # shards ran 13.8 to 25.0 minutes a leg (six runs, 2026-11-17 and 18), and eight halve
+    # that. The long-running job is split as well, since the coverage job waits on both.
     env:
-      UNIT_TEST_SHARDS: 4
+      UNIT_TEST_SHARDS: 8
       # uv takes its interpreter from .python-version (3.12) unless told otherwise, whatever
       # setup-python put on the path, and a later uv sync replaces a venv made with --python.
       # UV_PYTHON applies the matrix version to every uv command in the job.
@@ -142,7 +144,7 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
-        group: [1, 2, 3, 4]
+        group: [1, 2, 3, 4, 5, 6, 7, 8]
       fail-fast: false
 
     steps:
@@ -260,14 +262,20 @@ jobs:
           retention-days: 1
 
   long_running_tests:
-    name: Long-Running Tests
-    # The longest job in the run, and the one the coverage job waits on. Its only input
-    # is the dataset cache prepare_example_datasets fills, so it runs beside the unit
-    # matrix rather than after it.
+    name: Long-Running Tests (shard ${{ matrix.group }})
+    # Its only input is the dataset cache prepare_example_datasets fills, so it runs beside
+    # the unit matrix rather than after it. Unsplit it ran 18.4 to 26.6 minutes (24.7 of them
+    # tests; the slowest test 242 s), which bound the run; it splits as the unit tests do.
     needs: [prepare_example_datasets, already_tested]
     if: needs.already_tested.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      LONG_RUNNING_SHARDS: 3
+    strategy:
+      matrix:
+        group: [1, 2, 3]
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v4
@@ -343,7 +351,11 @@ jobs:
           # so no example downloads them inside its budget. The TFDS tests run only here.
           export JAX_PLATFORMS="cpu"
           export DATARAX_EXAMPLE_TIMEOUT_SECONDS=300
-          uv run pytest tests benchmarks/tests -m "slow or tfds" --no-benchmark -v -rs --cov-fail-under=0 --timeout=600 --durations=0
+          # Every shard of a run takes the run's id as pytest-randomly's seed, as the unit
+          # shards do: one order, each test in exactly one shard.
+          uv run pytest tests benchmarks/tests -m "slow or tfds" --no-benchmark -v -rs --cov-fail-under=0 --timeout=600 --durations=0 \
+            --splits "$LONG_RUNNING_SHARDS" --group ${{ matrix.group }} --splitting-algorithm least_duration \
+            --randomly-seed=${{ github.run_id }}
 
       - name: Prepare coverage data
         run: uv run coverage combine || true
@@ -352,7 +364,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-long-running
+          name: coverage-long-running-shard${{ matrix.group }}
           path: .coverage
           include-hidden-files: true
         if: always()
