@@ -1185,6 +1185,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tutorial compares an `HFStreamingSource` with an eager source, and the IMDB quickref
   shuffles its pipeline source (the train split starts with negative reviews).
 
+### Security
+
+- The lock takes the fixed releases of the packages pip-audit reports across every extra:
+  opentelemetry-api 1.45.2 (CVE-2026-126360), soupsieve 4.1.1 (CVE-2026-126190,
+  CVE-2026-126191, CVE-2026-126193) and tornado 6.6.1 (CVE-2026-126347); opentelemetry-sdk and
+  opentelemetry-semantic-conventions follow opentelemetry-api. soupsieve reaches datarax only
+  through nbconvert, under `substrax[notebooks]`.
+
 ## [0.1.17] - 2026-09-25
 
 ### Added
