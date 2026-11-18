@@ -979,6 +979,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The inherited-CUDA guard's test (`tests/pipeline/test_host_worker_setup.py::`
+  `TestWorkerSetUpPositiveControls`) checks what it states. Its script set `jax_platforms` to the
+  CPU at module level, which every spawned worker re-runs, so no worker saw the inherited
+  `JAX_PLATFORMS=cuda,cpu`; and its control took the read after serving the run, so the bare
+  Grain worker failed on a run with no units (`run_units.py:216`). With `WorkerSetUp`'s
+  `jax_platforms` line removed, the test still passed. The setting is now under the script's
+  `__main__` guard, and the test compares the platform list each worker holds, which needs no
+  GPU: datarax's workers hold `cpu`, a bare worker holds the inherited `cuda,cpu` (and `cpu` when
+  that is inherited). A failing CUDA start would not do, as jax 0.11.1 skips a listed CUDA
+  platform on a machine without NVIDIA device files. Removing that line from `WorkerSetUp` now
+  fails the test, on a machine with a GPU and on one without.
 - A TFDS stream's workers no longer walk the pass's order record by record. Each of `K` worker
   processes computed the shuffled order of every record of the run, one Python generator step
   and one scalar NumPy draw per record, to find the units of its own slice, so the stream's CPU

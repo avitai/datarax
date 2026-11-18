@@ -157,28 +157,33 @@ _INHERITED_CUDA = """
 import json, sys
 import jax
 from substrax.testing import report
-jax.config.update("jax_platforms", "cpu")  # set in code: a spawned worker does not inherit it
 import grain
 from flax import nnx
 from datarax.pipeline import Pipeline
 from tests.test_common.worker_reads import png_source, resources, WorkerFactsDecoder
 
+
+def platforms_seen(_):
+    # A bare worker's JAX platform list, read without starting a backend: whether a listed
+    # platform would start depends on the machine (JAX skips CUDA where no GPU device exists).
+    import jax
+    return jax.config.jax_platforms
+
+
 if __name__ == "__main__":
+    # Set in code under the guard: a spawned worker re-imports this module without running the
+    # guard, so it keeps the inherited JAX_PLATFORMS unless something in the worker sets it.
+    jax.config.update("jax_platforms", "cpu")
     paths = sys.argv[1:]
     pipe = Pipeline(source=png_source(paths, WorkerFactsDecoder()), stages=[], batch_size=3,
                     rngs=nnx.Rngs(0), host_resources=resources(2))
-    facts = sorted({json.loads(r["worker"])["backend"]
-                    for _, p in pipe.raw_batches(with_provenance=True) for r in p})
-    control = "served"
-    read = pipe.host_stage.read_for_workers(pipe)
+    facts = [json.loads(r["worker"]) for _, p in pipe.raw_batches(with_provenance=True) for r in p]
     pipe.close()
-    bare = grain.MapDataset.range(2).map(read).to_iter_dataset().mp_prefetch(
+    bare = grain.MapDataset.range(1).map(platforms_seen).to_iter_dataset().mp_prefetch(
         grain.multiprocessing.MultiprocessingOptions(num_workers=1))
-    try:
-        list(bare)
-    except Exception as error:  # the control: what a worker without datarax's set-up raises
-        control = f"raised {type(error).__name__}: {str(error)[:300]}"
-    report({"backends": facts, "control": control})
+    report({"backends": sorted({f["backend"] for f in facts}),
+            "platforms": sorted({f["jax_platforms"] for f in facts}),
+            "control": list(bare)})
 """
 
 _UNGUARDED_MAIN = """
@@ -219,8 +224,7 @@ class TestWorkerSetUpPositiveControls:
     ) -> None:
         """The GPU recipe's ``JAX_PLATFORMS=cuda,cpu`` is inherited; datarax's workers read on CPU.
 
-        The same read in a bare Grain worker, without datarax's set-up, starts the listed
-        platforms and fails: the control.
+        A bare Grain worker, without datarax's set-up, holds the inherited list: the control.
         """
         report = _run_script(
             tmp_path,
@@ -229,7 +233,16 @@ class TestWorkerSetUpPositiveControls:
             env={"JAX_PLATFORMS": "cuda,cpu", "CUDA_VISIBLE_DEVICES": ""},
         )
         assert report["backends"] == ["cpu"]
-        assert report["control"].startswith("raised"), report["control"]
+        assert report["platforms"] == ["cpu"]
+        assert report["control"] == ["cuda,cpu"]
+
+    def test_the_control_holds_whatever_list_the_worker_inherits(
+        self, png_paths: list[str], tmp_path: Path
+    ) -> None:
+        """With ``cpu`` inherited the bare worker holds ``cpu``: it reads what it inherits."""
+        report = _run_script(tmp_path, _INHERITED_CUDA, *png_paths, env={"JAX_PLATFORMS": "cpu"})
+        assert report["platforms"] == ["cpu"]
+        assert report["control"] == ["cpu"]
 
     def test_a_main_module_starting_jax_at_import_is_refused_naming_the_guard(
         self, png_paths: list[str], tmp_path: Path
