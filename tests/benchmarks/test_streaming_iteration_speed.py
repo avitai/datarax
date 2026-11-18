@@ -12,12 +12,23 @@ passes measured how long the consumer waited on the read thread, which the sched
 decide, and could not see a per-batch host copy. ``substrax.testing`` counts the Python functions
 each pass starts on every thread, its ``jax.device_put`` calls and its compiled dispatches, per
 batch as the slope between a short and a long pass, so work done once per pass cancels.
+
+The passes are counted in a fresh interpreter. A counted block ends with a collection, counted, so
+it also runs the finalizers of garbage an earlier test left that becomes collectable while the
+pass runs: a finished Grain worker read leaves its last shared-memory arrays in a reference cycle
+(google/grain#1420), and Grain's deletion thread keeps their ``SharedMemory`` objects alive until
+it has closed them, after that test has ended. Each one freed inside a pass adds
+``SharedMemory.__del__`` and ``SharedMemory.close`` to whichever pass it falls in, so in the
+suite's own process the counts would depend on the tests before them and on how fast that thread
+runs.
 """
 
 from __future__ import annotations
 
 import functools
+import os
 from collections.abc import Callable
+from pathlib import Path
 from types import CodeType
 from typing import Any
 
@@ -28,13 +39,14 @@ from flax import nnx
 from flax.nnx import graphlib
 from grain._src.core import traceback_util
 from grain._src.python.dataset.stats import HashableWeakRef
-from substrax.testing import by_package, counted_calls, per_iteration
+from substrax.testing import by_package, counted_calls, per_iteration, run_python
 from substrax.testing.compiles import compiled_programs
 from substrax.testing.jax_calls import JAX_CALL_WEIGHTS
 
 from datarax.core.data_source import RecordIdentity
 from datarax.core.element_batch import Batch
 from datarax.pipeline.pipeline import Pipeline
+from tests.jax_test_environment import forwarded_jax_environment
 from tests.test_common.streams import RecordStream
 
 
@@ -222,10 +234,28 @@ def _per_batch(run: Callable[[int], None]) -> dict[str, int]:
     return per_iteration(count, short=_SHORT_PASS, long=_BATCHES)
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CHILD_SECONDS = 240.0  # under pytest's 300 s a test; both passes took 2.8 s on a desktop CPU
+_COUNT_BOTH_PASSES = """
+from substrax.testing import report
+
+from tests.benchmarks.test_streaming_iteration_speed import _by_hand_pass, _per_batch, _stream_pass
+
+report([_per_batch(_stream_pass), _per_batch(_by_hand_pass)])
+"""
+
+
 @pytest.fixture(scope="module")
 def per_batch_work() -> tuple[dict[str, int], dict[str, int]]:
-    """Per batch: a stream pass's work and the by-hand pass's."""
-    return _per_batch(_stream_pass), _per_batch(_by_hand_pass)
+    """Per batch: a stream pass's work and the by-hand pass's, counted in a fresh interpreter."""
+    result = run_python(
+        _COUNT_BOTH_PASSES,
+        timeout=_CHILD_SECONDS,
+        env=forwarded_jax_environment(os.environ),
+        cwd=_REPO_ROOT,
+    )
+    stream, by_hand = result.check().report_as(tuple[dict[str, int], dict[str, int]])
+    return stream, by_hand
 
 
 def test_a_stream_pass_places_each_batch_once_and_dispatches_once(
