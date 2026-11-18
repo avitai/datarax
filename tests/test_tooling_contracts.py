@@ -922,7 +922,7 @@ def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
     """The dependency audit covers the whole lockfile, not the extras the test suite installs.
 
     Audited from ``uv sync --extra dev --extra test --extra data``, the job never saw the
-    benchmark and automation extras, where Dependabot reported a critical PyJWT advisory. The
+    extras outside that install, where Dependabot reported a critical PyJWT advisory. The
     stack's ``audit-lock`` action reads the ignored advisories from ``pyproject.toml`` and
     refuses an empty reason or an entry no advisory matches.
     """
@@ -1073,6 +1073,23 @@ def test_no_extra_installs_pip_audit() -> None:
 
     for name, dependencies in extras.items():
         assert "pip-audit" not in _dependency_names(dependencies), name
+
+
+def test_skypilot_runs_as_a_tool_outside_the_lock() -> None:
+    """The cloud benchmark orchestrator runs ``sky`` as a program, installed as a uv tool.
+
+    SkyPilot 0.11's vast adapter needs vastai-sdk 0.2.x, which pins ``aiohttp==3.10.1``, and
+    every vastai 1.x pins a cryptography the floor refuses, so as an extra it forked the lock
+    and kept advisories open in it. Installed as a tool it resolves in an environment of its
+    own (``benchmarks.automation._orchestrator_utils.SKYPILOT_TOOL_INSTALL``).
+    """
+    extras = _pyproject()["project"]["optional-dependencies"]
+    tools = {"skypilot", "vastai-sdk", "vastai"}
+
+    assert "automation" not in extras
+    for name, dependencies in extras.items():
+        assert not tools & set(_dependency_names(dependencies)), name
+    assert "conflicts" not in _pyproject()["tool"].get("uv", {})
 
 
 TFDS_JOB = "long_running_tests"

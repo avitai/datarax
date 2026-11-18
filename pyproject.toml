@@ -60,23 +60,6 @@ version = "0.1.17"
 all = ["datarax[cuda12,data,dev,docs,images,test,wandb]"]
 all-cpu = ["datarax[data,dev,docs,images,test,wandb]"]
 all-macos = ["datarax[data,dev,docs,images,metal,test,wandb]"]
-automation = [
-  # Local cloud orchestration dependencies (benchmarks/automation/vast_orchestrator.py)
-  "skypilot[vast]>=0.11,<0.12",
-  "click<8.3", # SkyPilot 0.11.x launch incompatibility with click>=8.3
-  # vastai-sdk 1.0+ removed VastAI.api_key_access which sky/adaptors/vast.py
-  # uses for credential validation; pin to the 0.2.x line until SkyPilot
-  # 0.12 upgrades its adapter. Bounce the SkyPilot API daemon
-  # (`sky api stop`) after upgrading these so the new adapter is loaded.
-  # The 0.2.x line pins aiohttp==3.10.1 (35 open advisories); every 1.x release
-  # of the underlying `vastai` package pins cryptography==49.0.0 instead, which the
-  # cryptography>=50 constraint below refuses, so neither line is clean.
-  "vastai-sdk>=0.2.6,<0.3",
-  # Required by benchmarks.export when the orchestrator's --analyze step
-  # imports benchmarks.cli locally (the remote VM gets matplotlib via the
-  # benchmark extra; the local box only installs `automation`).
-  "matplotlib>=3.8"
-]
 # benchmark extra is separate — it pulls in 12 Linux-only frameworks (DALI, PyTorch, Ray, etc.)
 # Install explicitly: pip install datarax[benchmark]
 benchmark = [
@@ -104,13 +87,7 @@ benchmark = [
   "matplotlib>=3.8", # Plotting for benchmark reports
   "tabulate>=0.9", # Table formatting for reports
   "rich>=13.0", # Rich terminal output for benchmark runners
-  # benchmarks/cli.py imports click at module level, and the nightly workflow runs it as
-  # `from benchmarks.cli import main`. click was declared only under `automation`, which
-  # was harmless while the nightly installed every extra and load-bearing the moment
-  # automation became a conflicting extra. It stays in `automation` as well, pinned <8.3
-  # there for SkyPilot, because the orchestrator invokes benchmarks.cli locally; the two
-  # declarations never resolve together because the extras conflict by construction.
-  "click>=8.1" # benchmarks/cli.py
+  "click>=8.1" # benchmarks/cli.py imports it; the nightly runs `from benchmarks.cli import main`
 ]
 # Note: FFCV requires system OpenCV (libopencv-dev) — install separately via:
 # sudo apt-get install libopencv-dev && pip install ffcv>=1.0
@@ -554,58 +531,14 @@ convention = "google"
 max-args = 13
 
 [tool.substrax.audit-lock.ignore]
-"CVE-2026-111063" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-111064" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-111065" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-111066" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-111748" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-111749" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-111750" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
-"CVE-2026-24049" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "CVE-2026-80047" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
-"GHSA-2g87-pp6c-29x5" = "automation extra only: it pins vastai-sdk>=0.2.6,<0.3 (SkyPilot 0.11's vast adapter calls VastAI.api_key_access, which vastai-sdk 1.0 removed; see the automation extra), and vastai-sdk 0.2.6 pins aiohttp==3.10.1, so that extra cannot take the fixed 3.14.4; every other extra resolves aiohttp 3.14.5. Revisit with the automation extra's SkyPilot and vastai-sdk pins."
 "PYSEC-2025-194" = "torch, benchmark extra: no lockfile change closes it. PYSEC-2026-139 has no fixed release; PYSEC-2025-194 is fixed in 2.13.0, above the deliberate <2.11 ceiling (2.11 wheels link libcudart.so.13 and would move the stack to CUDA 13). Revisit when that ceiling lifts."
 "PYSEC-2025-217" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
-"PYSEC-2026-1097" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1099" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1100" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1101" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1103" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1104" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1105" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1106" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1107" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1108" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-1109" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "PYSEC-2026-139" = "torch, benchmark extra: no lockfile change closes it. PYSEC-2026-139 has no fixed release; PYSEC-2025-194 is fixed in 2.13.0, above the deliberate <2.11 ceiling (2.11 wheels link libcudart.so.13 and would move the stack to CUDA 13). Revisit when that ceiling lifts."
-"PYSEC-2026-2094" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2095" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2096" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2097" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2098" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2099" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2100" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2101" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2102" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2103" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2104" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2105" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2106" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2107" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2108" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2109" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2110" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2111" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2112" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-2113" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "PYSEC-2026-2288" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
 "PYSEC-2026-2289" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
 "PYSEC-2026-2290" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
-"PYSEC-2026-237" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "PYSEC-2026-2858" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
-"PYSEC-2026-3545" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-3546" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
-"PYSEC-2026-3547" = "automation extra only (SkyPilot benchmark orchestration, a conflicting extra no other install resolves with): every SkyPilot release, 0.13.0 included, requires click<8.2; vastai-sdk 0.2.x pins aiohttp==3.10.1 and wheel 0.45.1 comes with it, while every vastai 1.x pins cryptography==49.0.0, which the cryptography>=50 floor refuses. Revisit with SkyPilot or vastai."
 "PYSEC-2026-3929" = "benchmark extra only, through mosaicml-streaming (the MosaicML peer adapter): its latest release, 0.13.0, requires transformers<5 and paramiko<4. Paramiko's advisory covers every release through 4.0.0. Revisit when mosaicml-streaming lifts those bounds."
 
 [tool.substrax.compute]
@@ -635,26 +568,6 @@ timeout_seconds = 2700
 6-stream-control = ["python", "-m", "tests.test_common.tfds_collective", "/tmp/tfds_fixture", "--stream", "--import-tensorflow"]
 
 [tool.uv]
-# The automation extra is benchmark tooling: skypilot[vast] and vastai-sdk, used only
-# by benchmarks/automation/ and imported nowhere under src/. vastai-sdk pins
-# aiohttp==3.10.1 exactly and the extra pins click<8.3. uv resolves ONE universal
-# lockfile across every extra, so those two pins governed the aiohttp and click that
-# ordinary installs and CI received, putting 37 advisories into an audit of
-# .[dev,test,data], which does not include automation at all.
-# Declaring the conflict lets uv fork the resolution: automation keeps aiohttp 3.10.1
-# and click 8.1.8, everything else gets 3.14.3 and 8.5.0.
-conflicts = [
-  [{extra = "automation"}, {extra = "benchmark"}],
-  [{extra = "automation"}, {extra = "cuda-dev"}],
-  [{extra = "automation"}, {extra = "tfds"}],
-  [{extra = "automation"}, {extra = "data"}],
-  [{extra = "automation"}, {extra = "dev"}],
-  [{extra = "automation"}, {extra = "docs"}],
-  [{extra = "automation"}, {extra = "examples"}],
-  [{extra = "automation"}, {extra = "cuda12"}],
-  [{extra = "automation"}, {extra = "metal"}],
-  [{extra = "automation"}, {extra = "test"}]
-]
 # Floors for transitively-reached packages carrying advisories, raised here because no
 # direct dependency declares them. Same mechanism the sibling repositories use.
 constraint-dependencies = [

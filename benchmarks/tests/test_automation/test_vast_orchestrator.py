@@ -113,41 +113,33 @@ class TestGenerateSkyYaml:
 
 
 class TestPreflight:
-    def test_preflight_fails_for_known_skypilot_click_incompatibility(self, tmp_path: Path):
+    def test_preflight_refuses_without_sky_on_the_path(self, tmp_path: Path):
+        """SkyPilot runs as a uv tool, never from the project's environment."""
         repo_root = tmp_path / "repo"
         venv_bin = repo_root / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
         (venv_bin / "python").write_text("#!/usr/bin/env python\n")
+        (venv_bin / "sky").write_text("#!/usr/bin/env python\n")  # never consulted
         template = repo_root / "benchmarks" / "sky" / "gpu-benchmark.yaml"
         template.parent.mkdir(parents=True)
         template.write_text("name: test\nresources: {}\n")
 
-        def _which(name: str) -> str | None:
-            if name == "sky":
-                return "/usr/bin/sky"
-            if name == "scp":
-                return "/usr/bin/scp"
-            return None
-
-        with (
-            patch.object(vo.shutil, "which", side_effect=_which),
-            patch.object(
-                vo,
-                "_probe_skypilot_capabilities",
-                return_value={
-                    "version": "skypilot, version 0.11.2",
-                    "supports_rsync": True,
-                },
-            ),
-            patch.object(vo, "_probe_python_package_version", return_value="8.3.1"),
-        ):
-            with pytest.raises(vo.OrchestrationError, match="False backend is not supported"):
+        with patch.object(vo.shutil, "which", return_value=None):
+            with pytest.raises(vo.OrchestrationError) as refused:
                 vo.preflight_checks(
                     repo_root=repo_root,
                     download_root=tmp_path / "download",
                     template_path=template,
-                    infra="vast",
                 )
+
+        assert vo_utils.SKYPILOT_TOOL_INSTALL in str(refused.value)
+        assert ".venv" not in str(refused.value)
+
+    def test_the_skypilot_tool_keeps_vastai_sdk_on_the_line_its_vast_adapter_calls(self):
+        """SkyPilot 0.11's vast adapter calls ``VastAI.api_key_access``, gone in vastai-sdk 1.0."""
+        assert vo_utils.SKYPILOT_TOOL_INSTALL == (
+            "uv tool install --with pip --with 'vastai-sdk>=0.2.6,<0.3' 'skypilot[vast]>=0.11,<0.12'"
+        )
 
     def test_preflight_uses_scp_transfer_when_sky_rsync_is_missing(self, tmp_path: Path):
         repo_root = tmp_path / "repo"
@@ -177,13 +169,12 @@ class TestPreflight:
                 repo_root=repo_root,
                 download_root=tmp_path / "download",
                 template_path=template,
-                infra="vast",
             )
 
         assert report["artifact_transfer_method"] == "scp"
         assert report["sky_supports_rsync"] is False
         assert report["sky_version"] == "0.11.2"
-        assert "skypilot[vast]" in report["sky_upgrade_hint"]
+        assert report["sky_upgrade_hint"] == vo_utils.SKYPILOT_TOOL_INSTALL
 
     def test_preflight_fails_when_rsync_missing_and_scp_unavailable(self, tmp_path: Path):
         repo_root = tmp_path / "repo"
@@ -212,7 +203,6 @@ class TestPreflight:
                     repo_root=repo_root,
                     download_root=tmp_path / "download",
                     template_path=template,
-                    infra="vast",
                 )
 
 
@@ -534,7 +524,7 @@ class TestArtifactCollection:
                     sky_executable="sky",
                     live_peek=False,
                     transfer_method="sky-rsync",
-                    sky_upgrade_hint='./.venv/bin/pip install -U "skypilot[vast]"',
+                    sky_upgrade_hint=vo_utils.SKYPILOT_TOOL_INSTALL,
                 )
 
     def test_collect_artifacts_scp_retries_when_dot_suffix_is_rejected(
@@ -657,33 +647,6 @@ class TestStageExecution:
 
 
 class TestOrchestrate:
-    def test_orchestrate_forwards_launch_compatibility_hints(self, tmp_path: Path):
-        args = _args(tmp_path, mode="subset", yes=True)
-
-        with (
-            patch.object(
-                vo,
-                "preflight_checks",
-                return_value={
-                    "ok": True,
-                    "sky_upgrade_hint": "pip install -U 'skypilot[vast]'",
-                    "click_pin_hint": "pip install 'click<8.3'",
-                },
-            ),
-            patch.object(vo, "generate_sky_yaml", return_value=tmp_path / "generated.yaml"),
-            patch.object(vo, "launch_cluster") as launch_cluster,
-            patch.object(vo, "verify_remote_hardware", return_value={"ok": True}),
-            patch.object(vo, "run_stage", return_value={"ok": True, "stage": "subset"}),
-            patch.object(vo, "teardown_cluster"),
-        ):
-            rc = vo.orchestrate(args)
-
-        assert rc == 0
-        assert (
-            launch_cluster.call_args.kwargs["sky_upgrade_hint"] == "pip install -U 'skypilot[vast]'"
-        )
-        assert launch_cluster.call_args.kwargs["click_pin_hint"] == "pip install 'click<8.3'"
-
     def test_dry_run_skips_launch_and_writes_plan(self, tmp_path: Path):
         args = _args(tmp_path, dry_run=True)
         run_root = Path(args.download_dir) / args.run_id
@@ -1330,24 +1293,6 @@ class TestLaunchCommand:
 
         assert run_cmd.call_args.kwargs["capture_limit_chars"] == 4096
 
-    def test_launch_cluster_rewraps_backend_false_with_fix_hints(self, tmp_path: Path):
-        with patch.object(
-            vo,
-            "_run_logged_command",
-            side_effect=vo.OrchestrationError("ValueError: False backend is not supported."),
-        ):
-            with pytest.raises(vo.OrchestrationError, match="backend parsing incompatibility"):
-                vo.launch_cluster(
-                    yaml_path=tmp_path / "cfg.yaml",
-                    infra="vast",
-                    cluster_name="datarax-vast-a100",
-                    logs_dir=tmp_path,
-                    sky_executable="sky",
-                    launch_timeout_sec=300,
-                    sky_upgrade_hint="pip install -U 'skypilot[vast]'",
-                    click_pin_hint="pip install 'click<8.3'",
-                )
-
 
 class TestParser:
     def test_allowed_gpu_defaults_to_a100_when_not_set(self):
@@ -1435,8 +1380,6 @@ class TestSpotFallbackTeardown:
         vo._launch_spot_fallback(
             ctx,
             "sky",
-            None,
-            None,
             vo.OrchestrationError("on-demand launch timed out"),
         )
         assert calls == ["teardown", "launch"]

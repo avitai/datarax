@@ -24,16 +24,12 @@ from typing import Any
 import yaml
 
 from benchmarks.automation._orchestrator_utils import (
-    _build_click_pin_hint,
-    _build_sky_upgrade_hint,
     _confirm,
     _effective_allowed_gpu_tokens,
     _extract_json_line,
     _extract_nvidia_smi_rows,
-    _is_known_skypilot_click_backend_bug,
     _normalize_capture_limit_chars,
     _primary_gpu_resource,
-    _probe_python_package_version,
     _probe_skypilot_capabilities,
     _progress_bar,
     _remote_shell_prefix,
@@ -48,6 +44,7 @@ from benchmarks.automation._orchestrator_utils import (
     REMOTE_DATA_ROOT,
     REMOTE_GPU_ENV_EXPORTS,
     REMOTE_RESULTS_ROOT,
+    SKYPILOT_TOOL_INSTALL,
 )
 from benchmarks.automation._subprocess import _run_logged_command
 
@@ -57,20 +54,13 @@ def preflight_checks(
     repo_root: Path,
     download_root: Path,
     template_path: Path,
-    infra: str,
 ) -> dict[str, Any]:
     """Validate local prerequisites before launching cloud resources."""
     sky_executable = shutil.which("sky")
     if sky_executable is None:
-        fallback_sky = repo_root / ".venv" / "bin" / "sky"
-        if fallback_sky.exists():
-            sky_executable = str(fallback_sky)
-            _status(
-                f"`sky` not found in PATH, falling back to virtualenv binary: {sky_executable}",
-                level="WARN",
-            )
-        else:
-            raise OrchestrationError("`sky` executable not found in PATH.")
+        raise OrchestrationError(
+            f"`sky` executable not found in PATH. Install SkyPilot as a tool: {SKYPILOT_TOOL_INSTALL}"
+        )
 
     venv_python = repo_root / ".venv" / "bin" / "python"
     if not venv_python.exists():
@@ -87,23 +77,7 @@ def preflight_checks(
     sky_caps = _probe_skypilot_capabilities(sky_executable)
     sky_supports_rsync = bool(sky_caps.get("supports_rsync"))
     sky_version = str(sky_caps.get("version", "unknown"))
-    sky_upgrade_hint = _build_sky_upgrade_hint(repo_root=repo_root, infra=infra)
-    click_pin_hint = _build_click_pin_hint(repo_root=repo_root)
-    click_version = _probe_python_package_version(
-        python_executable=venv_python,
-        package="click",
-    )
-
-    if _is_known_skypilot_click_backend_bug(sky_version=sky_version, click_version=click_version):
-        raise OrchestrationError(
-            (
-                "Detected incompatible SkyPilot/Click combination that causes "
-                "`sky launch` to fail with `ValueError: False backend is not supported.` "
-                f"(SkyPilot: {sky_version}; Click: {click_version}). "
-                f"Fix by upgrading SkyPilot: {sky_upgrade_hint} "
-                f"or pinning Click: {click_pin_hint}"
-            ),
-        )
+    sky_upgrade_hint = SKYPILOT_TOOL_INSTALL
 
     artifact_transfer_method = "sky-rsync"
     if not sky_supports_rsync:
@@ -131,8 +105,6 @@ def preflight_checks(
         "sky_supports_rsync": sky_supports_rsync,
         "artifact_transfer_method": artifact_transfer_method,
         "sky_upgrade_hint": sky_upgrade_hint,
-        "click_version": click_version,
-        "click_pin_hint": click_pin_hint,
         "wandb_api_key_set": bool(os.getenv("WANDB_API_KEY")),
     }
 
@@ -216,60 +188,39 @@ def launch_cluster(
     live_peek: bool = True,
     peek_interval_sec: int = 5,
     capture_limit_chars: int | None = DEFAULT_CAPTURE_LIMIT_CHARS,
-    sky_upgrade_hint: str | None = None,
-    click_pin_hint: str | None = None,
 ) -> None:
     """Launch a SkyPilot cluster from a generated YAML config."""
-    try:
-        _run_logged_command(
-            [
-                sky_executable,
-                "launch",
-                str(yaml_path),
-                "--infra",
-                infra,
-                "-c",
-                cluster_name,
-                "-y",
-            ],
-            logs_dir / log_name,
-            check=True,
-            timeout_sec=launch_timeout_sec,
-            live_peek=live_peek,
-            peek_interval_sec=peek_interval_sec,
-            capture_limit_chars=capture_limit_chars,
-            stall_timeout_sec=stall_timeout_sec,
-            stall_diagnostics=(
-                (
-                    lambda: _run_stall_diagnostics(
-                        cluster=cluster_name,
-                        logs_dir=logs_dir,
-                        sky_executable=sky_executable,
-                        capture_limit_chars=capture_limit_chars,
-                    )
+    _run_logged_command(
+        [
+            sky_executable,
+            "launch",
+            str(yaml_path),
+            "--infra",
+            infra,
+            "-c",
+            cluster_name,
+            "-y",
+        ],
+        logs_dir / log_name,
+        check=True,
+        timeout_sec=launch_timeout_sec,
+        live_peek=live_peek,
+        peek_interval_sec=peek_interval_sec,
+        capture_limit_chars=capture_limit_chars,
+        stall_timeout_sec=stall_timeout_sec,
+        stall_diagnostics=(
+            (
+                lambda: _run_stall_diagnostics(
+                    cluster=cluster_name,
+                    logs_dir=logs_dir,
+                    sky_executable=sky_executable,
+                    capture_limit_chars=capture_limit_chars,
                 )
-                if stall_timeout_sec is not None and stall_timeout_sec > 0
-                else None
-            ),
-        )
-    except OrchestrationError as exc:
-        message = str(exc)
-        if "False backend is not supported." in message:
-            hints: list[str] = []
-            if sky_upgrade_hint:
-                hints.append(f"upgrade SkyPilot: {sky_upgrade_hint}")
-            if click_pin_hint:
-                hints.append(f"pin Click: {click_pin_hint}")
-            if not hints:
-                hints = ['upgrade SkyPilot (`pip install -U "skypilot[vast]"`)']
-            hint_text = "; or ".join(hints)
-            raise OrchestrationError(
-                (
-                    f"{message}\nDetected SkyPilot backend parsing incompatibility. "
-                    f"Recommended fix: {hint_text}"
-                ),
-            ) from exc
-        raise
+            )
+            if stall_timeout_sec is not None and stall_timeout_sec > 0
+            else None
+        ),
+    )
 
 
 def exec_remote(
@@ -975,19 +926,17 @@ def _plan_steps(args: argparse.Namespace) -> list[str]:
 def _run_preflight_and_resolve_config(
     ctx: _OrchestrationContext,
     mark_step: Callable[[str, str], None],
-) -> tuple[dict[str, Any], str, str | None, str | None, bool]:
+) -> tuple[dict[str, Any], str, bool]:
     """Run preflight checks and resolve artifact transfer + wandb settings.
 
     Returns:
-        Tuple of (preflight_dict, artifact_transfer_method, sky_upgrade_hint,
-        click_pin_hint, use_remote_wandb).
+        Tuple of (preflight_dict, artifact_transfer_method, use_remote_wandb).
     """
     mark_step("preflight", "Running preflight checks")
     preflight = preflight_checks(
         repo_root=ctx.repo_root,
         download_root=ctx.run_root,
         template_path=ctx.template_path,
-        infra=ctx.args.infra,
     )
     (ctx.logs_dir / "preflight.json").write_text(json.dumps(preflight, indent=2))
     _status("Preflight checks passed")
@@ -1003,8 +952,6 @@ def _run_preflight_and_resolve_config(
         if configured_transfer_method == "auto"
         else configured_transfer_method
     )
-    sky_upgrade_hint = preflight.get("sky_upgrade_hint")
-    click_pin_hint = preflight.get("click_pin_hint")
     use_remote_wandb = bool(preflight.get("wandb_api_key_set"))
     _status(
         f"Artifact transfer mode: {artifact_transfer_method} "
@@ -1015,7 +962,7 @@ def _run_preflight_and_resolve_config(
             "Remote benchmark stages will run with --no-wandb (WANDB_API_KEY is not configured).",
             level="WARN",
         )
-    return preflight, artifact_transfer_method, sky_upgrade_hint, click_pin_hint, use_remote_wandb
+    return preflight, artifact_transfer_method, use_remote_wandb
 
 
 def _handle_dry_run(
@@ -1049,8 +996,6 @@ def _retry_launch_on_visible_cluster(
     ctx: _OrchestrationContext,
     sky_yaml: Path,
     sky_executable: str,
-    sky_upgrade_hint: str | None,
-    click_pin_hint: str | None,
 ) -> bool:
     """Retry on-demand launch if the cluster is already visible after a timeout.
 
@@ -1085,8 +1030,6 @@ def _retry_launch_on_visible_cluster(
             live_peek=ctx.args.live_peek,
             peek_interval_sec=ctx.args.peek_interval_sec,
             capture_limit_chars=ctx.capture_limit_chars,
-            sky_upgrade_hint=sky_upgrade_hint,
-            click_pin_hint=click_pin_hint,
         )
     except OrchestrationError:
         return False
@@ -1096,8 +1039,6 @@ def _retry_launch_on_visible_cluster(
 def _launch_spot_fallback(
     ctx: _OrchestrationContext,
     sky_executable: str,
-    sky_upgrade_hint: str | None,
-    click_pin_hint: str | None,
     fallback_exc: OrchestrationError,
 ) -> tuple[Path, bool]:
     """Attempt spot-instance fallback after an on-demand launch failure.
@@ -1150,8 +1091,6 @@ def _launch_spot_fallback(
         live_peek=ctx.args.live_peek,
         peek_interval_sec=ctx.args.peek_interval_sec,
         capture_limit_chars=ctx.capture_limit_chars,
-        sky_upgrade_hint=sky_upgrade_hint,
-        click_pin_hint=click_pin_hint,
     )
     return sky_yaml, True
 
@@ -1160,8 +1099,6 @@ def _launch_cluster_with_fallbacks(
     ctx: _OrchestrationContext,
     sky_yaml: Path,
     sky_executable: str,
-    sky_upgrade_hint: str | None,
-    click_pin_hint: str | None,
 ) -> tuple[bool, bool]:
     """Launch cluster with timeout retry and optional spot fallback.
 
@@ -1179,8 +1116,6 @@ def _launch_cluster_with_fallbacks(
             live_peek=ctx.args.live_peek,
             peek_interval_sec=ctx.args.peek_interval_sec,
             capture_limit_chars=ctx.capture_limit_chars,
-            sky_upgrade_hint=sky_upgrade_hint,
-            click_pin_hint=click_pin_hint,
         )
         return False, False
     except OrchestrationError as exc:
@@ -1195,8 +1130,6 @@ def _launch_cluster_with_fallbacks(
                 ctx,
                 sky_yaml,
                 sky_executable,
-                sky_upgrade_hint,
-                click_pin_hint,
             )
 
         if launch_ok:
@@ -1206,8 +1139,6 @@ def _launch_cluster_with_fallbacks(
             _launch_spot_fallback(
                 ctx,
                 sky_executable,
-                sky_upgrade_hint,
-                click_pin_hint,
                 exc,
             )
             return True, True
@@ -1427,8 +1358,6 @@ def orchestrate(args: argparse.Namespace) -> int:
         (
             preflight,
             artifact_transfer_method,
-            sky_upgrade_hint,
-            click_pin_hint,
             use_remote_wandb,
         ) = _run_preflight_and_resolve_config(ctx, mark_step)
 
@@ -1463,8 +1392,6 @@ def orchestrate(args: argparse.Namespace) -> int:
             ctx,
             sky_yaml,
             sky_executable,
-            sky_upgrade_hint,
-            click_pin_hint,
         )
         if spot_fallback:
             used_spot_fallback = True
