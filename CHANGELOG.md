@@ -985,6 +985,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An example started from the test suite draws with matplotlib's Agg backend on any machine. The
+  test run set no `MPLBACKEND`, so on a machine with a display matplotlib picked TkAgg, and
+  `06_mnist_tutorial` and the MixUp/CutMix tutorial aborted on `Tcl_AsyncDelete: async handler
+  deleted by the wrong thread` in some runs; CI, with no display, never met it. `[tool.pytest_env]`
+  now sets `MPLBACKEND = "Agg"` unless the caller set one, as substrax, calibrax, receptifex and
+  seismifex do, and `run_python` hands it to every example's process. With a display, both
+  examples passed three runs of three.
 - The inherited-CUDA guard's test (`tests/pipeline/test_host_worker_setup.py::`
   `TestWorkerSetUpPositiveControls`) checks what it states. Its script set `jax_platforms` to the
   CPU at module level, which every spawned worker re-runs, so no worker saw the inherited

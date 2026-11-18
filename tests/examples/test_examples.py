@@ -11,6 +11,7 @@ import os
 import platform
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -150,6 +151,34 @@ class TestUnavailableReason:
 
     def test_a_run_that_succeeded_is_never_unavailable(self) -> None:
         assert unavailable_reason(0, "429 Client Error: retried and succeeded") is None
+
+
+class TestExampleBackend:
+    """An example started from a test draws off screen, whatever display the machine has."""
+
+    def test_an_example_process_gets_the_test_runs_matplotlib_backend(self, tmp_path: Path) -> None:
+        """The child inherits the test process's ``MPLBACKEND``, never the desktop's default.
+
+        With a display (``DISPLAY`` set) and no ``MPLBACKEND``, matplotlib picks an interactive
+        backend such as TkAgg, whose objects are torn down from a worker thread and abort the
+        example (``Tcl_AsyncDelete: async handler deleted by the wrong thread``). pytest-env sets
+        ``MPLBACKEND`` for the test run, unless the caller set one, and ``run_python`` hands the
+        child this process's environment.
+        """
+        script = tmp_path / "backend.py"
+        script.write_text("import os\nprint(os.environ.get('MPLBACKEND'))\n")
+
+        result = run_python(script, timeout=60, env={"DISPLAY": ":0"}).check()
+
+        assert os.environ.get("MPLBACKEND") is not None
+        assert result.stdout.strip() == os.environ["MPLBACKEND"]
+
+    def test_the_test_run_defaults_to_agg(self) -> None:
+        """Agg, matplotlib's non-interactive backend, is the default a caller can override."""
+        with open(REPO_ROOT / "pyproject.toml", "rb") as file:
+            pytest_env = tomllib.load(file)["tool"]["pytest_env"]
+
+        assert pytest_env["MPLBACKEND"] == {"skip_if_set": True, "value": "Agg"}
 
 
 @pytest.mark.slow
