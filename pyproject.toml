@@ -462,6 +462,10 @@ testpaths = ["tests"]
 # D: prefix = set as default only (don't override existing env vars)
 JAX_ENABLE_X64 = {skip_if_set = true, value = "0"}
 JAX_SKIP_CUDA_CONSTRAINTS_CHECK = {skip_if_set = true, value = "1"}
+# Agg draws off screen, as substrax, calibrax, receptifex and seismifex set it. With a display and
+# no backend named, matplotlib picks an interactive one (TkAgg), and an example started from a test
+# inherits it through run_python and aborts when a worker thread tears a Tk object down.
+MPLBACKEND = {skip_if_set = true, value = "Agg"}
 # Ray 2.53's uv runtime_env hook detects uv-managed venvs and tries to
 # recreate them for workers — but the new venv lacks ray itself, causing
 # workers to crash silently and from_numpy()/iter_batches() to hang.
