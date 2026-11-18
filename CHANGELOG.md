@@ -999,6 +999,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A worker plan charges the units Grain has yet to delete, once to its RAM bound and once to its
+  `/dev/shm` bound: `ceil(M / L) E`, where `M` is the segments of dropped units Grain lets wait
+  for its deletion thread to close and unlink (`max_outstanding_requests`, 50, read from
+  `SharedMemoryArray.enable_async_del`'s signature as `read_plan.DELETION_BACKLOG_SEGMENTS`) and
+  `L` the segments one unit takes, one per leaf Grain copies to shared memory
+  (`HostTerms.unit_segments`; `read_plan.host_unit_segments` for a pipeline's batches: the
+  spec's non-empty leaves and three identity arrays). Without it, `/dev/shm` held more than the
+  plan's bound: sampled continuously over 400 batches of 2 workers and 5 leaves, up to 113
+  segments against 65, with Grain's 47 to 50 deletions pending, and 65 at most with deletion
+  synchronous; `test_steady_state_segments_are_the_units_the_queues_hold` failed with `(67, 65)`
+  and `(69, 65)` in CI. Plans under a small `/dev/shm` now take fewer workers or are refused
+  sooner, and both refusals name the term.
 - The streaming census (`tests/benchmarks/test_streaming_iteration_speed.py`) counts its passes in
   a fresh interpreter. A counted block ends with a counted collection, which also freed garbage
   earlier tests had left: a finished Grain worker read keeps its last shared-memory arrays in a

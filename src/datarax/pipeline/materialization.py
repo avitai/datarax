@@ -59,6 +59,7 @@ from datarax.pipeline.read_plan import (
     HostTerms,
     measure_terms,
     refuse_below_fixed,
+    sent_segments,
     warn_one_thread,
     WORKER_BUFFER,
 )
@@ -255,6 +256,7 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
     *,
     remaining: int,
     unit_bytes: int,
+    unit_segments: int,
     sink_bytes: int,
     task: _WriteUnit | _DecodeUnit,
 ) -> int:
@@ -265,6 +267,7 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
         resources: The caller's budget and cap, or ``None``.
         remaining: Units left after the training process's unit 0.
         unit_bytes: ``E``, what one unit sends back to the training process.
+        unit_segments: ``L``, the segments of shared memory that takes.
         sink_bytes: ``C``, the decoded columns the training process holds (0 for a copy).
         task: What a worker runs.
 
@@ -285,6 +288,7 @@ def _workers(  # noqa: PLR0913 - what a build's plan is measured from, each give
     settings = JaxSettings.current()
     terms: HostTerms = measure_terms(
         unit_bytes=unit_bytes,
+        unit_segments=unit_segments,
         order_bytes=0,  # a build reads its source in stored order, whole units at a time
         depth=0,
         path=path,
@@ -385,6 +389,7 @@ def _into_memory(
         resources,
         remaining=units - 1,
         unit_bytes=sum(rows.nbytes for rows in first[1].values()),
+        unit_segments=sent_segments(first),
         sink_bytes=layout.nbytes,
         task=task,
     )
@@ -471,6 +476,7 @@ def _write_copy(
                 resources,
                 remaining=files.units - 1,
                 unit_bytes=host_workers.pickled_bytes(first),
+                unit_segments=sent_segments(first),  # its provenance and digest: none
                 sink_bytes=0,
                 task=task,
             )

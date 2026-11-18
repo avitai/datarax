@@ -15,6 +15,10 @@ bytes:
   buffer and output buffer, its queues holding about ``2o + 2`` units in shared memory (``o`` in
   the worker's queue and one waiting to be put, ``o`` in the training process's buffer of the
   worker and one in its producer's hand);
+- ``L``: the segments a unit takes in shared memory, one per leaf Grain copies there; ``M``:
+  the segments of dropped units Grain lets wait for its deletion thread to close and unlink
+  (:data:`DELETION_BACKLOG_SEGMENTS`), so ``ceil(M / L)`` units' bytes, once per training
+  process (:func:`deletion_backlog_bytes`);
 - ``F``: a worker's own memory; ``P``: what a worker is sent, the read; ``S``: the source's
   working set in a worker; ``O``: the order's working set; ``C``: the decoded columns a build
   holds in the training process (0 for a pipeline's run); ``M_main``: the training process's
@@ -24,8 +28,9 @@ bytes:
 
 Workers ``k`` for a GIL-bound read is the largest count with::
 
-    M_main + O + C + (d + 1) E + k (F + P + r E + S) + k (2o + 2) E  <=  ram_budget_bytes
-    k (2o + 2) E + (d + 1) E                                          <=  the /dev/shm bytes
+    M_main + O + C + (d + 1) E + ceil(M / L) E + k (F + P + r E + S) + k (2o + 2) E
+                                                        <=  ram_budget_bytes
+    k (2o + 2) E + (d + 1) E + ceil(M / L) E            <=  the /dev/shm bytes
     k  <=  max_workers  <=  the CPUs available
 
 where the ``/dev/shm`` bytes are the smaller of the caller's share
@@ -46,6 +51,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import inspect
 import logging
 import math
 from collections.abc import Callable
@@ -53,6 +59,7 @@ from typing import Any
 
 import jax
 import numpy as np
+from grain.multiprocessing import SharedMemoryArray
 
 from datarax.core.data_source import DataSourceModule, HostRead
 from datarax.core.host_resources import available_cpus, HostResources, WorkerFootprint
@@ -81,8 +88,25 @@ eight threads filling a 1,000-unit buffer read 0.397 of an H100's floor against 
 (Mann-Whitney p = 0.008, five runs each) and held 27.7 against 10.4 GiB."""
 WORKER_BUFFER = 2
 """A worker's output buffer ``o``: units it puts in its queue ahead of the training process."""
-IDENTITY_BYTES = 2 * 4 + 4 + 4
+_IDENTITY_ARRAY_BYTES = (2 * 4, 4, 4)  # a record's bytes in each: index words, epoch, draw
+IDENTITY_BYTES = sum(_IDENTITY_ARRAY_BYTES)
 """Host bytes a record's identity adds to its batch: its index words, epoch and draw."""
+IDENTITY_LEAVES = len(_IDENTITY_ARRAY_BYTES)
+"""Arrays a batch's identity adds to its leaves: its records' index words, epochs and draws."""
+DELETION_BACKLOG_SEGMENTS: int = (
+    inspect.signature(SharedMemoryArray.enable_async_del)
+    .parameters["max_outstanding_requests"]
+    .default
+)
+"""``M``: the segments of dropped units Grain lets wait for its deletion thread.
+
+The training process unlinks each segment a worker sends once the unit holding it is dropped.
+Grain hands that close and unlink to one thread and lets at most ``max_outstanding_requests``
+wait, deleting synchronously past it (``SharedMemoryArray.enable_async_del``, whose docstring
+warns that so many segments "may be buffered before deletion"). The first call in a process
+sets the bound; Grain makes it with its default at the process's first worker read, and datarax
+never makes it, so the bound in effect is that default, read from Grain's signature. A process
+that enables the deletion thread first with a larger bound holds more than the plan counts."""
 
 
 class HostReadPath(enum.Enum):
@@ -150,6 +174,9 @@ class HostTerms:
 
     Attributes:
         unit_bytes: ``E``, one unit as the read returns it.
+        unit_segments: ``L``, the segments one unit takes in shared memory when a worker sends
+            it: the leaves Grain copies there (:func:`host_unit_segments`); 0 for a unit
+            holding none.
         device_buffer: ``d``, placed units staged on the device ahead of the consumer's.
         main_bytes: ``M_main``, the training process's memory at plan time.
         order_bytes: ``O``, the order's working set; 0 for the global order.
@@ -169,6 +196,7 @@ class HostTerms:
     """
 
     unit_bytes: int
+    unit_segments: int
     device_buffer: int
     main_bytes: int = 0
     order_bytes: int = 0
@@ -354,8 +382,13 @@ def _worker_plan(resources: HostResources, terms: HostTerms) -> HostPlan:
     o, r = terms.worker_buffer, terms.worker_read_buffer
     at_device = (d + 1) * e
     in_queues = (2 * o + 2) * e
+    backlog = deletion_backlog_bytes(e, terms.unit_segments)
+    awaiting = (
+        f"{backlog // e if e else 0} units awaiting Grain's deletion thread "
+        f"(M={DELETION_BACKLOG_SEGMENTS} segments over L={terms.unit_segments} a unit)"
+    )
     per_worker = terms.worker_bytes + terms.read_bytes + r * e + terms.working_bytes + in_queues
-    fixed = _fixed_bytes(terms)
+    fixed = _fixed_bytes(terms) + backlog
     budget = resources.ram_budget_bytes
     k = (budget - fixed) // per_worker
     if k < 1:
@@ -364,11 +397,11 @@ def _worker_plan(resources: HostResources, terms: HostTerms) -> HostPlan:
             f"F={terms.worker_bytes} (its own memory) + P={terms.read_bytes} (its copy of the "
             f"read) + S={terms.working_bytes} + {r + 2 * o + 2} units of E={e} bytes in its "
             f"buffers, beside M_main={terms.main_bytes}, O={terms.order_bytes}, "
-            f"C={terms.sink_bytes} and d={d} + 1 units at the device: raise ram_budget_bytes, "
-            "or omit host_resources to read on one thread"
+            f"C={terms.sink_bytes}, d={d} + 1 units at the device and {awaiting}: raise "
+            "ram_budget_bytes, or omit host_resources to read on one thread"
         )
     if terms.shm_free_bytes is not None:
-        room = (terms.shm_free_bytes - at_device) // in_queues
+        room = (terms.shm_free_bytes - at_device - backlog) // in_queues
         if room < 1:
             if terms.shm_share:
                 held = f"this process's /dev/shm share, shm_budget_bytes={terms.shm_free_bytes},"
@@ -377,9 +410,9 @@ def _worker_plan(resources: HostResources, terms: HostTerms) -> HostPlan:
                 held = f"/dev/shm has {terms.shm_free_bytes} bytes free,"  # nosec B108
                 way_out = "enlarge /dev/shm (Docker: --shm-size)"
             raise ValueError(
-                f"{held} below the {in_queues + at_device} bytes one worker's units take there "
-                f"({2 * o + 2} units of E={e} bytes in its queues and d={d} + 1 at the device): "
-                f"{way_out} or read smaller units"
+                f"{held} below the {in_queues + at_device + backlog} bytes one worker's units "
+                f"take there ({2 * o + 2} units of E={e} bytes in its queues, d={d} + 1 at the "
+                f"device and {awaiting}): {way_out} or read smaller units"
             )
         k = min(k, room)
     k = min(k, resources.max_workers)
@@ -393,8 +426,29 @@ def _worker_plan(resources: HostResources, terms: HostTerms) -> HostPlan:
         device_buffer=d,
         terms=terms,
         accounted_bytes=fixed + k * per_worker,
-        shm_bytes=k * in_queues + at_device,
+        shm_bytes=k * in_queues + at_device + backlog,
     )
+
+
+def deletion_backlog_bytes(unit_bytes: int, unit_segments: int) -> int:
+    """``ceil(M / L) E``: the bytes of dropped units Grain's deletion thread may hold.
+
+    Grain lets ``M`` segments (:data:`DELETION_BACKLOG_SEGMENTS`) wait to be closed and
+    unlinked. The consumer drops a unit whole, so they are the segments of the units dropped
+    last, in order: ``M`` consecutive segments of units of ``L`` segments cover ``M // L``
+    units and ``M mod L`` segments more, less than one more unit, so at most ``ceil(M / L)``
+    units' bytes.
+
+    Args:
+        unit_bytes: ``E``, one unit's host bytes.
+        unit_segments: ``L``, the segments one unit takes in shared memory; 0 for none.
+
+    Returns:
+        The bytes, 0 when a unit takes no shared memory.
+    """
+    if unit_segments == 0:
+        return 0
+    return math.ceil(DELETION_BACKLOG_SEGMENTS / unit_segments) * unit_bytes
 
 
 def spec_bytes(spec: Any) -> int:
@@ -429,9 +483,57 @@ def host_batch_bytes(source: DataSourceModule, batch_size: int) -> int:
     return batch_size * (spec_bytes(spec) + IDENTITY_BYTES)
 
 
+def host_unit_segments(source: DataSourceModule) -> int:
+    """``L`` for a unit of ``source``: the segments a worker's unit takes in shared memory.
+
+    Grain copies each leaf of a unit that is a non-empty, C-contiguous numpy array of a dtype
+    holding no objects into a segment of its own, and pickles the rest
+    (``grain._src.python.ipc.shared_memory_array._copy_leaf_to_shm``): a batch's data leaves
+    the spec declares and its records' identity arrays. A unit's provenance holds values that
+    pickle (:func:`~datarax.pipeline.host_workers.crossing_provenance`), never an array. A chunk
+    ``(K, B, ...)`` has a batch's leaves.
+
+    Args:
+        source: The source the unit is read from.
+
+    Returns:
+        The segments.
+    """
+    copied = sum(
+        1
+        for leaf in jax.tree.leaves(declared_spec(source))
+        if _takes_a_segment(leaf.shape, leaf.dtype)
+    )
+    return copied + IDENTITY_LEAVES
+
+
+def sent_segments(unit: Any) -> int:
+    """``L`` for ``unit`` as a worker sends it: the leaves Grain copies to shared memory.
+
+    Args:
+        unit: The value a worker returns for one unit.
+
+    Returns:
+        Its non-empty, C-contiguous numpy arrays holding no objects.
+    """
+    return sum(
+        1
+        for leaf in jax.tree.leaves(unit)
+        if isinstance(leaf, np.ndarray)
+        and leaf.flags.c_contiguous
+        and _takes_a_segment(leaf.shape, leaf.dtype)
+    )
+
+
+def _takes_a_segment(shape: tuple[int, ...], dtype: Any) -> bool:
+    """Whether Grain copies an array of ``shape`` and ``dtype`` to a segment of its own."""
+    return math.prod(shape) > 0 and not np.dtype(dtype).hasobject
+
+
 def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each given once
     *,
     unit_bytes: int,
+    unit_segments: int,
     order_bytes: int,
     depth: int,
     path: HostReadPath,
@@ -456,6 +558,8 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
 
     Args:
         unit_bytes: ``E``, one unit's host bytes.
+        unit_segments: ``L``, the segments one unit takes in shared memory when a worker sends
+            it (:func:`host_unit_segments` for a pipeline's batches).
         order_bytes: ``O``, what the run's order keeps resident
             (:func:`~datarax.core.host_resources.order_working_bytes`); 0 for the global order.
         depth: ``d``, placed units staged on the device ahead of the consumer's.
@@ -476,6 +580,7 @@ def measure_terms(  # noqa: PLR0913 - what one run's measurement needs, each giv
     """
     terms = HostTerms(
         unit_bytes=unit_bytes,
+        unit_segments=unit_segments,
         order_bytes=order_bytes,
         device_buffer=depth,
         cpus=available_cpus(),
@@ -524,7 +629,9 @@ def _shm_bound(share: int | None) -> dict[str, Any]:
 
 
 __all__ = [
+    "DELETION_BACKLOG_SEGMENTS",
     "IDENTITY_BYTES",
+    "IDENTITY_LEAVES",
     "MAX_READ_THREADS",
     "READ_BUFFER",
     "READ_THREADS",
@@ -536,10 +643,13 @@ __all__ = [
     "ReadAccess",
     "budget_plan",
     "default_plan",
+    "deletion_backlog_bytes",
     "host_batch_bytes",
     "host_read_path",
+    "host_unit_segments",
     "measure_terms",
     "refuse_below_fixed",
+    "sent_segments",
     "spec_bytes",
     "warn_one_thread",
 ]

@@ -27,7 +27,7 @@ from flax import nnx
 from datarax.core.data_source import known_length, RecordIdentity
 from datarax.core.host_resources import available_cpus, HostResources
 from datarax.pipeline import materialization, materialize, Pipeline
-from datarax.pipeline.read_plan import WORKER_BUFFER
+from datarax.pipeline.read_plan import deletion_backlog_bytes, WORKER_BUFFER
 from datarax.sources import from_tfds, MemorySource, MemorySourceConfig, open_decoded_copy
 from datarax.sources.decoded_copy._units import source_layout
 from tests.test_common.decoded_copies import every_record, write_copy
@@ -186,7 +186,8 @@ class TestIntoMemory:
     def test_shared_memory_holds_units_never_the_columns(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_before: bool
     ) -> None:
-        """The decoded units cross ``/dev/shm`` a few at a time, as the plan counts them.
+        """The decoded units cross ``/dev/shm`` a few at a time, as the plan counts them, with
+        the units Grain's deletion thread has yet to close and unlink.
 
         Sampled at every unit the training process takes, from the shared-memory files it and its
         workers hold, less those it held when the build started: only this build's, whatever else
@@ -198,7 +199,8 @@ class TestIntoMemory:
         source = png_source(write_png_records(tmp_path / "png", 20 * _RECORDS))
         layout = source_layout(source)
         unit = _UNIT * sum(c.row_bytes for c in layout.columns)
-        bound = workers * (2 * WORKER_BUFFER + 2) * unit + unit
+        awaiting_deletion = deletion_backlog_bytes(unit, len(layout.columns))
+        bound = workers * (2 * WORKER_BUFFER + 2) * unit + unit + awaiting_deletion
         peaks: list[int] = []
         take = materialization.check_arrival
 
@@ -224,6 +226,7 @@ class TestIntoMemory:
         layout = source_layout(png_source(png_paths))
         unit = _UNIT * sum(c.row_bytes for c in layout.columns)
         bound = 2 * (2 * WORKER_BUFFER + 2) * unit + unit
+        bound += deletion_backlog_bytes(unit, len(layout.columns))
         before = shm_names_of([os.getpid()])
         with _held_segment(layout.nbytes * 8):
             held = _segment_bytes([os.getpid()], before)
