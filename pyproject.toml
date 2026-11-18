@@ -42,7 +42,7 @@ dependencies = [
   "numpy>=2.1",
   "psutil>=5.9.0",
   "PyYAML>=6",
-  "grain>=0.2.18"
+  "grain>=0.2.19"
 ]
 description = "Differentiable data pipelines for JAX/Flax NNX: HuggingFace, TFDS and ArrayRecord sources, augmentation stages, scan-based epochs, exact mid-epoch resume"
 keywords = ["jax", "flax", "nnx", "data-loading", "machine-learning", "workshop"]

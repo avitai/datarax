@@ -135,9 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   send provenance as plain dicts and the training process restores the read-only mappings; a
   value that cannot be pickled stops the run naming its unit, and the training process checks
   every unit arrives in turn, so Grain's silent loss of an element it cannot pickle
-  (google/grain#1415) is an error naming the missing unit, never a short run. Outside
-  `absl.app.run`, datarax marks Grain's `--grain_enable_multiprocess_worker_profiling` present
-  (Grain reads it as a worker starts; a later `FLAGS(argv)` still sets it).
+  (google/grain#1415) is an error naming the missing unit, never a short run. A script outside
+  `absl.app.run` reads with workers to the end, Grain 0.2.19 reading its worker-profiling flag
+  unparsed, and a later `FLAGS(argv)` still sets that flag.
 - `TFDSStreamingSource.run_dataset(schedule, key, *, for_workers=False)`: a run read by worker
   processes sends them the offset index as one read-only copy in shared memory, made once for the
   source and removed with it; the source reads that copy too, so the host holds one.
@@ -378,6 +378,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The nightly macOS lane in `macos.yml`, its unit tests and the package build it runs before a
   release, runs on `macos-15`. GitHub retires the `macos-14` image on 2026-11-02
   (actions/runner-images#13518), and its scheduled brownouts already cancel jobs that ask for it.
+- Requires grain 0.2.19, the first release that reads `--grain_enable_multiprocess_worker_profiling`
+  outside `absl.app.run` (google/grain `a3b351858a`).
 - Requires substrax 0.1.28 and calibrax 0.1.20, the latest releases. substrax 0.1.27 removed
   `substrax.testing.run_example` and `unavailable_reason` and the `include` filter of
   `substrax.examples.discover_examples`: `tests/examples` keeps datarax's numbered-example rule

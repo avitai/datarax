@@ -159,7 +159,6 @@ import jax
 from substrax.testing import report
 jax.config.update("jax_platforms", "cpu")  # set in code: a spawned worker does not inherit it
 import grain
-from absl import flags
 from flax import nnx
 from datarax.pipeline import Pipeline
 from tests.test_common.worker_reads import png_source, resources, WorkerFactsDecoder
@@ -173,8 +172,6 @@ if __name__ == "__main__":
     control = "served"
     read = pipe.host_stage.read_for_workers(pipe)
     pipe.close()
-    if not flags.FLAGS.is_parsed():
-        flags.FLAGS["grain_enable_multiprocess_worker_profiling"].present = 1
     bare = grain.MapDataset.range(2).map(read).to_iter_dataset().mp_prefetch(
         grain.multiprocessing.MultiprocessingOptions(num_workers=1))
     try:
@@ -299,26 +296,12 @@ if __name__ == "__main__":
     report({"served": served, "flag": flags.FLAGS.grain_enable_multiprocess_worker_profiling})
 """
 
-_BARE_GRAIN = """
-import grain
-from substrax.testing import report
-import jax
-import numpy as np
-
-if __name__ == "__main__":
-    jax.devices()
-    ds = grain.MapDataset.range(4).map(lambda i: np.full(2, i)).to_iter_dataset().mp_prefetch(
-        grain.multiprocessing.MultiprocessingOptions(num_workers=1))
-    try:
-        served = len(list(ds))
-        report({"outcome": f"served {served}"})
-    except Exception as error:
-        report({"outcome": type(error).__name__})
-"""
-
 
 class TestTheGrainFlag:
-    """Grain reads ``--grain_enable_multiprocess_worker_profiling`` as it starts a worker."""
+    """Grain reads ``--grain_enable_multiprocess_worker_profiling`` as it starts a worker.
+
+    Grain 0.2.19 and later read it without ``absl.app.run``; these hold for a datarax script.
+    """
 
     def test_the_suite_leaves_absl_flags_unparsed(self) -> None:
         """No conftest marks every flag parsed: each test meets absl as a user's script does."""
@@ -333,14 +316,6 @@ class TestTheGrainFlag:
     def test_a_later_flags_parse_still_wins(self, png_paths: list[str], tmp_path: Path) -> None:
         report = _run_script(tmp_path, _OUTSIDE_APP_RUN, *png_paths, env={})
         assert report["flag"] is True
-
-    def test_tripwire_bare_grain_still_raises_outside_app_run(self, tmp_path: Path) -> None:
-        """Fails once the installed Grain stops raising: then datarax's mark goes (a3b351858a)."""
-        report = _run_script(tmp_path, _BARE_GRAIN, env={})
-        assert report["outcome"] == "UnparsedFlagAccessError", (
-            f"Grain no longer raises outside absl.app.run ({report['outcome']}): remove datarax's "
-            "mark of --grain_enable_multiprocess_worker_profiling and this tripwire"
-        )
 
 
 @pytest.mark.tfds
