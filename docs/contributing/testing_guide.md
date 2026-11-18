@@ -110,19 +110,23 @@ The following workflows are configured to run tests on CPU:
 - `ci.yml`: Main CI workflow, including unit, integration, end-to-end,
   performance, and combined coverage jobs
 
-The unit tests run in shards: pytest-split divides one collection into
-`UNIT_TEST_SHARDS` groups, one per matrix leg, and every shard of a run seeds
-pytest-randomly with the run's id so that each sees the same order and each test
-lands in exactly one shard. To reproduce a failing shard, take the seed from its
-log (`Using --randomly-seed=...`) and run the same group in an environment with
-the job's extras (`uv sync --extra dev --extra test --extra data --extra wandb`);
-another set of extras collects other tests, and the groups then differ:
+The unit tests and the long-running tests run in shards: pytest-split divides one
+collection into `UNIT_TEST_SHARDS` (8) or `LONG_RUNNING_SHARDS` (3) groups, one per
+matrix leg, and every shard of a run seeds pytest-randomly with the run's id so that
+each sees the same order and each test lands in exactly one shard. To reproduce a
+failing shard, take the seed from its log (`Using --randomly-seed=...`) and run the
+same group with the job's markers in an environment with the job's extras (for a unit
+shard, `uv sync --extra dev --extra test --extra data --extra wandb`); another set of
+extras or markers collects other tests, and the groups then differ:
 
 ```bash
 uv run pytest tests benchmarks/tests --no-integration --no-end-to-end --no-benchmark \
-  -m "not slow" --splits 4 --group 2 --splitting-algorithm least_duration \
+  -m "not slow and not tfds" --splits 8 --group 2 --splitting-algorithm least_duration \
   --randomly-seed=<seed>
 ```
+
+A long-running shard takes `-m "slow or tfds" --splits 3`, the long-running job's extras
+and the TFDS fixture that job prepares (`DATARAX_TFDS_FIXTURE_DIR`).
 
 ## Writing Device-Specific Tests
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import configparser
 import fnmatch
+import math
 import re
 import shlex
 import subprocess  # nosec B404
@@ -941,11 +942,17 @@ def test_the_security_audit_reads_every_extra_in_the_lock() -> None:
 
 
 UNIT_JOB = "unit_tests"
-SHARD_COUNT = "UNIT_TEST_SHARDS"
+LONG_RUNNING_JOB = "long_running_tests"
+# Each sharded job and the env variable that holds its shard count.
+SHARDED_JOBS = (
+    pytest.param(UNIT_JOB, "UNIT_TEST_SHARDS", id="unit"),
+    pytest.param(LONG_RUNNING_JOB, "LONG_RUNNING_SHARDS", id="long-running"),
+)
 
 
-def _unit_test_step() -> dict:
-    (step,) = [step for step in _jobs()[UNIT_JOB]["steps"] if "pytest" in str(step.get("run", ""))]
+def _test_step(job_name: str) -> dict:
+    """The one step of a job that runs pytest."""
+    (step,) = [step for step in _jobs()[job_name]["steps"] if "pytest" in str(step.get("run", ""))]
     return step
 
 
@@ -973,23 +980,26 @@ def _option(arguments: list[str], name: str) -> str:
     raise AssertionError(f"pytest is not given {name}: {arguments}")
 
 
-def test_the_unit_suite_runs_as_one_collection_split_into_shards() -> None:
+@pytest.mark.parametrize(("job_name", "shard_count"), SHARDED_JOBS)
+def test_a_sharded_suite_runs_as_one_collection_split_into_shards(
+    job_name: str, shard_count: str
+) -> None:
     """Each matrix leg runs one pytest-split group of the same collection.
 
     The group list is exactly 1..N for the N shards the job declares, so no group is left
     unrun, and every leg reports on its own (``fail-fast`` off) so one red shard does not
     cancel the others' coverage.
     """
-    job = _jobs()[UNIT_JOB]
-    shards = int(job["env"][SHARD_COUNT])
+    job = _jobs()[job_name]
+    shards = int(job["env"][shard_count])
     matrix = job["strategy"]["matrix"]
-    arguments = _pytest_arguments(_unit_test_step()["run"])
+    arguments = _pytest_arguments(_test_step(job_name)["run"])
 
     assert shards >= 2
     assert matrix["group"] == list(range(1, shards + 1))
     assert job["strategy"]["fail-fast"] is False
     assert "${{ matrix.group }}" in job["name"]
-    assert _option(arguments, "--splits") == f'"${SHARD_COUNT}"'
+    assert _option(arguments, "--splits") == f'"${shard_count}"'
     assert _option(arguments, "--group") == "${{matrix.group}}"
     assert _option(arguments, "--splitting-algorithm") == "least_duration"
     assert "pytest-split" in _dependency_names(
@@ -1000,7 +1010,8 @@ def test_the_unit_suite_runs_as_one_collection_split_into_shards() -> None:
     )
 
 
-def test_every_shard_orders_the_collection_with_one_seed() -> None:
+@pytest.mark.parametrize(("job_name", "shard_count"), SHARDED_JOBS)
+def test_every_shard_orders_the_collection_with_one_seed(job_name: str, shard_count: str) -> None:
     """The shards of a run share pytest-randomly's seed, so each sees the same item order.
 
     pytest-randomly reorders the collection before pytest-split assigns it, and pytest-split
@@ -1009,8 +1020,8 @@ def test_every_shard_orders_the_collection_with_one_seed() -> None:
     another lands in none. The run id is one value across the run, and a new one per run, so
     the order still changes from run to run.
     """
-    job = _jobs()[UNIT_JOB]
-    arguments = _pytest_arguments(_unit_test_step()["run"])
+    job = _jobs()[job_name]
+    arguments = _pytest_arguments(_test_step(job_name)["run"])
     install = next(s for s in job["steps"] if s.get("name") == "Install dependencies")["run"]
 
     assert _option(arguments, "--randomly-seed") == "${{github.run_id}}"
@@ -1030,27 +1041,27 @@ def _expand_matrix(template: str, matrix: dict) -> list[str]:
     return names
 
 
-def test_the_coverage_job_combines_every_shard() -> None:
+@pytest.mark.parametrize(("job_name", "shard_count"), SHARDED_JOBS)
+def test_the_coverage_job_combines_every_shard(job_name: str, shard_count: str) -> None:
     """Each shard uploads its own coverage data, and the coverage job reads all of them.
 
-    The artifact name carries the Python version and the group, so no two legs write the same
-    artifact; the coverage job waits on the whole matrix, downloads every ``coverage-*``
-    artifact into a directory of its own (not merged, where same-named ``.coverage`` files
-    would overwrite each other) and combines what it finds.
+    The artifact name carries every matrix value, so no two legs write the same artifact; the
+    coverage job waits on the whole matrix, downloads every ``coverage-*`` artifact into a
+    directory of its own (not merged, where same-named ``.coverage`` files would overwrite
+    each other) and combines what it finds.
     """
     jobs = _jobs()
-    unit = jobs[UNIT_JOB]
-    upload = _step_using(unit, "actions/upload-artifact@")
+    sharded = jobs[job_name]
+    upload = _step_using(sharded, "actions/upload-artifact@")
     coverage = jobs["coverage"]
     download = _step_using(coverage, "actions/download-artifact@")
     combine = next(s for s in coverage["steps"] if "coverage combine" in str(s.get("run", "")))
-    names = _expand_matrix(upload["with"]["name"], unit["strategy"]["matrix"])
-    legs = len(unit["strategy"]["matrix"]["python-version"]) * len(
-        unit["strategy"]["matrix"]["group"]
-    )
+    matrix = sharded["strategy"]["matrix"]
+    names = _expand_matrix(upload["with"]["name"], matrix)
+    legs = math.prod(len(values) for values in matrix.values())
 
     assert len(set(names)) == len(names) == legs
-    assert UNIT_JOB in coverage["needs"]
+    assert job_name in coverage["needs"]
     assert all(fnmatch.fnmatchcase(name, download["with"]["pattern"]) for name in names)
     assert download["with"].get("merge-multiple") is not True
     assert f'find {download["with"]["path"]} -name ".coverage"' in combine["run"]

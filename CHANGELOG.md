@@ -372,6 +372,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CI runs the unit tests in 8 shards per Python, up from 4, and splits the long-running tests
+  into 3 shards, which ran as one job. Over six runs a unit leg of four shards took 13.8 to 25.0
+  minutes and the long-running job 18.4 to 26.6, and the coverage job waits on both. Each split
+  is pytest-split's count-based `least_duration` with the run's id as every shard's seed, the
+  method the unit shards and the stack's other repositories use. The testing guide's command
+  for rerunning a shard now carries the job's markers and shard count.
 - CI runs substrax's `already-tested` and `audit-lock` actions at v0.1.28. `audit-lock` names a
   requirement pip-audit cannot audit, such as a git-sourced package, and the service that wrote no
   report; `already-tested` is unchanged. `tests/test_tooling_contracts.py` records both pins.
