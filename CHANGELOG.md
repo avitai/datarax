@@ -1248,6 +1248,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The lock audit's two torch exceptions (PYSEC-2025-194, PYSEC-2026-139) state where torch
+  comes from: the `data` extra too, through torchcrepe for the audio pitch operator, not only
+  `benchmark`. They are still open: no fixed torch runs on CUDA 12 (the Linux wheels of each
+  minor release from 2.11.0 to 2.15.0 require CUDA 13), and PYSEC-2026-139 has no fixed
+  release. datarax calls no
+  `torch.jit` and loads torchcrepe's bundled weights with `weights_only=True`.
 - The lock takes the fixed releases of the packages pip-audit reports across every extra:
   opentelemetry-api 1.45.2 (CVE-2026-126360), soupsieve 4.1.1 (CVE-2026-126190,
   CVE-2026-126191, CVE-2026-126193) and tornado 6.6.1 (CVE-2026-126347); opentelemetry-sdk and
