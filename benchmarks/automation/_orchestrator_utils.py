@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 import shutil
 import subprocess  # nosec B404
 import sys
@@ -46,6 +45,13 @@ REMOTE_GPU_ENV_EXPORTS = [
 ]
 REMOTE_RESULTS_ROOT = "/root/results"
 REMOTE_DATA_ROOT = "/root/benchmark-data"
+# SkyPilot runs as a uv tool, in an environment of its own, never from the project's (as
+# substrax compute and ai-for-science-hub run it). Its 0.11 vast adapter calls
+# VastAI.api_key_access, which vastai-sdk 1.0 removed, so the tool keeps vastai-sdk on 0.2.x;
+# SkyPilot 0.11 itself requires click<8.2. pip is SkyPilot's documented companion.
+SKYPILOT_TOOL_INSTALL = (
+    "uv tool install --with pip --with 'vastai-sdk>=0.2.6,<0.3' 'skypilot[vast]>=0.11,<0.12'"
+)
 
 # ── Compiled patterns ─────────────────────────────────────────────────
 
@@ -228,65 +234,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-# ── Version / capability probing ──────────────────────────────────────
-
-
-def _build_sky_upgrade_hint(*, repo_root: Path, infra: str) -> str:
-    """Return a concrete local command to upgrade SkyPilot for this infra."""
-    pip_exe = repo_root / ".venv" / "bin" / "pip"
-    pip_cmd = str(pip_exe) if pip_exe.exists() else "pip"
-    extra = "vast" if infra.lower() == "vast" else "all"
-    return f'{shlex.quote(pip_cmd)} install -U "skypilot[{extra}]"'
-
-
-def _build_click_pin_hint(*, repo_root: Path) -> str:
-    """Return a concrete local command to pin Click to a compatible range."""
-    pip_exe = repo_root / ".venv" / "bin" / "pip"
-    pip_cmd = str(pip_exe) if pip_exe.exists() else "pip"
-    return f'{shlex.quote(pip_cmd)} install "click<8.3"'
-
-
-def _extract_semver(value: str | None) -> tuple[int, int, int] | None:
-    """Extract MAJOR.MINOR.PATCH from arbitrary text."""
-    if not value:
-        return None
-    match = re.search(r"(\d+)\.(\d+)\.(\d+)", value)
-    if match is None:
-        return None
-    parts = match.groups()
-    return (int(parts[0]), int(parts[1]), int(parts[2]))
-
-
-def _probe_python_package_version(*, python_executable: Path, package: str) -> str:
-    """Probe installed package version using the target python interpreter."""
-    if not python_executable.exists():
-        return "unknown"
-    script = f"import importlib.metadata as m; print(m.version({package!r}))"
-    try:
-        proc = subprocess.run(  # nosec B603
-            [str(python_executable), "-c", script],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return "unknown"
-
-    text = (proc.stdout or proc.stderr).strip()
-    if proc.returncode != 0 or not text:
-        return "unknown"
-    first_line = text.splitlines()[0].strip()
-    return first_line or "unknown"
-
-
-def _is_known_skypilot_click_backend_bug(*, sky_version: str, click_version: str) -> bool:
-    """Detect known ``False backend is not supported`` launch incompatibility."""
-    sky_semver = _extract_semver(sky_version)
-    click_semver = _extract_semver(click_version)
-    if sky_semver is None or click_semver is None:
-        return False
-    # SkyPilot 0.11.x + Click 8.3.x is known to break `sky launch`.
-    return sky_semver < (0, 12, 0) and click_semver >= (8, 3, 0)
+# ── Capability probing ────────────────────────────────────────────────
 
 
 def _probe_skypilot_capabilities(sky_executable: str) -> dict[str, Any]:

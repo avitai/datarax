@@ -10,55 +10,25 @@ SkyPilot provisions cloud instances across providers, syncs your code, runs benc
 
 ### 1. Install SkyPilot
 
-Install SkyPilot with your target cloud provider. Prefer installing into the project virtualenv so `sky` is always on PATH during benchmark runs:
+SkyPilot runs as a program, installed as a uv tool in an environment of its own, never into
+the project's: its dependencies stay out of datarax's lock. The orchestrator finds `sky` on
+`PATH`.
 
 ```bash
-# Preferred for this repo (installs orchestrator-compatible cloud deps)
-uv sync --extra automation
+# Vast.ai (the orchestrator's default infra)
+uv tool install --with pip --with 'vastai-sdk>=0.2.6,<0.3' 'skypilot[vast]>=0.11,<0.12'
 
-# Recommended: install in project venv
-./.venv/bin/pip install "skypilot[vast]"
-
-# Vast.ai
-pip install "skypilot[vast]"
-
-# Lambda Cloud
-pip install "skypilot[lambda]"
-
-# Multiple providers
-pip install "skypilot[vast,lambda,gcp]"
-
-# All supported providers
-pip install "skypilot[all]"
+# More providers: add their extras, e.g. 'skypilot[vast,lambda,gcp]>=0.11,<0.12'
 ```
 
-Known compatibility pitfalls:
+- SkyPilot 0.11's Vast adapter (`sky/adaptors/vast.py`) calls `VastAI.api_key_access`, which
+  vastai-sdk 1.0 removed, so the tool keeps vastai-sdk on the 0.2.x line. SkyPilot 0.11 itself
+  requires `click<8.2`.
+- After reinstalling the tool, stop the SkyPilot API daemon so the new packages load:
+  `sky api stop`.
 
-- `skypilot 0.11.x` + `click >= 8.3` can break `sky launch` with:
-  `ValueError: False backend is not supported.`
-- `skypilot 0.11.x` + `vastai-sdk >= 1.0` can break Vast.ai
-  provisioning with: `'VastAI' object has no attribute 'api_key_access'`.
-  The 1.0 SDK removed the attribute that SkyPilot's adapter at
-  `sky/adaptors/vast.py` uses; pin to the 0.2.x line until the
-  next SkyPilot upgrades the adapter.
-- After changing any SkyPilot dependency, restart the SkyPilot API
-  daemon so the new packages are reloaded — `pip install` updates
-  packages on disk but the running daemon keeps in-memory copies:
-
-```bash
-# fix click compatibility
-./.venv/bin/pip install -U "skypilot[vast]"
-# or
-./.venv/bin/pip install "click<8.3"
-
-# fix vastai-sdk compatibility (and bounce the daemon)
-./.venv/bin/pip install "vastai-sdk<0.3"
-./.venv/bin/sky api stop
-```
-
-The `automation` extra in `pyproject.toml` already pins both
-`click<8.3` and `vastai-sdk<0.3`, so a fresh
-`uv sync --extra automation` picks up the working combination.
+Analysing results locally (`--analyze`, or `python -m benchmarks.cli analyze`) runs the
+benchmark code, so it needs the `benchmark` extra: `uv sync --extra benchmark`.
 
 ### 2. Configure cloud credentials
 
@@ -73,11 +43,7 @@ sky check lambda
 sky check
 ```
 
-If `sky` is not found in your shell, run through the venv binary directly:
-
-```bash
-./.venv/bin/sky check vast
-```
+If `sky` is not found in your shell, add uv's tool directory to `PATH` (`uv tool update-shell`).
 
 **Vast.ai API key permissions**: When creating an API key at [cloud.vast.ai/account](https://cloud.vast.ai/account/), use minimum privilege:
 
@@ -457,21 +423,23 @@ sky exec datarax-vast-a100 -- \
 
 ### `sky: command not found`
 
-Install SkyPilot in the project venv and invoke it directly:
+Install SkyPilot as a uv tool (see [Install SkyPilot](#1-install-skypilot)) and put uv's tool
+directory on `PATH`:
 
 ```bash
-./.venv/bin/pip install "skypilot[vast]"
-./.venv/bin/sky check vast
+uv tool install --with pip --with 'vastai-sdk>=0.2.6,<0.3' 'skypilot[vast]>=0.11,<0.12'
+uv tool update-shell
+sky check vast
 ```
 
 ### `Error: No such command 'rsync'`
 
 Your SkyPilot CLI build does not expose `sky rsync`.
 
-1.  Upgrade SkyPilot:
+1.  Upgrade SkyPilot within its range:
 
 ```bash
-./.venv/bin/pip install -U "skypilot[vast]"
+uv tool upgrade skypilot
 ```
 
 2.  Use orchestrator auto-detection (`--artifact-transfer auto`, default), or force compatibility mode:

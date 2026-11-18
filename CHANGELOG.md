@@ -901,6 +901,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The `automation` extra. SkyPilot runs as a uv tool, never from the project's environment
+  (`uv tool install --with pip --with 'vastai-sdk>=0.2.6,<0.3' 'skypilot[vast]>=0.11,<0.12'`,
+  `benchmarks.automation._orchestrator_utils.SKYPILOT_TOOL_INSTALL`), as substrax compute runs
+  it. As an extra, SkyPilot 0.11's vast adapter held vastai-sdk on 0.2.x, which pins
+  `aiohttp==3.10.1`, and every vastai 1.x pins a cryptography the `cryptography>=50` floor
+  refuses, so the lock forked in two (ten `[tool.uv] conflicts` pairs) and kept advisories open:
+  44 ignore entries in `[tool.substrax.audit-lock.ignore]`, then nine new aiohttp ones that
+  failed every Security Scan. The lock now resolves once, with aiohttp 3.14.5 and click 8.5.0,
+  and drops SkyPilot, vastai-sdk and the 43 packages only they needed; the 44 ignore entries,
+  which matched no advisory once it did, and the conflicts are gone. The orchestrator requires
+  `sky` on `PATH`, printing the install when it is missing, and no longer falls back to
+  `.venv/bin/sky` or probes the venv's click for SkyPilot 0.11's click 8.3 failure: SkyPilot 0.11
+  requires `click<8.2` itself. The nightly benchmark workflow installs `--all-extras`. Local
+  analysis (`--analyze`) needs the `benchmark` extra.
 - The Example Documentation Design Framework (`docs/contributing/example_documentation_design.md`).
   New examples follow substrax's
   [Writing examples](https://substrax.readthedocs.io/en/latest/guides/writing-examples/) guide and
