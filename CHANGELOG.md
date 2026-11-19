@@ -1022,6 +1022,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the 2026-11-10 failure, with Grain's deletion slowed by 0.2 s a segment, the census failed 2
   runs of 4 in the suite's process, naming those two functions; counted in its own interpreter,
   it passed 8 of 8.
+- `test_a_training_process_dying_as_its_workers_start_leaves_none` holds the parent watcher to its
+  2 s from the moment it starts, not from the training process's death. A worker still starting
+  when its training process dies ends only once its set-up starts the watcher, after its spawn,
+  imports and unpickling; on 24 CPUs that took 1.4-1.6 s at a load average near 12 and 1.7-3.3 s
+  with 24 busy processes added, so the test failed under load (`[0]`, a worker alive 2 s after
+  the death) while every worker ended. Each worker now records when its watcher starts
+  (`tests.test_common.worker_reads.TimedSetUp`), must be gone within 2 s of the later of the
+  death and that start, and must end within 30 s, the wait Grain's test of its own watcher uses
+  (google/grain#1475). A watcher planted 3 s late fails all four cases.
 - An example started from the test suite draws with matplotlib's Agg backend on any machine. The
   test run set no `MPLBACKEND`, so on a machine with a display matplotlib picked TkAgg, and
   `06_mnist_tutorial` and the MixUp/CutMix tutorial aborted on `Tcl_AsyncDelete: async handler

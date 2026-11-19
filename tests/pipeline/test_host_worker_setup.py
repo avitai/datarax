@@ -43,8 +43,10 @@ from tests.test_common.worker_reads import (
     is_gone,
     png_source,
     ProcessReadMemorySource,
+    read_watch_starts,
     resources,
     stream_of,
+    WATCH_STARTS_VARIABLE,
     worker_children,
     WorkerFactsDecoder,
     write_png_records,
@@ -423,12 +425,14 @@ import json, os, signal, sys, threading, time
 from flax import nnx
 from datarax.pipeline import Pipeline, host_workers
 from tests.test_common.worker_reads import (
-    png_source, resources, shm_names_of, spawned_children, UnwatchedSetUp)
+    png_source, resources, shm_names_of, spawned_children, TimedSetUp, UnwatchedSetUp)
 
 if __name__ == "__main__":
     mode, when, *paths = sys.argv[1:]
     if mode == "unwatched":
         host_workers.WorkerSetUp = UnwatchedSetUp
+    elif mode == "timed":
+        host_workers.WorkerSetUp = TimedSetUp
     pipe = Pipeline(source=png_source(paths), stages=[], batch_size=3, rngs=nnx.Rngs(0),
                     num_epochs=None, host_resources=resources(2))
     batches = iter(pipe.raw_batches())
@@ -454,7 +458,16 @@ if __name__ == "__main__":
 """
 
 _GONE_WITHIN = 2.0
-"""Seconds every worker of a dead training process has to exit (measured 0.01-0.06 s)."""
+"""Seconds a worker whose watcher is running has to exit once its training process is dead
+(measured 0.01-0.06 s)."""
+
+_ENDED_WITHIN = 30.0
+"""Seconds a worker still starting when its training process dies has to end at all.
+
+It ends once its set-up starts the watcher, after its spawn, imports and unpickling, which take
+longer the busier the machine: on 24 CPUs, 1.4-1.6 s at a load average near 12 and 1.7-3.3 s
+with 24 busy processes added. The watcher's own time is held to :data:`_GONE_WITHIN`; this bounds
+only the wait, as Grain's test of its own watcher waits 30 s (google/grain#1475)."""
 
 
 def _until(check: Any, seconds: float) -> bool:
@@ -478,21 +491,53 @@ def _end_by_recorded_pid(pids: list[int]) -> None:
     assert _until(lambda: all(is_gone(pid) for pid in pids), 10.0)
 
 
+def _gone_at(pids: list[int], seconds: float) -> dict[int, float | None]:
+    """When (``time.monotonic()``) each of ``pids`` was first seen gone, within ``seconds``."""
+    gone: dict[int, float] = {}
+    deadline = time.monotonic() + seconds
+    while len(gone) < len(pids) and time.monotonic() < deadline:
+        for pid in pids:
+            if pid not in gone and is_gone(pid):
+                gone[pid] = time.monotonic()
+        time.sleep(0.01)
+    return {pid: gone.get(pid) for pid in pids}
+
+
+def _since(died: float, moment: float | None) -> float | None:
+    """Seconds from ``died`` to ``moment``, or ``None`` for a moment that never came."""
+    return None if moment is None else round(moment - died, 3)
+
+
 def _killed_parent(
-    tmp_path: Path, paths: list[str], mode: str, when: str, kill: int | None
+    tmp_path: Path,
+    paths: list[str],
+    mode: str,
+    when: str,
+    kill: int | None,
+    *,
+    wait: float = _GONE_WITHIN,
 ) -> dict[str, Any]:
     """Run :data:`_KILLED_PARENT`; ``kill`` it once it reports its workers, unless it kills itself.
 
     Returns:
-        The workers and ``/dev/shm`` names it reported, and the seconds from its death until
-        every worker was gone (``None`` when some outlived :data:`_GONE_WITHIN`).
+        The workers and ``/dev/shm`` names it reported; when it died and when each worker was
+        first seen gone (``None`` for one alive after ``wait`` seconds), on ``time.monotonic()``;
+        and the seconds from its death until every worker was gone (``None`` when some outlived
+        :data:`_GONE_WITHIN`).
     """
     script = tmp_path / "killed_parent.py"
     script.write_text(_KILLED_PARENT)
+    starts = tmp_path / "watch_starts"
+    starts.mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith(("JAX_", "XLA_"))}
     parent = subprocess.Popen(  # noqa: S603  # nosec B603 - this interpreter, the test's script
         [sys.executable, str(script), mode, when, *paths],
-        env={**env, "JAX_PLATFORMS": "cpu", "CUDA_VISIBLE_DEVICES": ""},
+        env={
+            **env,
+            "JAX_PLATFORMS": "cpu",
+            "CUDA_VISIBLE_DEVICES": "",
+            WATCH_STARTS_VARIABLE: str(starts),
+        },
         cwd=_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -507,17 +552,29 @@ def _killed_parent(
         parent.wait(timeout=60)
         died = time.monotonic()
         workers: list[int] = report["workers"]
-        gone = _until(lambda: all(is_gone(pid) for pid in workers), _GONE_WITHIN)
-        report["gone_after"] = time.monotonic() - died if gone else None
+        gone_at = _gone_at(workers, max(wait, _GONE_WITHIN))
+        seen = [t for t in gone_at.values() if t is not None]
+        last = max(seen) if len(seen) == len(workers) else None
+        report["died"] = died
+        report["gone_at"] = gone_at
+        report["watch_starts"] = read_watch_starts(starts)
+        report["gone_after"] = (
+            last - died if last is not None and last - died <= _GONE_WITHIN else None
+        )
         report["alive"] = [pid for pid in workers if not is_gone(pid)]
         logging.getLogger(__name__).info(
-            "%s parent, %s, ended %s: workers %s gone after %s s, alive %s",
+            "%s parent, %s, ended %s: workers %s gone after %s s, alive %s; from its death, "
+            "each worker's watcher start and exit (s): %s",
             mode,
             when,
             "by itself" if kill is None else signal.Signals(kill).name,
             workers,
             report["gone_after"],
             report["alive"],
+            {
+                pid: (_since(died, report["watch_starts"].get(pid)), _since(died, gone_at[pid]))
+                for pid in workers
+            },
         )
         return report
     finally:
@@ -554,10 +611,19 @@ class TestTheParentWatcher:
     def test_a_training_process_dying_as_its_workers_start_leaves_none(
         self, png_paths: list[str], tmp_path: Path, delay: str
     ) -> None:
-        report = _killed_parent(tmp_path, png_paths, "watched", delay, None)
+        """A worker still starting when its training process dies ends once its watcher starts.
+
+        Each worker is held to :data:`_GONE_WITHIN` from the later of the death and its own
+        watcher's start, so the time it spent starting, which load stretches, is not charged to
+        the watcher; and every worker must end, within :data:`_ENDED_WITHIN`.
+        """
+        report = _killed_parent(tmp_path, png_paths, "timed", delay, None, wait=_ENDED_WITHIN)
         try:
             assert report["workers"]
-            assert report["gone_after"] is not None, report
+            assert report["alive"] == [], report
+            for pid, gone in report["gone_at"].items():
+                watching = max(report["died"], report["watch_starts"].get(pid, report["died"]))
+                assert gone - watching <= _GONE_WITHIN, (pid, gone - watching, report)
         finally:
             _end_by_recorded_pid(report["workers"])
 
