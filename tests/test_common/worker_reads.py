@@ -400,6 +400,42 @@ def _no_watch() -> None:
     """Start nothing."""
 
 
+WATCH_STARTS_VARIABLE = "DATARAX_TEST_WATCH_STARTS"
+"""The environment variable naming the directory where :class:`TimedSetUp` records its starts."""
+
+
+@dataclass(frozen=True, slots=True)
+class TimedSetUp:
+    """datarax's worker set-up, recording when each worker starts its parent watcher.
+
+    A training script puts it in place of ``host_workers.WorkerSetUp``. Just before datarax's
+    watcher starts, each worker writes ``time.monotonic()`` to a file named by its process id in
+    the directory :data:`WATCH_STARTS_VARIABLE` names, so a test can tell the time a worker spent
+    starting (spawn, imports, unpickling) from the time its watcher took to end it.
+
+    Attributes:
+        settings: The run's JAX settings.
+    """
+
+    settings: JaxSettings
+
+    def __call__(self, index: int, count: int) -> None:
+        """Set the worker up as datarax does, recording the moment its watcher starts."""
+        host_workers._watch_parent = _timed_watch  # noqa: SLF001 - this worker's own module
+        _DATARAX_SET_UP(settings=self.settings)(index, count)
+
+
+def _timed_watch() -> None:
+    """Record this worker's start time, then start datarax's watcher."""
+    Path(os.environ[WATCH_STARTS_VARIABLE], str(os.getpid())).write_text(repr(time.monotonic()))
+    _DATARAX_WATCH()
+
+
+def read_watch_starts(directory: Path) -> dict[int, float]:
+    """The ``time.monotonic()`` at which each worker started its watcher, by process id."""
+    return {int(path.name): float(path.read_text()) for path in directory.iterdir()}
+
+
 def spawned_children(pid: int) -> list[int]:
     """The process ids of ``pid``'s children other than multiprocessing's resource tracker.
 
@@ -451,3 +487,4 @@ _SHM = "/dev/shm/"  # nosec B108 - read only: the names a process holds
 _UNLINKED = " (deleted)"
 """What ``/proc`` appends to a file already unlinked, whose name is gone."""
 _DATARAX_SET_UP = host_workers.WorkerSetUp
+_DATARAX_WATCH = host_workers._watch_parent  # noqa: SLF001 - wrapped, never replaced, by TimedSetUp
