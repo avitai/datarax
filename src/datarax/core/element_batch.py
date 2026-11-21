@@ -15,8 +15,13 @@ clear; one with it set names no record: the all-ones ``PADDING_INDEX`` marks pad
 
 A field whose value a record may lack is a ``datarax.core.Maybe`` in ``data``, at any depth: a
 pytree node of the values and a ``present`` flag per record, which every batch operation and
-placement moves with its rows. What processing did to a value is recorded in ``state`` under the
-names in ``datarax.core.state_keys`` (``MASKED``, ``IMPUTED``, ``WEIGHT``).
+placement moves with its rows.
+
+What datarax records about a record is typed, beside the user's ``state``: its weight in losses
+and metrics (``Element.weight``, ``Batch.weights``; 1 for a record, 0 for a padding row), the
+values an operator hid but kept as targets (``masked``) or filled in (``imputed``), as bool marks
+in the data's own nesting, and on a batch the partners and coefficients a mixing operator used
+(``Batch.mix``). ``state`` and ``batch_state`` hold only the user's names.
 
 Operations over batches are pure functions in ``datarax.core.batch_ops``.
 """
@@ -37,6 +42,9 @@ PADDING_INDEX: np.ndarray = np.full(2, np.iinfo(np.uint32).max, dtype=np.uint32)
 """The index of a row that is not a record: both uint32 words all ones."""
 PADDING_INDEX.setflags(write=False)
 
+MARK_ATTRIBUTES = ("masked", "imputed")
+"""The attributes of a record and a batch that hold bool marks in the data's nesting."""
+
 
 def _zero_ordinal() -> np.ndarray:
     return np.zeros((), dtype=np.int32)
@@ -44,6 +52,57 @@ def _zero_ordinal() -> np.ndarray:
 
 def _empty() -> dict[str, PyTree]:
     return {}
+
+
+def _unit_weight() -> np.ndarray:
+    return np.ones((), dtype=np.float32)
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True, slots=True)
+class Mix:
+    """What a whole-batch mixing operator (MixUp, CutMix) did to each row of a batch.
+
+    A loss for mixed records reads both, one value per row:
+    ``lams * loss(y) + (1 - lams) * loss(y[partners])``. Partners are row numbers of the batch the
+    operator returned, so they name rows of that batch only: ``take``, ``slice_rows``, ``split``,
+    ``concatenate`` and ``compact`` move rows without renumbering them.
+
+    Attributes:
+        partners: int32 ``(B,)``, the row each record was mixed with.
+        lams: ``(B,)``, the fraction of each record kept; a mixing operator draws one per batch
+            and writes it to every row.
+    """
+
+    partners: ArrayValue
+    lams: ArrayValue
+
+
+class MixedTwiceError(ValueError):
+    """A mixing operator was given a batch another one already mixed.
+
+    A batch carries one ``Mix``, which a loss reads; a second mix would replace the first's
+    partners and coefficients. Inside a DAG the refusal names both stages.
+
+    Attributes:
+        mixer: The refused operator, or its stage in a DAG.
+        first: The stage that mixed the batch first, when known.
+    """
+
+    def __init__(self, mixer: str, first: str | None = None) -> None:
+        """Name the refused mixer and, when known, the stage that mixed first.
+
+        Args:
+            mixer: The refused operator, or its stage in a DAG.
+            first: The stage that mixed the batch first, or ``None``.
+        """
+        self.mixer = mixer
+        self.first = first
+        already = f"already mixed by {first}" if first is not None else "already mixed"
+        super().__init__(
+            f"{mixer} mixes a batch {already}. A loss reads one partner and one coefficient per "
+            "row. Apply one mixing operator per batch."
+        )
 
 
 @jax.tree_util.register_dataclass
@@ -54,12 +113,17 @@ class Element:
     Attributes:
         data: The record's values and their intrinsic structure (masks, lengths, segment ids);
             a field the record may lack is a ``Maybe``.
-        state: What processing records about the record.
+        state: What the user's processing records about the record.
         index: The record's identity in its source, uint32 ``(2,)`` as ``(hi, lo)``, or
             ``None`` for a record built without one: stacked into a batch, such records are
             named by their rows (``batch_ops.from_stacked``), so no two share a key.
         epoch: int32 scalar, the pass over the data the record is served in.
         draw: int32 scalar, which draw of the record within its epoch (0 unless served again).
+        weight: float32 scalar, the record's weight in losses and metrics; 1 by default.
+        masked: bool marks in the data's nesting, at a field or a prefix of its shape: the
+            value is kept as the target and hidden from the model. Empty by default.
+        imputed: bool marks in the data's nesting: the value was missing and an operator filled
+            it. Empty by default.
     """
 
     data: PyTree
@@ -68,6 +132,9 @@ class Element:
     index: ArrayValue | None = None
     epoch: ArrayValue = field(default_factory=_zero_ordinal)
     draw: ArrayValue = field(default_factory=_zero_ordinal)
+    weight: ArrayValue = field(default_factory=_unit_weight)
+    masked: PyTree = field(default_factory=_empty)
+    imputed: PyTree = field(default_factory=_empty)
 
     def replace(self, **fields: PyTree) -> Self:
         """Return a copy with ``fields`` replaced.
@@ -82,6 +149,10 @@ class Element:
 
     def update_data(self, updates: Mapping[str, PyTree]) -> Self:
         """Return a copy whose data mapping has ``updates`` merged in.
+
+        ``update_data`` merges keys, as ``Batch`` reads look keys up: a key holding "/" is one
+        key, and the post-stage check refuses a record where it shares a spelling with another
+        node.
 
         Args:
             updates: Fields to add or replace in ``data``.
@@ -120,7 +191,7 @@ class Batch:
     is not a string raises. A batch is not a mapping: ``dict``, ``**``, iteration and ``len``
     raise rather than return the data keys alone, which would silently drop the other fields.
     A computation over the batch's values maps over ``batch.data``; ``jax.tree.map`` over the
-    whole batch also reaches its identities and state.
+    whole batch also reaches its identities, weights, marks, mix and state.
 
     The constructor validates nothing: jax builds a ``Batch`` from tracers and from axis or
     sharding prefixes. ``batch_ops.from_arrays`` and ``batch_ops.from_stacked`` build one from
@@ -128,11 +199,18 @@ class Batch:
 
     Attributes:
         data: The records' values, leading axis ``B``, static shapes.
-        states: Per-record processing state, leading axis ``B``.
+        states: The user's per-record processing state, leading axis ``B``.
         indices: uint32 ``(B, 2)``, each record's 64-bit index as ``(hi, lo)``.
         epochs: int32 ``(B,)``, each record's epoch.
         draws: int32 ``(B,)``, each record's draw within its epoch.
-        batch_state: Batch-level arrays, without a record axis.
+        weights: float32 ``(B,)``, each record's weight: 1 for a record and 0 for a row whose
+            index is ``PADDING_INDEX``, set wherever an index is written.
+        masked: bool marks ``(B, *p)`` in the data's nesting, ``p`` a prefix of the field's
+            per-record shape: values kept as targets and hidden from the model.
+        imputed: bool marks ``(B, *p)`` in the data's nesting: values an operator filled in.
+        mix: The partners and coefficients of the mixing operator that mixed the batch, or
+            ``None``.
+        batch_state: The user's batch-level arrays, without a record axis.
     """
 
     data: PyTree
@@ -141,6 +219,10 @@ class Batch:
     indices: ArrayValue
     epochs: ArrayValue
     draws: ArrayValue
+    weights: ArrayValue
+    masked: PyTree
+    imputed: PyTree
+    mix: Mix | None
     batch_state: PyTree
 
     __iter__ = None  # a Batch is not iterable; iterate over batch.data
@@ -198,4 +280,12 @@ class Batch:
         return dataclass_replace(self, **fields)
 
 
-__all__ = ["PADDING_INDEX", "ArrayValue", "Batch", "Element"]
+__all__ = [
+    "MARK_ATTRIBUTES",
+    "PADDING_INDEX",
+    "ArrayValue",
+    "Batch",
+    "Element",
+    "Mix",
+    "MixedTwiceError",
+]

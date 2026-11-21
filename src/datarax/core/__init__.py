@@ -15,7 +15,7 @@ from datarax.core.config import (
 from datarax.core.data_source import DataSourceModule, RecordIdentity
 
 # The record and batch types
-from datarax.core.element_batch import Batch, Element
+from datarax.core.element_batch import Batch, Element, Mix
 from datarax.core.maybe import Maybe
 from datarax.core.module import DataraxModule
 from datarax.core.operator import OperatorModule
@@ -29,6 +29,7 @@ __all__ = [
     "Batch",
     "Element",
     "Maybe",
+    "Mix",
     # ===== Base Modules =====
     "DataraxModule",
     # ===== Unified Architecture =====

@@ -1,14 +1,15 @@
 # Decoded Copy
 
-A decoded copy holds an indexed source's records as they decode, once, on disk: one `.npy` file
-per numeric field and the records' provenance (their strings and objects) in one ArrayRecord
-file, beside a `manifest.json` written last. It serves a source whose read decodes every record
-on every epoch (a TFDS split read per batch, ArrayRecord files of encoded images) from memory
-maps instead: a gather, with no decode. The copy is opt-in; it has no default directory, and
-`datarax.pipeline.materialize(source, directory=...)` writes it: on the calling thread, or in the
-RAM budget's worker processes for a read that decodes in Python, each worker writing its units'
-rows in place. It returns a complete copy of the same source already in the directory as it is,
-so every later run, and every other training process on the host, reuses it.
+A decoded copy holds an indexed source's records as they decode, once, on disk: one `.npy` file per
+numeric field, which the manifest names by the field's key tuple (so a key holding `/`, such as
+COCO's `image/id` beside `image`, reopens as one key), and the records' provenance (their strings
+and objects) in one ArrayRecord file, beside a `manifest.json` written last. It serves a source
+whose read decodes every record on every epoch (a TFDS split read per batch, ArrayRecord files of
+encoded images) from memory maps instead: a gather, with no decode. The copy is opt-in; it has no
+default directory, and `datarax.pipeline.materialize(source, directory=...)` writes it: on the
+calling thread, or in the RAM budget's worker processes for a read that decodes in Python, each
+worker writing its units' rows in place. It returns a complete copy of the same source already in
+the directory as it is, so every later run, and every other training process on the host, reuses it.
 
 ```python
 from datarax.pipeline import materialize
@@ -37,7 +38,7 @@ source = open_decoded_copy("/data/cifar10-train")
 |---|---|
 | `column-<i>.npy` | one numeric field of every record, at its stored dtype (an int64 label stays int64) |
 | `provenance.array_record` | one record per record: its strings and objects as UTF-8 JSON, `bytes` base64-encoded |
-| `manifest.json` | the format, record count, units, each column's field, file, dtype, shape and size, the source's identity, the decoder's libraries and the content digest |
+| `manifest.json` | the format (2), record count, units, each column's field (its key tuple, `"keys": ["meta", "score"]`), file, dtype, shape and size, the source's identity, the decoder's libraries and the content digest |
 | `.lock` | the writer's lock; it stays in a finished copy |
 
 A file named `*.partial`, or a directory without `manifest.json`, is a copy being written or
@@ -53,13 +54,14 @@ the source's files are:
   the SHA-256 of `features.json`, and the versions of the libraries that decode it
   (`tensorflow-datasets`, `protobuf` with its runtime, `numpy`, `pillow`, `opencv`). A decoder
   of another version decodes to other bytes in general, so it invalidates the copy;
-- a `StreamingDiskSource`: its columns' fields, dtypes, shapes, offsets, files' base names and
-  sizes, and the content digest of the copy it is.
+- a `StreamingDiskSource`: its columns' fields (key tuples), dtypes, shapes, offsets, files' base
+  names and sizes, and the content digest of the copy it is.
 
 A copy moved with its source to another directory or host still matches; a source file renamed,
 resized or re-encoded does not, and touching a file's modification time alone changes nothing.
 `open_decoded_copy(directory, identity=source.source_identity())` refuses a copy of another
-source, naming every field that differs.
+source, naming every field that differs. Identities are compared by key tuple, so a key holding `/`
+never passes for a nested one.
 
 The copy is also identified by its own bytes: the manifest's content digest is the SHA-256 of the
 units' SHA-256 digests, in unit order. `open_decoded_copy(directory, verify=True)` reads every
@@ -80,11 +82,16 @@ column and refuses a copy whose bytes no longer give it (a full read).
 
 ## Refusals
 
-- no `manifest.json` (an incomplete copy), or a copy of another format, naming both;
+- no `manifest.json` (an incomplete copy), or a copy of another format, naming both: this datarax
+  reads format 2. `materialize(..., directory=...)` rebuilds a copy of another format;
+  `from_tfds(..., in_memory=False, decoded_dir=...)` and `open_decoded_copy` refuse it;
 - a column file missing, or of another size than the manifest records;
 - an identity that differs, naming the fields; a content digest that does not match, with
   `verify=True`;
-- writing: a field whose dtype or record shape varies between records (a ragged field), a TFDS
+- writing: records that break the record rules (an empty or exotic key, a list holding fields,
+  two fields of one spelling such as `("objects", "bbox")` beside `("objects/bbox",)`), before any
+  file is reserved; a field node such as a `Maybe` (a copy stores arrays; `materialize` into RAM
+  keeps it); a field whose dtype or record shape varies between records (a ragged field), a TFDS
   `Video` feature (decoded frames are far larger than their stored size), a provenance value JSON
   cannot hold exactly (text, bytes, numbers, bools and `None` are kept), a target on a networked
   or FUSE filesystem (writing there through shared memory maps is not verified; reading a

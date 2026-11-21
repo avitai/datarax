@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from datarax.core.element_batch import Element
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import refuse_field_nodes
 from datarax.core.operator import OperatorModule
 from datarax.operators.strategies.base import CompositionStrategyImpl
 
@@ -41,7 +41,7 @@ class EnsembleStrategy(CompositionStrategyImpl):
             stats: One entry per child, or ``None``.
 
         Returns:
-            The record with the reduced data and the last operator's state.
+            The record with the reduced data and the last operator's state, weight and marks.
 
         Raises:
             ValueError: If ``self.mode`` is not one of mean/sum/max/min.
@@ -49,8 +49,8 @@ class EnsembleStrategy(CompositionStrategyImpl):
         outputs = self._apply_each(operators, element, stats)
         datas = [output.data for output in outputs]
         for data in datas:
-            refuse_maybe(
-                data, f"an ensemble {self.mode} reduces the operators' data leaf by leaf", "data"
+            refuse_field_nodes(
+                data, f"an ensemble {self.mode} reduces the operators' data leaf by leaf"
             )
         if self.mode == "mean":
             reduced = jax.tree.map(lambda *args: jnp.mean(jnp.stack(args), axis=0), *datas)
@@ -62,4 +62,4 @@ class EnsembleStrategy(CompositionStrategyImpl):
             reduced = jax.tree.map(lambda *args: jnp.min(jnp.stack(args), axis=0), *datas)
         else:
             raise ValueError(f"Unknown ensemble mode: {self.mode}")
-        return element.replace(data=reduced, state=outputs[-1].state)
+        return outputs[-1].replace(data=reduced)

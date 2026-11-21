@@ -24,6 +24,7 @@ import numpy as np
 import psutil
 from array_record.python.array_record_module import ArrayRecordWriter
 
+from datarax.core.field_paths import KeyTuple, refuse_field_nodes
 from datarax.sources._disk_provenance import encode_provenance, PROVENANCE_ENCODING
 from datarax.sources.decoded_copy._layout import (
     COLUMN,
@@ -269,23 +270,23 @@ class CopyFiles:
         return tuple(f"column-{position}.npy" for position in range(len(self.layout.columns)))
 
     @contextlib.contextmanager
-    def rows(self, unit: int) -> Iterator[dict[str, np.ndarray]]:
+    def rows(self, unit: int) -> Iterator[dict[KeyTuple, np.ndarray]]:
         """Map ``unit``'s rows of every column's ``.partial`` file for writing.
 
         Args:
             unit: The unit.
 
         Yields:
-            One writable memory map per column, keyed by field path in layout order; released
-            when the block ends.
+            One writable memory map per column, keyed by its field's key tuple in layout order;
+            released when the block ends.
         """
         rows = self.unit_rows(unit)
-        maps: dict[str, np.ndarray] = {}
+        maps: dict[KeyTuple, np.ndarray] = {}
         try:
             for column, name, offset in zip(
                 self.layout.columns, self.column_files(), self.offsets, strict=True
             ):
-                maps[column.name] = np.memmap(
+                maps[column.slot] = np.memmap(
                     self.directory / f"{name}{PARTIAL}",
                     dtype=np.dtype(column.dtype),
                     mode="r+",
@@ -311,7 +312,7 @@ def reserve(path: Path, size: int, column: str, directory: Path) -> None:
     Args:
         path: The file, created.
         size: Its full size.
-        column: The column it holds, for the refusal.
+        column: The column it holds, as a refusal names it (its label).
         directory: The copy's directory, for the refusal.
 
     Raises:
@@ -334,7 +335,7 @@ def reserve(path: Path, size: int, column: str, directory: Path) -> None:
             stats = os.statvfs(directory)
             raise OSError(
                 error.errno,
-                f"the decoded copy in {directory} cannot reserve column {column!r}: it needs "
+                f"the decoded copy in {directory} cannot reserve column {column}: it needs "
                 f"{size} bytes, and the filesystem has {stats.f_bavail * stats.f_frsize} bytes "
                 f"free ({os.strerror(error.errno or 0)})",
             ) from error
@@ -382,7 +383,9 @@ def begin_copy(  # noqa: DOC503 - reserve raises the OSError
     """Create a copy's ``.partial`` files, each fresh and reserved to its full size.
 
     Every file is a new inode with its ``.npy`` header, reserved (:func:`reserve`) before the
-    block runs, so a disk without the room is refused here. When the block ends, every
+    block runs, so a disk without the room is refused here. A copy stores arrays, so a layout
+    holding a field node (a ``Maybe``) is refused first, through the one refusal every consumer
+    reading a field as an array uses (``refuse_field_nodes``). When the block ends, every
     ``.partial`` still present is unlinked: :func:`finish_copy`, called inside it, has renamed
     those of a finished copy, so only an unfinished copy's are removed.
 
@@ -395,10 +398,12 @@ def begin_copy(  # noqa: DOC503 - reserve raises the OSError
         The copy's files.
 
     Raises:
+        TypeError: If the layout holds a field node, naming it and its type's fix.
         FileExistsError: If the directory holds a finished copy (clear it first).
         OSError: If a file cannot be reserved, naming the directory, the column, the bytes
             needed and the bytes free.
     """
+    refuse_field_nodes(layout.spec(), "a decoded copy stores its fields as arrays")
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     if (root / MANIFEST).exists():
@@ -410,7 +415,7 @@ def begin_copy(  # noqa: DOC503 - reserve raises the OSError
             path = root / f"column-{position}.npy{PARTIAL}"
             offset = create_column(path, column, layout.length)
             created.append(path)
-            reserve(path, offset + layout.length * column.row_bytes, column.name, root)
+            reserve(path, offset + layout.length * column.row_bytes, column.label, root)
             offsets.append(offset)
         yield CopyFiles(
             directory=root, layout=layout, unit_records=unit_records, offsets=tuple(offsets)
@@ -455,7 +460,7 @@ def finish_copy(
         "unit_records": files.unit_records,
         "columns": [
             {
-                "name": column.name,
+                "keys": list(column.keys),
                 "file": name,
                 "dtype": column.dtype,
                 "shape": [files.layout.length, *column.shape],

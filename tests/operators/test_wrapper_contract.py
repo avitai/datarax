@@ -209,7 +209,9 @@ class TestSequentialComposition:
         expected = _noise(1)(_mixup()(_noise(0)(batch)))
         out = _sequential(_noise(0), _mixup(), _noise(1))(batch)
         np.testing.assert_allclose(out.data["image"], expected.data["image"], rtol=0, atol=1e-6)
-        np.testing.assert_array_equal(out.states["mix_partner"], expected.states["mix_partner"])
+        assert out.mix is not None and expected.mix is not None
+        np.testing.assert_array_equal(out.mix.partners, expected.mix.partners)
+        np.testing.assert_array_equal(out.mix.lams, expected.mix.lams)
 
     def test_each_child_fits_its_statistics_on_its_own_input(self) -> None:
         out = _sequential(Shift(OperatorConfig()), Center(OperatorConfig()))(_batch())

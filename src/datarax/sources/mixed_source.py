@@ -27,7 +27,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flax import nnx, traverse_util
+from flax import nnx
 from jax.core import Tracer
 from jax.typing import ArrayLike
 
@@ -46,6 +46,15 @@ from datarax.core.data_source import (
     refuse_unnamed,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.field_nodes import is_field_node
+from datarax.core.field_paths import (
+    field_listing,
+    fields_nested,
+    flat_fields,
+    KeyTuple,
+    label,
+    node_spellings,
+)
 from datarax.core.host_resources import order_working_bytes
 from datarax.core.index_words import (
     add,
@@ -63,7 +72,12 @@ from datarax.core.index_words import (
 )
 from datarax.core.maybe import Maybe
 from datarax.core.spec import spec_mismatches, SpecMismatchError
-from datarax.sources.eager_source import bind_columns, bound_columns, eager_sources
+from datarax.sources.eager_source import (
+    bind_columns,
+    bound_columns,
+    eager_sources,
+    EagerSource,
+)
 from datarax.sources.memory_source import MemorySource
 from datarax.typing import DataDict
 
@@ -287,24 +301,23 @@ def _refuse_unmixable(position: int, source: DataSourceModule) -> None:
         )
 
 
-type _Path = tuple[Any, ...]
-"""A field's key path in a record, as ``jax.tree_util`` gives it."""
-
-
 def _present_spec() -> jax.ShapeDtypeStruct:
     """The spec of one record's ``present`` flag, built when asked (no JAX value at import)."""
     return jax.ShapeDtypeStruct((), jnp.bool_)
 
 
-def _is_field(node: Any) -> bool:
-    """A ``Maybe`` is one field, not two leaves."""
-    return isinstance(node, Maybe)
+def _child_fields(spec: Any) -> tuple[Any, tuple[KeyTuple, ...]]:
+    """A child's record structure (field nodes as leaves) and its fields' key tuples, in order.
 
+    Args:
+        spec: The child's record spec, checked by :func:`union_spec`.
 
-def _fields_of(tree: Any) -> dict[_Path, Any]:
-    """Each field of a record's spec or a batch's data by its path, a ``Maybe`` as one field."""
-    flat, _ = jax.tree_util.tree_flatten_with_path(tree, is_leaf=_is_field)
-    return dict(flat)
+    Returns:
+        The structure (a jax ``PyTreeDef``, typed ``Any``: jaxlib ships no type stub that names
+        it), and each field's key tuple in the order the structure flattens.
+    """
+    structure = jax.tree_util.tree_structure(spec, is_leaf=is_field_node)
+    return structure, tuple(flat_fields(spec, owner="a mix"))
 
 
 def _value_part(field: Any) -> Any:
@@ -312,34 +325,11 @@ def _value_part(field: Any) -> Any:
     return field.value if isinstance(field, Maybe) else field
 
 
-def _nested(fields: Mapping[_Path, Any]) -> dict[str, Any]:
-    """Rebuild a record's nested dictionaries from its fields' paths.
-
-    Args:
-        fields: Each field by its path.
-
-    Returns:
-        The record as nested dictionaries.
-
-    Raises:
-        TypeError: If a path steps through anything but a dictionary key.
-    """
-    for path in fields:
-        if not all(isinstance(step, jax.tree_util.DictKey) for step in path):
-            raise TypeError(
-                f"a mix joins records whose fields are nested dictionaries; field "
-                f"{jax.tree_util.keystr(path)} is not"
-            )
-    return traverse_util.unflatten_dict(
-        {tuple(step.key for step in path): field for path, field in fields.items()}
-    )
-
-
-def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> None:
+def _refuse_nesting_conflicts(held: Mapping[KeyTuple, list[tuple[int, Any]]]) -> None:
     """Refuse a field that holds values in one child and nested fields in another.
 
     Args:
-        held: Each field path and the children holding it.
+        held: Each field's key tuple and the children holding it.
 
     Raises:
         SpecMismatchError: Naming the field and the nested one.
@@ -348,19 +338,62 @@ def _refuse_nesting_conflicts(held: Mapping[_Path, list[tuple[int, Any]]]) -> No
         for other, nested in held.items():
             if other != path and other[: len(path)] == path:
                 raise SpecMismatchError(
-                    f"a mix's children disagree on field {jax.tree_util.keystr(path)}:",
+                    f"a mix's children disagree on field {label(path)}:",
                     [
-                        f"child {holders[0][0]} holds values at {jax.tree_util.keystr(path)}, "
-                        f"child {nested[0][0]} fields under it ({jax.tree_util.keystr(other)})"
+                        f"child {holders[0][0]} holds values at {label(path)}, "
+                        f"child {nested[0][0]} fields under it ({label(other)})"
                     ],
                 )
 
 
-def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> Any:
+def _spellings_of(source: DataSourceModule) -> dict[str, tuple[str, KeyTuple]]:
+    """Each spelling a child names, with the namespace and key tuple of its node."""
+    held = {name: ("data", keys) for name, keys in node_spellings(source.element_spec()).items()}
+    if isinstance(source, EagerSource):
+        for name in source.provenance_names():
+            held.setdefault(name, ("provenance", (name,)))
+    return held
+
+
+def _refuse_spelling_conflicts(sources: Sequence[DataSourceModule]) -> None:
+    """Refuse a spelling two children give to different nodes, or to data and to provenance.
+
+    One spelling names one node across a mix (N0). ``union_spec`` compares the children's fields
+    by key tuple, so a nested ``('meta', 'id')`` in one child and a literal ``('meta/id',)`` in
+    another, both spelled ``meta/id``, reach it as two fields. A child's provenance names are
+    known at construction only for a source holding its records (``EagerSource``); a stream's are
+    checked where it is bound to its reader.
+
+    Args:
+        sources: The mix's children, in order.
+
+    Raises:
+        SpecMismatchError: Naming the spelling and how each child holds it.
+    """
+    first: dict[str, tuple[int, tuple[str, KeyTuple]]] = {}
+    for child, source in enumerate(sources):
+        for name, node in _spellings_of(source).items():
+            earlier, seen = first.setdefault(name, (child, node))
+            if seen == node:
+                continue
+            if seen[0] == node[0]:
+                holders = f"child {earlier} holds {seen[1]!r}, child {child} holds {node[1]!r}"
+            else:
+                holders = (
+                    f"child {earlier} holds {seen[0]} field {seen[1]!r}, child {child} "
+                    f"{node[0]} field {node[1]!r}"
+                )
+            problem = (
+                f"{holders}, both spelled {name!r}. Rename one in its adapter, by its key tuple."
+            )
+            raise SpecMismatchError(f"a mix's children disagree on field {name!r}:", [problem])
+
+
+def _union_field(path: KeyTuple, holders: list[tuple[int, Any]], children: int) -> Any:
     """One field of the union: as its holders declare it, or a ``Maybe`` if any child lacks it.
 
     Args:
-        path: The field's path.
+        path: The field's key tuple.
         holders: The children holding the field, with their spec of it.
         children: How many children the mix has.
 
@@ -376,7 +409,7 @@ def _union_field(path: _Path, holders: list[tuple[int, Any]], children: int) -> 
         problems = spec_mismatches(first, value)
         if problems:
             raise SpecMismatchError(
-                f"a mix's children disagree on field {jax.tree_util.keystr(path)}: child "
+                f"a mix's children disagree on field {label(path)}: child "
                 f"{first_child} holds {first.shape} {first.dtype}, child {child} "
                 f"{value.shape} {value.dtype}:",
                 problems,
@@ -402,12 +435,12 @@ def union_spec(specs: Sequence[Any]) -> Any:  # noqa: DOC502 - the checks it cal
         SpecMismatchError: Naming a field whose shape or device dtype differs between two
             children, or which holds values in one child and fields in another.
     """
-    held: dict[_Path, list[tuple[int, Any]]] = {}
+    held: dict[KeyTuple, list[tuple[int, Any]]] = {}
     for child, spec in enumerate(specs):
-        for path, field in _fields_of(spec).items():
+        for path, field in flat_fields(spec, owner="a mix").items():
             held.setdefault(path, []).append((child, field))
     _refuse_nesting_conflicts(held)
-    return _nested(
+    return fields_nested(
         {path: _union_field(path, holders, len(specs)) for path, holders in held.items()}
     )
 
@@ -417,7 +450,7 @@ type _ReadField = tuple[tuple[int, ...], bool]
 missing (some child lacks it or holds it as a ``Maybe``)."""
 
 
-def _read_union(reads: Sequence[Mapping[_Path, Any]]) -> dict[_Path, _ReadField]:
+def _read_union(reads: Sequence[Mapping[KeyTuple, Any]]) -> dict[KeyTuple, _ReadField]:
     """The union's fields from the children's reads (each child read once, empty or not).
 
     The construction checked the children's specs against each other (:func:`union_spec`), so
@@ -425,12 +458,12 @@ def _read_union(reads: Sequence[Mapping[_Path, Any]]) -> dict[_Path, _ReadField]
     rebuilding every child's spec per batch.
 
     Args:
-        reads: Each child's rows by field path.
+        reads: Each child's rows by key tuple.
 
     Returns:
         Each field's record shape and whether it can be missing.
     """
-    union: dict[_Path, _ReadField] = {}
+    union: dict[KeyTuple, _ReadField] = {}
     for held in reads:
         for path, field in held.items():
             shape = tuple(np.shape(_value_part(field))[1:])
@@ -443,15 +476,15 @@ def _read_union(reads: Sequence[Mapping[_Path, Any]]) -> dict[_Path, _ReadField]
 
 
 def _union_rows(
-    held: Mapping[_Path, Any],
-    union: Mapping[_Path, _ReadField],
-    dtypes: Mapping[_Path, np.dtype],
+    held: Mapping[KeyTuple, Any],
+    union: Mapping[KeyTuple, _ReadField],
+    dtypes: Mapping[KeyTuple, np.dtype],
     size: int,
 ) -> dict[str, Any]:
     """One child's host rows in the union's fields, each at the field's joined host dtype.
 
     Args:
-        held: The child's rows by field path, as its ``get_batch`` returns them.
+        held: The child's rows by key tuple, as its ``get_batch`` returns them.
         union: The union's fields by path (:func:`_read_union`).
         dtypes: Each field's host dtype, joined over the children.
         size: The rows read.
@@ -459,7 +492,7 @@ def _union_rows(
     Returns:
         The rows as a nested dictionary of the union's fields.
     """
-    rows: dict[_Path, Any] = {}
+    rows: dict[KeyTuple, Any] = {}
     for path, (shape, optional) in union.items():
         dtype = dtypes[path]
         field = held.get(path)
@@ -471,12 +504,12 @@ def _union_rows(
             rows[path] = Maybe(np.asarray(field.value).astype(dtype, copy=False), field.present)
         else:
             rows[path] = Maybe(np.asarray(field).astype(dtype, copy=False), np.ones(size, np.bool_))
-    return _nested(rows)
+    return fields_nested(rows)
 
 
 def _host_dtypes(
-    reads: Sequence[Mapping[_Path, Any]], union: Mapping[_Path, _ReadField]
-) -> dict[_Path, np.dtype]:
+    reads: Sequence[Mapping[KeyTuple, Any]], union: Mapping[KeyTuple, _ReadField]
+) -> dict[KeyTuple, np.dtype]:
     """Each union field's host dtype: NumPy's promotion of the dtypes the children store.
 
     Args:
@@ -494,7 +527,7 @@ def _host_dtypes(
     }
 
 
-def _joined(reads: Sequence[tuple[np.ndarray, Mapping[_Path, Any]]]) -> Batch:
+def _joined(reads: Sequence[tuple[np.ndarray, Mapping[KeyTuple, Any]]]) -> Batch:
     """Join the children's rows in the union's fields, in the order they were named.
 
     Every field is held at its children's joined host dtype (NumPy's promotion of the dtypes
@@ -561,7 +594,9 @@ class MixDataSourcesNode(DataSourceModule):
 
         Raises:
             ValueError: If the weights and sources differ in number, Grain's proportions for
-                the weights pass one word, or a source is refused (see the checks it calls).
+                the weights pass one word, a source is refused (see the checks it calls), or two
+                children give one spelling to different nodes, or to data in one and provenance
+                in another.
         """
         super().__init__(config, name=name or "MixDataSourcesNode")
         weights = config.weights
@@ -579,7 +614,12 @@ class MixDataSourcesNode(DataSourceModule):
         self._weights = tuple(weights)
         self._proportions = proportions
         self._layout()
-        self.element_spec()
+        specs = self._child_specs()
+        union_spec(specs)  # refuses children whose fields disagree
+        _refuse_spelling_conflicts(self._sources)
+        # Each child's record structure and fields' key tuples, read once from its checked
+        # spec: a batch then needs one C++ flatten per child, its structure compared to this.
+        self._child_fields = nnx.static(tuple(_child_fields(spec) for spec in specs))
 
     @property
     def sources(self) -> tuple[DataSourceModule, ...]:
@@ -851,6 +891,8 @@ class MixDataSourcesNode(DataSourceModule):
         Raises:
             ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared
                 contiguous is not one.
+            SpecMismatchError: If a child's batch has another structure than its
+                ``element_spec`` declares (:meth:`_fields_of`).
             IndexError: If an index is the padding index or outside the mix's index space.
         """
         words = record_words(indices)
@@ -864,13 +906,40 @@ class MixDataSourcesNode(DataSourceModule):
             np.broadcast_to(np.asarray(epochs, np.int32), (len(words),))
         )
         reads = [
-            (rows, _fields_of(read.data))
-            for rows, read in self._read_children(owners, local, epoch_of_each, contiguous)
+            (rows, self._fields_of(child, read.data))
+            for child, (rows, read) in enumerate(
+                self._read_children(owners, local, epoch_of_each, contiguous)
+            )
         ]
         joined = _joined(reads)
         return joined.replace(
             indices=words, epochs=epoch_of_each, draws=np.zeros(len(words), np.int32)
         )
+
+    def _fields_of(self, child: int, data: Any) -> dict[KeyTuple, Any]:
+        """A child's batch's fields by key tuple, through the structure its spec declares.
+
+        Args:
+            child: The child's position.
+            data: Its batch's data.
+
+        Returns:
+            Each field, keyed by its key tuple.
+
+        Raises:
+            SpecMismatchError: If the batch's structure is not the one the child's spec declares,
+                naming the child and both sets of fields.
+        """
+        structure, keys = self._child_fields[child]
+        leaves, found = jax.tree_util.tree_flatten(data, is_leaf=is_field_node)
+        if found != structure:
+            served = field_listing(flat_fields(data, owner="a mix"))
+            raise SpecMismatchError(
+                f"child {child} ({type(self._sources[child]).__name__}) served a batch unlike "
+                "its element_spec:",
+                [f"it serves {served}; its spec declares {field_listing(keys)}"],
+            )
+        return dict(zip(keys, leaves, strict=True))
 
     def _read_children(
         self, owners: np.ndarray, local: np.ndarray, epochs: np.ndarray, contiguous: bool

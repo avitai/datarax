@@ -19,7 +19,7 @@ from flax import nnx
 from substrax.testing.compiles import compiled_programs
 
 from datarax.checkpoint import IteratorCheckpoint
-from datarax.core.state_keys import MIX_LAMBDA, MIX_PARTNER
+from datarax.core.element_batch import Batch
 from datarax.pipeline import Pipeline
 from datarax.sources import MemorySource, MemorySourceConfig
 from tests.test_common import multi_process_pipelines as built
@@ -40,6 +40,14 @@ from tests.test_common.multi_process_scenarios import SCENARIOS
 report(SCENARIOS[sys.argv[3]](process, sys.argv[4:]))
 jax.distributed.shutdown()
 """
+
+
+def _placed_mix(batch: Batch) -> tuple[jax.Array, jax.Array]:
+    """A placed batch's partners and coefficients: the draw stages end in a mixer."""
+    mix = batch.mix
+    assert mix is not None
+    assert isinstance(mix.partners, jax.Array) and isinstance(mix.lams, jax.Array)
+    return mix.partners, mix.lams
 
 
 def _units(pipe: Pipeline) -> list[dict[str, Any]]:
@@ -69,8 +77,9 @@ def draws(process: int, args: Sequence[str]) -> dict[str, Any]:
             "rows": built.record_shards(batch.indices),
             "value": built.shards(batch["value"]),
             "image": built.shards(batch["image"]),
-            "partner": built.shards(batch.states[MIX_PARTNER]),
-            "lam": float(batch.batch_state[MIX_LAMBDA]),
+            "partner": built.shards(_placed_mix(batch)[0]),
+            # The batch's one coefficient, written to every row: a process reads its rows' value.
+            "lam": float(np.asarray(_placed_mix(batch)[1].addressable_shards[0].data)[0]),
         }
         for batch in pipe
     ]
@@ -145,8 +154,12 @@ def refusals(process: int, args: Sequence[str]) -> dict[str, Any]:
         )
 
     shard = MemorySourceConfig(shard_id=process, num_workers=2)
+    records = built.records()
+    stream = RecordStream(
+        {"value": records["value"], "image": records["image"]}, texts=records["name"]
+    )
     return {
-        "stream": _refusal(lambda: over(RecordStream(built.records()))),
+        "stream": _refusal(lambda: over(stream)),
         "worker_shard": _refusal(lambda: over(MemorySource(shard, built.records()))),
     }
 

@@ -88,11 +88,13 @@ eight threads filling a 1,000-unit buffer read 0.397 of an H100's floor against 
 (Mann-Whitney p = 0.008, five runs each) and held 27.7 against 10.4 GiB."""
 WORKER_BUFFER = 2
 """A worker's output buffer ``o``: units it puts in its queue ahead of the training process."""
-_IDENTITY_ARRAY_BYTES = (2 * 4, 4, 4)  # a record's bytes in each: index words, epoch, draw
-IDENTITY_BYTES = sum(_IDENTITY_ARRAY_BYTES)
-"""Host bytes a record's identity adds to its batch: its index words, epoch and draw."""
-IDENTITY_LEAVES = len(_IDENTITY_ARRAY_BYTES)
-"""Arrays a batch's identity adds to its leaves: its records' index words, epochs and draws."""
+_ROW_ARRAY_BYTES = (2 * 4, 4, 4, 4)  # a row's bytes in each: index words, epoch, draw, weight
+ROW_BYTES = sum(_ROW_ARRAY_BYTES)
+"""Host bytes every row of a batch carries beyond its data: its index words, epoch, draw and
+weight."""
+ROW_LEAVES = len(_ROW_ARRAY_BYTES)
+"""Arrays every batch carries beyond its data: its rows' index words, epochs, draws and
+weights."""
 DELETION_BACKLOG_SEGMENTS: int = (
     inspect.signature(SharedMemoryArray.enable_async_del)
     .parameters["max_outstanding_requests"]
@@ -480,7 +482,7 @@ def host_batch_bytes(source: DataSourceModule, batch_size: int) -> int:
     """
     with jax.enable_x64(True):
         spec = declared_spec(source)
-    return batch_size * (spec_bytes(spec) + IDENTITY_BYTES)
+    return batch_size * (spec_bytes(spec) + ROW_BYTES)
 
 
 def host_unit_segments(source: DataSourceModule) -> int:
@@ -489,9 +491,9 @@ def host_unit_segments(source: DataSourceModule) -> int:
     Grain copies each leaf of a unit that is a non-empty, C-contiguous numpy array of a dtype
     holding no objects into a segment of its own, and pickles the rest
     (``grain._src.python.ipc.shared_memory_array._copy_leaf_to_shm``): a batch's data leaves
-    the spec declares and its records' identity arrays. A unit's provenance holds values that
-    pickle (:func:`~datarax.pipeline.host_workers.crossing_provenance`), never an array. A chunk
-    ``(K, B, ...)`` has a batch's leaves.
+    the spec declares and its rows' arrays (:data:`ROW_LEAVES`). A unit's provenance holds
+    values that pickle (:func:`~datarax.pipeline.host_workers.crossing_provenance`), never an
+    array. A chunk ``(K, B, ...)`` has a batch's leaves.
 
     Args:
         source: The source the unit is read from.
@@ -504,7 +506,7 @@ def host_unit_segments(source: DataSourceModule) -> int:
         for leaf in jax.tree.leaves(declared_spec(source))
         if _takes_a_segment(leaf.shape, leaf.dtype)
     )
-    return copied + IDENTITY_LEAVES
+    return copied + ROW_LEAVES
 
 
 def sent_segments(unit: Any) -> int:
@@ -630,8 +632,8 @@ def _shm_bound(share: int | None) -> dict[str, Any]:
 
 __all__ = [
     "DELETION_BACKLOG_SEGMENTS",
-    "IDENTITY_BYTES",
-    "IDENTITY_LEAVES",
+    "ROW_BYTES",
+    "ROW_LEAVES",
     "MAX_READ_THREADS",
     "READ_BUFFER",
     "READ_THREADS",

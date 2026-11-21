@@ -40,6 +40,7 @@ from jax.typing import DTypeLike
 from numpy.typing import ArrayLike
 
 from datarax.core.data_source import DataSourceModule
+from datarax.core.field_paths import path_label
 
 
 JAX_ARRAY_KINDS = frozenset("biufc")
@@ -169,11 +170,6 @@ def array_to_spec_strip_leading(value: ArrayLike) -> jax.ShapeDtypeStruct:
     return jax.ShapeDtypeStruct(shape=shape[1:], dtype=dtype)
 
 
-def _field(path: tuple[Any, ...]) -> str:
-    """Render a key path the way JAX error messages do, e.g. ``['image']``."""
-    return jax.tree_util.keystr(path) or "<root>"
-
-
 def _device_dtype(dtype: Any) -> Any | None:
     """The dtype a JAX array holds for data of ``dtype``, or None if it cannot hold it."""
     is_extended = jnp.issubdtype(dtype, jax.dtypes.extended)
@@ -213,7 +209,7 @@ def device_spec(spec: Any) -> Any:
     unrepresentable: list[str] = []
     for path, leaf, dtype in _device_dtypes_by_field(spec):
         if dtype is None:
-            unrepresentable.append(f"{_field(path)}: dtype {leaf.dtype}")
+            unrepresentable.append(f"{path_label(path)}: dtype {leaf.dtype}")
         else:
             converted.append(jax.ShapeDtypeStruct(shape=leaf.shape, dtype=dtype))
     if unrepresentable:
@@ -242,10 +238,12 @@ def validate_device_dtypes(spec: Any) -> None:
     problems: list[str] = []
     for path, leaf, dtype in _device_dtypes_by_field(spec):
         if dtype is None:
-            problems.append(f"{_field(path)}: dtype {leaf.dtype} has no JAX array representation")
+            problems.append(
+                f"{path_label(path)}: dtype {leaf.dtype} has no JAX array representation"
+            )
         elif dtype != leaf.dtype:
             problems.append(
-                f"{_field(path)}: declared {leaf.dtype} becomes {dtype} as a JAX array "
+                f"{path_label(path)}: declared {leaf.dtype} becomes {dtype} as a JAX array "
                 f"(jax_enable_x64 is {x64_state})"
             )
     if problems:
@@ -290,16 +288,18 @@ def _field_mismatches(
     ignored: frozenset[tuple[Any, ...]] = frozenset(),
 ) -> list[str]:
     """Missing, unexpected, and differently shaped or typed fields of ``actual``."""
-    problems = [f"{_field(path)}: missing" for path in _uncovered(expected, set(actual) | ignored)]
-    problems.extend(f"{_field(path)}: unexpected" for path in _uncovered(actual, set(expected)))
+    problems = [
+        f"{path_label(path)}: missing" for path in _uncovered(expected, set(actual) | ignored)
+    ]
+    problems.extend(f"{path_label(path)}: unexpected" for path in _uncovered(actual, set(expected)))
     for path, (shape, dtype) in actual.items():
         if path not in expected:
             continue
         expected_shape, expected_dtype = expected[path]
         if shape != expected_shape:
-            problems.append(f"{_field(path)}: shape {shape} != expected {expected_shape}")
+            problems.append(f"{path_label(path)}: shape {shape} != expected {expected_shape}")
         if dtype != expected_dtype:
-            problems.append(f"{_field(path)}: dtype {dtype} != expected {expected_dtype}")
+            problems.append(f"{path_label(path)}: dtype {dtype} != expected {expected_dtype}")
     return problems
 
 
@@ -357,11 +357,13 @@ def _batch_fields(batch: Any) -> _BatchFields:
             field = _without_trailing_indices(path)
             if field not in rejected:
                 rejected.append(field)
-                problems.append(f"{_field(field)}: holds {type(leaf).__name__} values, not arrays")
+                problems.append(
+                    f"{path_label(field)}: holds {type(leaf).__name__} values, not arrays"
+                )
             continue
         if leaf.ndim == 0:
             rejected.append(path)
-            problems.append(f"{_field(path)}: has no leading batch axis")
+            problems.append(f"{path_label(path)}: has no leading batch axis")
             continue
         lengths[path] = int(leaf.shape[0])
         elements[path] = (tuple(leaf.shape[1:]), leaf.dtype)
@@ -377,7 +379,7 @@ def _record_axis_problems(fields: _BatchFields) -> list[str]:
     """Every reason the leaves do not share one leading record axis, each naming its field."""
     problems = list(fields.problems)
     if len(set(fields.lengths.values())) > 1:
-        listed = ", ".join(f"{_field(path)} has {n}" for path, n in fields.lengths.items())
+        listed = ", ".join(f"{path_label(path)} has {n}" for path, n in fields.lengths.items())
         problems.append(f"leading axis lengths differ: {listed}")
     return problems
 

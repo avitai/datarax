@@ -56,6 +56,7 @@ from datarax.operators.probabilistic_operator import (
     ProbabilisticOperatorConfig,
 )
 from datarax.pipeline.dag import name_records
+from tests.test_common.field_labels import unbracketed
 
 
 B = 6
@@ -204,13 +205,13 @@ class TestRefusedByName:
     def test_map_operator_over_the_whole_tree(self) -> None:
         op = MapOperator(MapOperatorConfig(), fn=lambda x, _key: x * 2)
 
-        with pytest.raises(TypeError, match=r"\['depth'\].*Maybe"):
+        with pytest.raises(TypeError, match=unbracketed("depth") + r".*Maybe"):
             op(_batch())
 
     def test_map_operator_over_a_subtree_holding_the_field(self) -> None:
         op = MapOperator(MapOperatorConfig(subtree={"depth": None}), fn=lambda x, _key: x * 2)
 
-        with pytest.raises(TypeError, match=r"\['depth'\].*Maybe"):
+        with pytest.raises(TypeError, match=unbracketed("depth") + r".*Maybe"):
             op(_batch())
 
     @pytest.mark.parametrize(
@@ -223,12 +224,12 @@ class TestRefusedByName:
         ],
     )
     def test_an_ensemble_reduction(self, strategy: CompositionStrategy) -> None:
-        with pytest.raises(TypeError, match=r"\['depth'\].*Maybe"):
+        with pytest.raises(TypeError, match=unbracketed("depth") + r".*Maybe"):
             _merging(strategy)(_batch())
 
     @pytest.mark.parametrize("merge", ["concat", "stack", "sum", "mean", "dict"])
     def test_a_parallel_merge(self, merge: str) -> None:
-        with pytest.raises(TypeError, match=r"\['depth'\].*Maybe"):
+        with pytest.raises(TypeError, match=unbracketed("depth") + r".*Maybe"):
             _merging(CompositionStrategy.PARALLEL, merge_strategy=merge)(_batch())
 
     @pytest.mark.parametrize("merge", ["concat", "sum", "mean"])
@@ -239,7 +240,7 @@ class TestRefusedByName:
             conditions=[lambda _data: True, lambda _data: False],
         )
 
-        with pytest.raises(TypeError, match=r"\['depth'\].*Maybe"):
+        with pytest.raises(TypeError, match=unbracketed("depth") + r".*Maybe"):
             composite(_batch())
 
     def test_a_parallel_merge_by_a_function_of_the_caller_passes(self) -> None:

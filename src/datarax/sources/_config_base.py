@@ -18,8 +18,12 @@ class SourceConfigBase(StructuralConfig):
         name: The dataset's name (required).
         split: The split to read (required).
         data_dir: Where the backend finds the dataset; its meaning is the backend's.
-        include_keys: The only keys to keep (exclusive with ``exclude_keys``).
-        exclude_keys: Keys to drop (exclusive with ``include_keys``).
+        include_keys: The only fields to keep, by name: a nested field is spelled with "/"
+            (``"meta/score"`` keeps ``score`` of the group ``meta``). The names resolve when
+            the source is built, against its data and provenance fields; a name the dataset
+            does not have is refused, listing its fields. Exclusive with ``exclude_keys``.
+        exclude_keys: The fields to drop, named and resolved as ``include_keys`` are.
+            Exclusive with ``include_keys``.
     """
 
     name: str | None = None

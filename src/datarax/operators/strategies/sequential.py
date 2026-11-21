@@ -79,6 +79,11 @@ class ConditionalSequentialStrategy(CompositionStrategyImpl):
             )
         for index, (operator, condition) in enumerate(zip(operators, self.conditions, strict=True)):
             element = apply_where(
-                operator, condition(element.data), element, statistics_for_child(stats, index)
+                operator,
+                condition(element.data),
+                element,
+                statistics_for_child(stats, index),
+                owner="CONDITIONAL_SEQUENTIAL",
+                position=index,
             )
         return element

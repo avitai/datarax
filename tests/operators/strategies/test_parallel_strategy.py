@@ -60,7 +60,7 @@ class TestWeightedParallelStrategy:
 
     def test_weighted_sum_of_a_nested_mix_field(self):
         strategy = WeightedParallelStrategy(
-            mix_fields=("audio.signal",), weights=jnp.array([1.0, 0.1])
+            mix_fields=("audio/signal",), weights=jnp.array([1.0, 0.1])
         )
         data = {"audio": {"signal": jnp.array([2.0]), "rate": jnp.array(16000)}}
 

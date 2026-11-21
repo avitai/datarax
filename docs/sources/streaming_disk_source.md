@@ -4,9 +4,14 @@ An indexed source over columns of arrays larger than RAM, each read through a me
 column, `DiskColumn(name, file, offset, dtype, shape)`, is an array stored raw in a file at a byte
 offset, its leading axis the record axis: `DiskColumn.from_npy(name, path)` reads a `.npy` file's
 header for its offset, dtype and shape, and an uncompressed contiguous HDF5 dataset is read at the
-offset its file reports (`h5py`'s `dataset.id.get_offset()`). A column's name is its field's path,
-`/` between levels (`"meta/score"`), so records keep their nesting. No column is loaded whole: each
-read touches only the rows it names, and each column pickles as its place on disk.
+offset its file reports (`h5py`'s `dataset.id.get_offset()`). A column's name is its field: a key
+tuple nests (`("meta", "score")` serves `batch["meta"]["score"]`), and a string is one key, `/` and
+all (`"meta/score"` serves `batch["meta/score"]`), since a source receives no record a spelling
+could resolve against. The columns are one declaration, checked once in any order: a name given
+twice, a key tuple through another column, a string extending another column (`"meta/score"`
+beside the column `"meta"`, which the refusal answers with the key tuple `("meta/score",)`) and two
+fields of one spelling are refused. No column is loaded whole: each read touches only the rows it
+names, and each column pickles as its place on disk.
 
 Two reads serve it:
 
@@ -36,7 +41,9 @@ from datarax.sources import DiskColumn, StreamingDiskSource, StreamingDiskSource
 columns = (
     DiskColumn.from_npy("image", "images.npy"),
     DiskColumn.from_npy("label", "labels.npy"),
-    DiskColumn(name="meta/score", file="scores.h5", offset=4096, dtype="float32", shape=(N, 2)),
+    DiskColumn(
+        name=("meta", "score"), file="scores.h5", offset=4096, dtype="float32", shape=(N, 2)
+    ),
 )
 source = StreamingDiskSource(StreamingDiskSourceConfig(columns=columns))
 batch = source.get_batch(to_words(np.arange(256, 512, dtype=np.uint64)), contiguous=True)

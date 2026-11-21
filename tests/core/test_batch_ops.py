@@ -19,7 +19,6 @@ from substrax.testing.compiles import expect_compiles
 from datarax.core import batch_ops, Maybe
 from datarax.core.element_batch import Batch, Element, PADDING_INDEX
 from datarax.core.index_words import from_words, MAX_RECORDS
-from datarax.core.state_keys import WEIGHT
 
 
 B = 8
@@ -34,6 +33,10 @@ def host_batch(size: int = B, offset: int = 0, epoch: int = 2) -> Batch:
         indices=np.stack([np.zeros(size, np.uint32), np.arange(size, dtype=np.uint32) + offset], 1),
         epochs=np.full(size, epoch, np.int32),
         draws=np.zeros(size, np.int32),
+        weights=np.ones(size, np.float32),
+        masked={},
+        imputed={},
+        mix=None,
         batch_state={"seen": np.int32(offset)},
     )
 
@@ -169,7 +172,9 @@ class TestConstruction:
 
     def test_from_stacked_refuses_an_index_that_is_not_two_words_per_record(self) -> None:
         records = Element({"x": np.ones((4, 3), np.float32)}, index=np.zeros((4,), np.uint32))
-        records = records.replace(epoch=np.zeros(4, np.int32), draw=np.zeros(4, np.int32))
+        records = records.replace(
+            epoch=np.zeros(4, np.int32), draw=np.zeros(4, np.int32), weight=np.ones(4, np.float32)
+        )
 
         with pytest.raises(ValueError, match=r"\(4, 2\) uint32 words"):
             batch_ops.from_stacked(records)
@@ -297,18 +302,18 @@ class TestPadding:
         masked = jax.jit(batch_ops.mask)(device_batch(), keep)
 
         np.testing.assert_array_equal(is_padding(masked), ~keep)
-        np.testing.assert_array_equal(masked.states[WEIGHT], keep.astype(np.float32))
+        np.testing.assert_array_equal(masked.weights, keep.astype(np.float32))
         np.testing.assert_array_equal(masked.data["x"], host_batch().data["x"])
         np.testing.assert_array_equal(np.asarray(masked.indices)[keep][:, 1], np.flatnonzero(keep))
 
     def test_mask_scales_an_existing_weight(self) -> None:
         batch = device_batch()
-        batch = batch.replace(states={**batch.states, WEIGHT: jnp.full(B, 0.5)})
+        batch = batch.replace(weights=jnp.full(B, 0.5))
         keep = np.arange(B) < 3
 
         masked = jax.jit(batch_ops.mask)(batch, keep)
 
-        np.testing.assert_array_equal(masked.states[WEIGHT], np.where(keep, 0.5, 0.0))
+        np.testing.assert_array_equal(masked.weights, np.where(keep, 0.5, 0.0))
 
     def test_mask_leaves_padding_as_padding(self) -> None:
         once = jax.jit(batch_ops.mask)(device_batch(), np.arange(B) < 4)
@@ -316,7 +321,7 @@ class TestPadding:
         twice = jax.jit(batch_ops.mask)(once, np.ones(B, bool))
 
         np.testing.assert_array_equal(is_padding(twice), np.arange(B) >= 4)
-        np.testing.assert_array_equal(twice.states[WEIGHT], (np.arange(B) < 4).astype(np.float32))
+        np.testing.assert_array_equal(twice.weights, (np.arange(B) < 4).astype(np.float32))
 
     @pytest.mark.parametrize(
         "keep",
@@ -334,9 +339,7 @@ class TestPadding:
         assert int(count) == kept
         assert rows_of(compacted)[:kept] == list(np.flatnonzero(keep))
         np.testing.assert_array_equal(is_padding(compacted), np.arange(B) >= kept)
-        np.testing.assert_array_equal(
-            compacted.states[WEIGHT], (np.arange(B) < kept).astype(np.float32)
-        )
+        np.testing.assert_array_equal(compacted.weights, (np.arange(B) < kept).astype(np.float32))
         np.testing.assert_array_equal(
             compacted.data["x"][:kept, 0], np.flatnonzero(keep).astype(np.float32)
         )

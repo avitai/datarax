@@ -43,8 +43,14 @@ import jax.numpy as jnp
 from flax import nnx
 
 from datarax.core.config import OperatorConfig
-from datarax.core.field_paths import get_field, set_field
-from datarax.core.maybe import refuse_maybe
+from datarax.core.field_paths import (
+    FieldName,
+    FieldNames,
+    get_field,
+    refuse_field_nodes,
+    resolve,
+    set_field,
+)
 from datarax.core.operator import OperatorModule
 
 
@@ -70,8 +76,10 @@ class ModalityOperatorConfig(OperatorConfig):
     with JAX transformations (jit, vmap, grad).
 
     Attributes:
-        field_key: Primary data field to transform (e.g., "image", "caption", "waveform")
-        target_key: Optional target field (if None, overwrites source field)
+        field_key: The field to transform: a spelling (``"image"``, ``"meta/image"``) or a key
+            tuple (``("meta", "image")``), as ``core.field_paths`` names fields
+        target_key: The field to write (if None, overwrites source field), created by C3 when
+            the record lacks it
         auxiliary_fields: Fields that should be transformed coordinately
                          (e.g., ["mask", "bounding_boxes"] for image)
         clip_range: Value domain constraints as (min, max) tuple (None = no clipping)
@@ -116,13 +124,13 @@ class ModalityOperatorConfig(OperatorConfig):
 
     # Primary data field (single modality, single field)
     # Use kw_only to allow required field after parent's optional fields
-    field_key: str = field(kw_only=True)
+    field_key: FieldName = field(kw_only=True)
 
     # Optional target field (if None, overwrites source)
-    target_key: str | None = field(default=None, kw_only=True)
+    target_key: FieldName | None = field(default=None, kw_only=True)
 
     # Auxiliary fields that should be transformed coordinately
-    auxiliary_fields: list[str] | None = field(default=None, kw_only=True)
+    auxiliary_fields: FieldNames | None = field(default=None, kw_only=True)
 
     # Value domain constraints (None = no clipping)
     clip_range: tuple[float, float] | None = field(default=None, kw_only=True)
@@ -263,15 +271,16 @@ class ModalityOperator(OperatorModule):
         self.config: ModalityOperatorConfig = config
         # Subclasses can add learnable parameters here via nnx.Param
 
-    def _extract_field(self, data: dict, field_key: str) -> Any:  # noqa: DOC502
+    def _extract_field(self, data: dict, field_key: FieldName) -> Any:  # noqa: DOC502
         """Extract field from data dict with validation.
 
-        Helper method for subclasses to safely extract fields from data.
-        Supports nested field access using dot notation (e.g., "data.image").
+        Helper method for subclasses to safely extract fields from data. The name resolves
+        against the record (``core.field_paths``): ``"meta/image"`` reaches
+        ``data["meta"]["image"]``, and a literal key such as ``"image/id"`` is one field.
 
         Args:
             data: Data dictionary containing fields
-            field_key: Key of field to extract (supports dot notation for nested access)
+            field_key: The field's name, a spelling or a key tuple
 
         Returns:
             Field value from data
@@ -285,13 +294,12 @@ class ModalityOperator(OperatorModule):
             ```python
             image = self._extract_field(data, self.config.field_key)
             mask = self._extract_field(data, "mask")
-            nested = self._extract_field(data, "data.image")  # Access data["data"]["image"]
+            nested = self._extract_field(data, "data/image")  # Access data["data"]["image"]
             ```
         """
-        value = get_field(data, field_key)
-        refuse_maybe(
-            value, f"{type(self).__name__} transforms its field as an array", f"data[{field_key!r}]"
-        )
+        keys = resolve(data, field_key)
+        value = get_field(data, keys)
+        refuse_field_nodes(value, f"{type(self).__name__} transforms its field as an array", keys)
         return value
 
     def _apply_clip_range(self, value: jax.Array) -> jax.Array:
@@ -326,7 +334,7 @@ class ModalityOperator(OperatorModule):
         Helper method to store transformation result in correct field.
         If target_key is None, overwrites source field.
         Otherwise, creates/updates target field and preserves source.
-        Supports nested field paths using dot notation (e.g., "data.image").
+        A target the record lacks is created by C3 (``core.field_paths.set_field``).
 
         Args:
             data: Original data dictionary
@@ -342,4 +350,10 @@ class ModalityOperator(OperatorModule):
             result = self._remap_field(data, transformed_image)  # Nested field
             ```
         """
-        return set_field(data, self.config.target_key or self.config.field_key, transformed_value)
+        return set_field(
+            data,
+            self.config.target_key or self.config.field_key,
+            transformed_value,
+            owner=type(self).__name__,
+            param="target_key" if self.config.target_key else "field_key",
+        )

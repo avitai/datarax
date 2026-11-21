@@ -19,10 +19,11 @@ from flax import nnx
 from jax.sharding import AbstractMesh, AxisType, NamedSharding, PartitionSpec as P
 from substrax.testing.compiles import compiled_programs, expect_compiles
 
-from datarax.core.config import BatchMixOperatorConfig, ElementOperatorConfig
-from datarax.core.element_batch import Batch
+from datarax.core import batch_ops
+from datarax.core.config import BatchMixOperatorConfig, ElementOperatorConfig, OperatorConfig
+from datarax.core.element_batch import Batch, Mix
 from datarax.core.index_words import from_words
-from datarax.core.state_keys import MIX_LAMBDA
+from datarax.core.operator import OperatorModule
 from datarax.operators import ElementOperator
 from datarax.operators.batch_mix_operator import BatchMixOperator
 from datarax.pipeline import Pipeline
@@ -33,6 +34,17 @@ from tests.test_common.streams import RecordStream
 pytestmark = pytest.mark.devices(8)
 
 _LENGTH, _BATCH = 100, 32  # three full batches and a short final batch of 4
+
+
+class _CountsRows(OperatorModule):
+    """Writes the user's batch-level value ``rows``, one scalar per batch, beside the batch."""
+
+    def __init__(self) -> None:
+        super().__init__(OperatorConfig(stochastic=False))
+
+    def apply_batch(self, batch: Batch, keys: Any, stats: Any) -> Batch:
+        rows = jnp.float32(batch.batch_size)
+        return batch.replace(batch_state={**batch.batch_state, "rows": rows})
 
 
 def _mesh(axis_type: AxisType = AxisType.Auto) -> jax.sharding.Mesh:
@@ -125,16 +137,26 @@ class TestWhereEachUnitIsPlaced:
 
     def test_batch_level_state_is_replicated_on_every_batch(self) -> None:
         rows = _rows()
-        mix = BatchMixOperator(
-            BatchMixOperatorConfig(mode="mixup", alpha=0.2, data_field="image", stream_name="mix"),
-            rngs=nnx.Rngs(mix=1),
-        )
 
-        batches = list(_pipeline(rows, stages=[mix]))
+        batches = list(_pipeline(rows, stages=[_CountsRows()]))
 
         replicated = NamedSharding(rows.mesh, P())
-        assert all(batch.batch_state[MIX_LAMBDA].sharding == replicated for batch in batches)
+        assert all(batch.batch_state["rows"].sharding == replicated for batch in batches)
         assert batches[0]["image"].sharding == rows
+
+    def test_a_mix_is_placed_on_the_rows_and_a_scalar_coefficient_cannot_be(self) -> None:
+        rows = _rows()
+        replicated = NamedSharding(rows.mesh, P())
+        partners = np.arange(_BATCH, dtype=np.int32)[::-1].copy()
+        batch = batch_ops.from_arrays({"value": np.arange(_BATCH, dtype=np.float32)}).replace(
+            mix=Mix(partners=partners, lams=np.full(_BATCH, 0.3, np.float32))
+        )
+        placed = jax.device_put(batch, batch_ops.shardings(batch, rows, replicated))
+        assert placed.mix.lams.sharding == rows
+        assert placed.mix.partners.sharding == rows
+        scalar = batch.replace(mix=Mix(partners=partners, lams=np.asarray(0.3, np.float32)))
+        with pytest.raises(ValueError):  # one coefficient for the whole batch has no row axis
+            jax.device_put(scalar, batch_ops.shardings(scalar, rows, replicated))
 
     def test_without_a_sharding_batches_stay_on_the_default_device_uncommitted(self) -> None:
         batch = next(iter(_pipeline(None).raw_batches()))

@@ -3,9 +3,11 @@
 A column is an array stored raw in a file at a byte offset, :class:`DiskColumn`
 ``(name, file, offset, dtype, shape)``, its leading axis the record axis: a ``.npy`` file is the
 case whose offset is its header's length (:meth:`DiskColumn.from_npy`), an uncompressed contiguous
-HDF5 dataset at the offset its file reports is another. A column's name is its field's path, with
-``/`` between levels, so the source's records keep their nesting. Every column is opened with
-``np.memmap`` for zero-copy random access, and two reads serve the source:
+HDF5 dataset at the offset its file reports is another. A column's name is its field: a key tuple
+(``("meta", "score")``) nests, and a string is one key, ``/`` and all, since a source receives no
+record a spelling could resolve against. The source's columns are one declaration, checked once in
+any order. Every column is opened with ``np.memmap`` for zero-copy random access, and two reads
+serve the source:
 
 - the host read, ``get_batch(indices, *, epochs=0, contiguous=False)``, the eager sources' read
   (:func:`~datarax.sources.eager_source.read_host_batch`): a NumPy gather of the named rows of
@@ -27,7 +29,7 @@ import dataclasses
 import math
 import os
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -49,11 +51,19 @@ from datarax.core.data_source import (
     RecordIdentity,
 )
 from datarax.core.element_batch import Batch
+from datarax.core.field_paths import (
+    as_field_name,
+    create_path,
+    FieldName,
+    fields_nested,
+    KeyTuple,
+    label,
+    record_problems,
+)
 from datarax.core.host_values import HostArray, HostArrays
 from datarax.core.index_words import from_words
 from datarax.core.spec import device_spec, JAX_ARRAY_KINDS
 from datarax.sources._disk_provenance import decode_provenance, DiskProvenance
-from datarax.sources._field_paths import LEVEL, nested
 from datarax.sources.eager_source import read_host_batch
 from datarax.typing import DataDict
 
@@ -63,47 +73,51 @@ class DiskColumn:
     """One column of a :class:`StreamingDiskSource`: an array stored raw in a file at an offset.
 
     Attributes:
-        name: The field's path, with ``/`` between levels (``"meta/score"``).
+        name: The field: a key tuple (``("meta", "score")``, a list converts to one), or a string,
+            which is one key (``"meta/score"`` is the key ``meta/score``). Held as given, so
+            ``"x"`` and ``("x",)`` name one field and are two configs.
+        keys: The field's key tuple, derived once from ``name`` (a string is one key).
         file: The file holding the array's bytes.
         offset: The byte offset of the array's first byte in the file.
         dtype: The stored dtype (a NumPy dtype string), numeric.
         shape: The whole array's shape, its leading axis the record axis.
     """
 
-    name: str
+    name: FieldName
     file: str
     offset: int
     dtype: str
     shape: tuple[int, ...]
+    keys: KeyTuple = dataclasses.field(init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        """Refuse a column no memory map can read.
+    def __post_init__(self) -> None:  # noqa: DOC503 - as_field_name raises the TypeError
+        """Hold the name as a string or key tuple, and refuse a column no memory map can read.
 
         Raises:
-            ValueError: If the name has an empty level, the offset is negative, the shape has no
+            TypeError: If the name is neither a string nor a non-empty list of strings.
+            ValueError: If a key is empty or exotic, the offset is negative, the shape has no
                 record axis, or the dtype is not numeric.
         """
-        if not self.name or any(not level for level in self.name.split(LEVEL)):
-            raise ValueError(
-                f"a column's name is its field's path, levels joined by {LEVEL!r}; "
-                f"{self.name!r} has an empty level"
-            )
+        name = as_field_name(self.name, "DiskColumn's name")
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "keys", (name,) if isinstance(name, str) else name)
+        create_path({}, name, owner="DiskColumn", param="name")  # the key rule
         if self.offset < 0:
-            raise ValueError(f"column {self.name!r}: offset is at least 0; got {self.offset}")
+            raise ValueError(f"column {self.label}: offset is at least 0; got {self.offset}")
         if not self.shape:
-            raise ValueError(f"column {self.name!r} has no record axis: its shape is ()")
+            raise ValueError(f"column {self.label} has no record axis: its shape is ()")
         if np.dtype(self.dtype).kind not in JAX_ARRAY_KINDS:
             raise ValueError(
-                f"column {self.name!r} stores {np.dtype(self.dtype)}, but a column is numeric; "
+                f"column {self.label} stores {np.dtype(self.dtype)}, but a column is numeric; "
                 "strings and other objects are a record's provenance"
             )
 
     @classmethod
-    def from_npy(cls, name: str, path: str | os.PathLike[str]) -> DiskColumn:
+    def from_npy(cls, name: FieldName, path: str | os.PathLike[str]) -> DiskColumn:
         """The array a ``.npy`` file stores, as a column: its offset is the header's length.
 
         Args:
-            name: The field's path.
+            name: The field: a key tuple, or a string, which is one key.
             path: The ``.npy`` file.
 
         Returns:
@@ -127,6 +141,16 @@ class DiskColumn:
         )
         del array  # closes the map
         return column
+
+    @property
+    def label(self) -> str:
+        """How a refusal names the column's field."""
+        return label(self.keys)
+
+    @property
+    def row_spec(self) -> jax.ShapeDtypeStruct:
+        """One record's row as stored: the shape past the leading axis, the stored dtype."""
+        return jax.ShapeDtypeStruct(self.shape[1:], np.dtype(self.dtype))
 
     @property
     def length(self) -> int:
@@ -159,45 +183,132 @@ class StreamingDiskSourceConfig(StructuralConfig):
         """Validate the config.
 
         Raises:
-            ValueError: If there is no column, a name is given twice or is both a column and a
-                level of another, or the columns hold different record counts.
+            ValueError: If there is no column, the columns' names clash (:func:`_refuse_clashes`),
+                or the columns hold different record counts.
         """
         super().__post_init__()
         if not self.columns:
             raise ValueError("StreamingDiskSourceConfig needs at least one column")
-        _refuse_clashing_names([column.name for column in self.columns])
-        lengths = {column.name: column.length for column in self.columns}
-        if len(set(lengths.values())) > 1:
+        _refuse_clashes(self.columns)
+        if len({column.length for column in self.columns}) > 1:
+            lengths = ", ".join(f"{c.label}: {c.length}" for c in self.columns)
             raise ValueError(f"columns hold one row per record; their lengths are {lengths}")
 
 
-def _refuse_clashing_names(names: list[str]) -> None:
-    """Refuse a name given twice, or a column's name that is a level of another's.
+def _refuse_clashes(columns: Sequence[DiskColumn]) -> None:
+    """Refuse columns that do not make one record: the declaration checked once, in any order.
+
+    A source receives no record, so each name creates its own field (N3a): a key tuple exactly
+    its path, a string one key. Over their union: a field given twice, a key tuple passing
+    through another column's field, a string extending another column's field (offering its key
+    tuple), and two fields of one spelling are refused, in that order.
 
     Args:
-        names: The columns' names.
+        columns: The source's columns.
 
     Raises:
         ValueError: Naming the clash.
     """
-    twice = [name for name, count in Counter(names).items() if count > 1]
+    _refuse_a_field_twice(columns)
+    fields = {column.keys: column for column in columns}
+    _refuse_a_path_through_a_column(columns, fields)
+    _refuse_a_spelling_beside_a_field(columns, fields)
+    problems = record_problems(fields_nested({keys: c.row_spec for keys, c in fields.items()}))
+    if problems:
+        raise ValueError(f"the columns do not make one record: {problems[0]}")
+
+
+def _refuse_a_field_twice(columns: Sequence[DiskColumn]) -> None:
+    """Refuse two columns of one key tuple.
+
+    Args:
+        columns: The source's columns.
+
+    Raises:
+        ValueError: Naming the field.
+    """
+    twice = [keys for keys, count in Counter(c.keys for c in columns).items() if count > 1]
     if twice:
-        raise ValueError(f"{twice[0]!r} names two columns; each column has its own name")
-    given = set(names)
-    for name in names:
-        levels = name.split(LEVEL)
-        clash = next(
-            (
-                LEVEL.join(levels[:depth])
-                for depth in range(1, len(levels))
-                if LEVEL.join(levels[:depth]) in given
-            ),
-            None,
-        )
-        if clash is not None:
-            raise ValueError(
-                f"{clash!r} is a column and a level of {name!r}; a field is one or the other"
-            )
+        raise ValueError(f"{label(twice[0])} names two columns; each column has its own name")
+
+
+def _refuse_a_path_through_a_column(
+    columns: Sequence[DiskColumn], fields: Mapping[KeyTuple, DiskColumn]
+) -> None:
+    """Refuse a key tuple whose path passes through another column's field.
+
+    Args:
+        columns: The source's columns.
+        fields: The columns by key tuple.
+
+    Raises:
+        ValueError: Naming the key tuple and the column it passes through.
+    """
+    for column in columns:
+        for depth in range(1, len(column.keys)):
+            through = fields.get(column.keys[:depth])
+            if through is not None:
+                raise ValueError(
+                    f"DiskColumn creates {column.keys!r}, which passes through {through.label}, "
+                    f"a column ({np.dtype(through.dtype)}{list(through.shape[1:])}) and not a "
+                    "group; name another column"
+                )
+
+
+def _refuse_a_spelling_beside_a_field(  # noqa: DOC502 - create_path raises
+    columns: Sequence[DiskColumn], fields: Mapping[KeyTuple, DiskColumn]
+) -> None:
+    """Refuse a string name that would extend another column's root field, offering its key tuple.
+
+    Args:
+        columns: The source's columns.
+        fields: The columns by key tuple.
+
+    Raises:
+        ValueError: From :func:`create_path`, naming the field and the key tuple to use.
+    """
+    root = {keys[0]: c.row_spec for keys, c in fields.items() if len(keys) == 1}
+    for column in columns:
+        if isinstance(column.name, str):
+            others = {key: spec for key, spec in root.items() if key != column.name}
+            create_path(others, column.name, owner="DiskColumn", param="name")
+
+
+@dataclasses.dataclass(frozen=True)
+class _Nesting:
+    """Where each column sits in the record, derived once from the columns' key tuples.
+
+    The record's tree is static, so a read places its arrays by JAX's own unflatten rather than
+    rebuilding the tree from the key tuples each time.
+    """
+
+    structure: Any  # a jax PyTreeDef; jaxlib ships no type stub that names it
+    order: tuple[int, ...]
+
+    @classmethod
+    def of(cls, columns: Sequence[DiskColumn]) -> _Nesting:
+        """The record's tree of ``columns``, and the column at each of its leaves.
+
+        Args:
+            columns: The columns, checked to make one record.
+
+        Returns:
+            The nesting.
+        """
+        positions = fields_nested({column.keys: i for i, column in enumerate(columns)})
+        order, structure = jax.tree_util.tree_flatten(positions)
+        return cls(structure, tuple(order))
+
+    def nested(self, values: Sequence[Any]) -> Any:
+        """``values``, one per column in the columns' order, nested as the record.
+
+        Args:
+            values: One value per column.
+
+        Returns:
+            The record's nested dictionary of them.
+        """
+        return jax.tree_util.tree_unflatten(self.structure, [values[i] for i in self.order])
 
 
 def _provenance_files(
@@ -273,12 +384,12 @@ class StreamingDiskSource(DataSourceModule):
             path = Path(column.file)
             if not path.is_file():
                 raise FileNotFoundError(
-                    f"StreamingDiskSource: column {column.name!r}'s file {path} does not exist"
+                    f"StreamingDiskSource: column {column.label}'s file {path} does not exist"
                 )
             size = path.stat().st_size
             if size < column.offset + column.nbytes:
                 raise ValueError(
-                    f"column {column.name!r}: {path} holds {size} bytes, below its offset "
+                    f"column {column.label}: {path} holds {size} bytes, below its offset "
                     f"{column.offset} plus its {column.nbytes} bytes "
                     f"({column.shape} of {np.dtype(column.dtype)})"
                 )
@@ -290,6 +401,7 @@ class StreamingDiskSource(DataSourceModule):
             )
         )
         self._length = nnx.static(config.columns[0].length)
+        self._nesting = nnx.static(_Nesting.of(config.columns))
         self._provenance_files = _provenance_files(config.provenance, self._length)
 
     def __len__(self) -> int:
@@ -315,19 +427,14 @@ class StreamingDiskSource(DataSourceModule):
         restore can detect a source pointed at different data.
         """
         columns = ", ".join(
-            f"{c.name}: {c.file}@{c.offset} {np.dtype(c.dtype)}{list(c.shape)}"
+            f"{c.label}: {c.file}@{c.offset} {np.dtype(c.dtype)}{list(c.shape)}"
             for c in self.config.columns
         )
         return f"StreamingDiskSource(columns=[{columns}], length={self._length})"
 
     def _columns(self) -> dict[str, Any]:
-        """Every column's memory map, nested by field path."""
-        return nested(
-            {
-                column.name: host.array
-                for column, host in zip(self.config.columns, self._hosts.arrays, strict=True)
-            }
-        )
+        """Every column's memory map, nested by the columns' key tuples."""
+        return self._nesting.nested([host.array for host in self._hosts.arrays])
 
     def provenance(  # noqa: DOC502 - record_words and host_rows raise
         self, indices: ArrayLike
@@ -358,13 +465,13 @@ class StreamingDiskSource(DataSourceModule):
         """What the source reads, never where: its columns, and the copy it is, if one.
 
         Returns:
-            ``{"source": ..., "decoder": {}}``: each column's field, dtype, shape, offset, file
-            base name and size, and the decoded copy's content digest when the columns are one;
-            nothing decodes, so no decoder library.
+            ``{"source": ..., "decoder": {}}``: each column's field (its key tuple), dtype, shape,
+            offset, file base name and size, and the decoded copy's content digest when the
+            columns are one; nothing decodes, so no decoder library.
         """
         columns = [
             {
-                "name": c.name,
+                "keys": list(c.keys),
                 "dtype": c.dtype,
                 "shape": list(c.shape),
                 "offset": c.offset,
@@ -386,16 +493,11 @@ class StreamingDiskSource(DataSourceModule):
         """One record's spec as the device holds it: each column's leading axis stripped.
 
         Returns:
-            Nested ``jax.ShapeDtypeStruct`` per field, its dtype as JAX arrays hold the stored
-            one (``device_spec``).
+            Nested ``jax.ShapeDtypeStruct`` per field, nested by the columns' key tuples, its
+            dtype as JAX arrays hold the stored one (``device_spec``).
         """
         return device_spec(
-            nested(
-                {
-                    column.name: jax.ShapeDtypeStruct(column.shape[1:], np.dtype(column.dtype))
-                    for column in self.config.columns
-                }
-            )
+            self._nesting.nested([column.row_spec for column in self.config.columns])
         )
 
     def get_batch(  # noqa: DOC502 - read_host_batch raises
@@ -414,7 +516,8 @@ class StreamingDiskSource(DataSourceModule):
             contiguous: Whether ``indices`` is a run of consecutive rows.
 
         Returns:
-            The named rows of every column, nested by field path, as a host ``Batch``.
+            The named rows of every column, nested by the columns' key tuples, as a host
+            ``Batch``.
 
         Raises:
             ValueError: If ``indices`` are not uint32 ``(n, 2)`` words, or a run declared
@@ -433,7 +536,7 @@ class StreamingDiskSource(DataSourceModule):
                 so every row of a column past ``2**32`` rows is addressed.
 
         Returns:
-            Every column's rows at ``indices``, nested by field path, each
+            Every column's rows at ``indices``, nested by the columns' key tuples, each
             ``(len(indices), *row_shape)`` and wrapped with ``jax.lax.stop_gradient``.
         """
         columns = self.config.columns
@@ -456,12 +559,7 @@ class StreamingDiskSource(DataSourceModule):
 
         raw = io_callback(_host_read, result_spec, indices)
         # The rows are constants of any gradient: stop_gradient marks them so.
-        return nested(
-            {
-                column.name: jax.lax.stop_gradient(rows)
-                for column, rows in zip(columns, raw, strict=True)
-            }
-        )
+        return self._nesting.nested([jax.lax.stop_gradient(rows) for rows in raw])
 
 
 __all__ = ["DiskColumn", "StreamingDiskSource", "StreamingDiskSourceConfig"]

@@ -1,8 +1,9 @@
 """The decoded copy's format and reader: one per-unit writer, the manifest, and every refusal.
 
-A decoded copy holds a source's records as one ``.npy`` file per column and their provenance in
-one ArrayRecord file, with a manifest written last. It is written unit by unit through
-:func:`~datarax.sources.decoded_copy._units.write_unit`, the one writer, and read back by
+A decoded copy holds a source's records as one ``.npy`` file per column, each column named by its
+field's key tuple, and their provenance in one ArrayRecord file, with a manifest written last. It
+is written unit by unit through :func:`~datarax.sources.decoded_copy._units.write_unit`, the one
+writer, and read back by
 :func:`~datarax.sources.decoded_copy.open_decoded_copy` as a ``StreamingDiskSource`` serving
 what the source serves, record for record.
 """
@@ -13,6 +14,7 @@ import hashlib
 import json
 import os
 import pickle  # nosec B403 - a test pickles the copy's own source
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -23,11 +25,12 @@ import pytest
 from flax import nnx
 
 from datarax.core.data_source import RecordIdentity
+from datarax.core.field_paths import label
 from datarax.core.index_words import to_words
 from datarax.sources import open_decoded_copy, StreamingDiskSource
 from datarax.sources._disk_provenance import decode_provenance, encode_provenance
 from datarax.sources.decoded_copy._files import begin_copy
-from datarax.sources.decoded_copy._layout import ColumnLayout, COPY_FORMAT
+from datarax.sources.decoded_copy._layout import ColumnLayout
 from datarax.sources.decoded_copy._units import (
     build_in_memory,
     source_layout,
@@ -77,15 +80,15 @@ def png(tmp_path: Path) -> Any:
 
 
 class TestTheLayout:
-    def test_names_fields_by_path_and_keeps_the_stored_dtypes(self) -> None:
+    def test_names_fields_by_key_tuple_and_keeps_the_stored_dtypes(self) -> None:
         layout = source_layout(_memory_source())
 
         assert jax.config.jax_enable_x64 is False
-        found = {column.name: (column.dtype, column.shape) for column in layout.columns}
+        found = {column.keys: (column.dtype, column.shape) for column in layout.columns}
         assert found == {
-            "label": ("<i8", ()),
-            "value": ("<f8", ()),
-            "meta/score": ("<f4", (2,)),
+            ("label",): ("<i8", ()),
+            ("value",): ("<f8", ()),
+            ("meta", "score"): ("<f4", (2,)),
         }
         assert layout.length == _RECORDS
         assert layout.nbytes == _RECORDS * (8 + 8 + 2 * 4)
@@ -101,7 +104,7 @@ class TestTheWriter:
     def test_fills_the_given_rows_as_the_source_reads_them(self) -> None:
         source = _memory_source()
         layout = source_layout(source)
-        out = {c.name: np.zeros((5, *c.shape), c.dtype) for c in layout.columns}
+        out = {c.keys: np.zeros((5, *c.shape), c.dtype) for c in layout.columns}
 
         provenance = write_unit(source, range(10, 15), out, layout=layout, with_provenance=True)
 
@@ -116,44 +119,44 @@ class TestTheWriter:
     def test_returns_no_provenance_unless_asked(self) -> None:
         source = _memory_source()
         layout = source_layout(source)
-        out = {c.name: np.zeros((2, *c.shape), c.dtype) for c in layout.columns}
+        out = {c.keys: np.zeros((2, *c.shape), c.dtype) for c in layout.columns}
 
         assert write_unit(source, range(0, 2), out, layout=layout, with_provenance=False) is None
 
     @pytest.mark.parametrize(
         ("change", "field"),
         [
-            ({"dtype": "<f4"}, "value"),
-            ({"shape": (3,)}, "meta/score"),
+            ({"dtype": "<f4"}, ("value",)),
+            ({"shape": (3,)}, ("meta", "score")),
         ],
         ids=["dtype", "shape"],
     )
     def test_refuses_a_leaf_unlike_its_layout_column_naming_the_field(
-        self, change: dict[str, Any], field: str
+        self, change: dict[str, Any], field: tuple[str, ...]
     ) -> None:
         source = _memory_source()
         layout = source_layout(source)
         columns = tuple(
-            type(c)(**{"name": c.name, "dtype": c.dtype, "shape": c.shape, **change})
-            if c.name == field
+            type(c)(**{"keys": c.keys, "dtype": c.dtype, "shape": c.shape, **change})
+            if c.keys == field
             else c
             for c in layout.columns
         )
         other = ColumnLayout(columns=columns, length=layout.length)
-        out = {c.name: np.zeros((2, *c.shape), c.dtype) for c in other.columns}
+        out = {c.keys: np.zeros((2, *c.shape), c.dtype) for c in other.columns}
 
-        with pytest.raises(ValueError, match=field):
+        with pytest.raises(ValueError, match=re.escape(label(field))):
             write_unit(source, range(0, 2), out, layout=other, with_provenance=False)
 
     def test_refuses_a_field_the_layout_does_not_hold(self) -> None:
         source = _memory_source()
         layout = source_layout(source)
         fewer = ColumnLayout(
-            columns=tuple(c for c in layout.columns if c.name != "value"), length=layout.length
+            columns=tuple(c for c in layout.columns if c.keys != ("value",)), length=layout.length
         )
-        out = {c.name: np.zeros((2, *c.shape), c.dtype) for c in fewer.columns}
+        out = {c.keys: np.zeros((2, *c.shape), c.dtype) for c in fewer.columns}
 
-        with pytest.raises(ValueError, match="value"):
+        with pytest.raises(ValueError, match="'value' differ"):
             write_unit(source, range(0, 2), out, layout=fewer, with_provenance=False)
 
 
@@ -170,9 +173,9 @@ def test_a_build_decodes_every_record_once(tmp_path: Path) -> None:
 
 
 def test_a_unit_digest_is_the_sha256_of_its_columns_in_layout_order() -> None:
-    out = {"a": np.arange(6, dtype=np.int16), "b/c": np.ones((6, 2), np.float32)}
+    out = {("a",): np.arange(6, dtype=np.int16), ("b", "c"): np.ones((6, 2), np.float32)}
 
-    expected = hashlib.sha256(out["a"].tobytes() + out["b/c"].tobytes()).digest()
+    expected = hashlib.sha256(out[("a",)].tobytes() + out[("b", "c")].tobytes()).digest()
 
     assert unit_digest(out) == expected
 
@@ -212,7 +215,7 @@ class TestWritingACopy:
         names = {p.name for p in directory.iterdir()}
         manifest = json.loads((directory / "manifest.json").read_text())
         assert not {name for name in names if name.endswith(".partial")}
-        assert manifest["format"] == COPY_FORMAT
+        assert manifest["format"] == 2, "key tuples in the manifest are format 2"
         assert manifest["length"] == _RECORDS
         assert manifest["unit_records"] == _UNIT
         assert manifest["source"] == IDENTITY["source"]
@@ -301,15 +304,26 @@ class TestARefusedCopy:
         with pytest.raises(FileNotFoundError, match=r"no manifest\.json.*incomplete"):
             open_decoded_copy(directory)
 
-    def test_another_format_is_refused_naming_both(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("found", [1, 3], ids=["older", "newer"])
+    def test_another_format_is_refused_naming_both(self, tmp_path: Path, found: int) -> None:
         directory = self._copy(tmp_path)
         path = directory / "manifest.json"
         manifest = json.loads(path.read_text())
-        manifest["format"] = COPY_FORMAT + 1
+        manifest["format"] = found
         path.write_text(json.dumps(manifest))
 
-        with pytest.raises(ValueError, match=rf"format {COPY_FORMAT + 1}.*format {COPY_FORMAT}"):
+        refusal = rf"format {found}, and this datarax reads format 2: rebuild"
+        with pytest.raises(ValueError, match=refusal):
             open_decoded_copy(directory)
+
+    def test_the_manifest_names_each_column_by_its_key_tuple(self, tmp_path: Path) -> None:
+        manifest = json.loads((self._copy(tmp_path) / "manifest.json").read_text())
+
+        assert [column["keys"] for column in manifest["columns"]] == [
+            ["label"],
+            ["meta", "score"],
+            ["value"],
+        ]
 
     @pytest.mark.parametrize("change", ["missing", "shorter"])
     def test_a_column_file_unlike_the_manifest_is_refused(
@@ -323,7 +337,8 @@ class TestARefusedCopy:
         else:
             os.truncate(column, column.stat().st_size - 1)
 
-        with pytest.raises((FileNotFoundError, ValueError), match=manifest["columns"][1]["name"]):
+        named = re.escape(label(tuple(manifest["columns"][1]["keys"])))
+        with pytest.raises((FileNotFoundError, ValueError), match=named):
             open_decoded_copy(directory)
 
     def test_an_identity_that_differs_is_refused_naming_the_field(self, tmp_path: Path) -> None:
